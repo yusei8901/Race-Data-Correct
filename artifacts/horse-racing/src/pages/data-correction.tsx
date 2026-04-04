@@ -1,9 +1,12 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import {
+  useState, useMemo, useEffect, useRef, useCallback,
+} from "react";
 import { useParams, useLocation } from "wouter";
 import {
-  ArrowLeft, Play, Pause, SkipBack, ChevronFirst, ChevronLast,
+  ArrowLeft, Play, Pause, ChevronFirst, ChevronLast,
   History, CheckCircle2, Save, Clock, Minus, Plus, Ruler,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Trash2, RefreshCw, Square,
+  MousePointer2,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,9 +19,6 @@ import {
 import type { Race } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/contexts/user-role";
@@ -26,6 +26,8 @@ import { useUserRole } from "@/contexts/user-role";
 // ── Constants ──────────────────────────────────────────────────────────────
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 const API = `${BASE_URL}/fastapi`;
+const FPS = 30;
+const VIDEO_OFFSET = 7.30;
 
 const STRAIGHT_MAP: Record<string, number> = {
   "中山芝": 310, "中山ダート": 310,
@@ -48,12 +50,22 @@ const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = 
 const SPECIAL_NOTES = ["ー", "出遅れ", "大幅遅れ", "映像見切れ", "確認困難", "他馬と重複", "落馬", "失格"];
 const LANES = ["内", "中", "外"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
-const VIDEO_OFFSET = 7.30; // race time offset in seconds
+
+// ── Types ──────────────────────────────────────────────────────────────────
+interface BBox {
+  id: string;
+  horseNumber: number | null;
+  gateNumber: number | null;
+  x: number; y: number; w: number; h: number;
+}
+
+type DragHandle = "body" | "tl" | "tr" | "bl" | "br";
+
+type Keyframes = Record<string, Record<number, BBox[]>>;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function getStraight(race: Race): number {
-  const key = `${race.venue}${race.surface_type}`;
-  return STRAIGHT_MAP[key] || 300;
+  return STRAIGHT_MAP[`${race.venue}${race.surface_type}`] || 300;
 }
 
 function fmtTime(sec: number): string {
@@ -91,6 +103,58 @@ function cpVideoTime(meter: number, distance: number, baseSec: number): number {
   return VIDEO_OFFSET + baseSec * (meter / distance);
 }
 
+function interpolateBboxes(keyframes: Record<number, BBox[]>, frame: number): BBox[] {
+  const frameNums = Object.keys(keyframes).map(Number).sort((a, b) => a - b);
+  if (frameNums.length === 0) return [];
+  const prev = [...frameNums].reverse().find((f) => f <= frame);
+  const next = frameNums.find((f) => f > frame);
+  if (prev === undefined) return keyframes[frameNums[0]];
+  if (next === undefined) return keyframes[prev];
+  if (prev === frame) return keyframes[prev];
+  const t = (frame - prev) / (next - prev);
+  const prevBboxes = keyframes[prev];
+  const nextBboxes = keyframes[next];
+  return prevBboxes.map((pb) => {
+    const nb = nextBboxes.find((b) => b.id === pb.id);
+    if (!nb) return pb;
+    return {
+      ...pb,
+      x: pb.x + (nb.x - pb.x) * t,
+      y: pb.y + (nb.y - pb.y) * t,
+      w: pb.w + (nb.w - pb.w) * t,
+      h: pb.h + (nb.h - pb.h) * t,
+    };
+  });
+}
+
+function generateSampleBboxes(entries: any[], cpType: string): BBox[] {
+  const n = entries.length;
+  const boxW = 0.055;
+  const boxH = 0.16;
+  return entries.map((entry, i) => {
+    let x: number, y: number;
+    if (cpType === "start") {
+      x = 0.04 + (i / Math.max(n - 1, 1)) * 0.88;
+      y = 0.52;
+    } else if (cpType === "straight") {
+      x = 0.25 + (i / Math.max(n - 1, 1)) * 0.45;
+      y = 0.28 + (i % 3) * 0.08;
+    } else {
+      x = 0.08 + (i / Math.max(n - 1, 1)) * 0.75;
+      y = 0.40 + Math.sin(i * 0.8) * 0.07;
+    }
+    return {
+      id: `init-${entry.horse_number}`,
+      horseNumber: entry.horse_number as number,
+      gateNumber: entry.gate_number as number ?? null,
+      x: Math.max(0, Math.min(1 - boxW, x)),
+      y: Math.max(0, Math.min(1 - boxH, y)),
+      w: boxW,
+      h: boxH,
+    };
+  });
+}
+
 function AccBadge({ v }: { v?: number | null }) {
   if (v == null) return <span className="text-zinc-600">-</span>;
   const color = v >= 90 ? "text-green-400" : v >= 75 ? "text-yellow-400" : "text-red-400";
@@ -111,26 +175,255 @@ function CapCircle({ gate }: { gate?: number | null }) {
   );
 }
 
-// ── History Modal ────────────────────────────────────────────────────────────
+// ── BBOX Canvas ───────────────────────────────────────────────────────────────
+const HANDLE_R = 5;
+
+function BboxCanvas({
+  bboxes,
+  addPreview,
+  selectedId,
+  addMode,
+  isEditing,
+  onSelect,
+  onAdd,
+  onUpdate,
+  onDelete,
+}: {
+  bboxes: BBox[];
+  addPreview: { x: number; y: number; w: number; h: number } | null;
+  selectedId: string | null;
+  addMode: boolean;
+  isEditing: boolean;
+  onSelect: (id: string | null) => void;
+  onAdd: (b: Omit<BBox, "id">) => void;
+  onUpdate: (id: string, updates: Partial<Pick<BBox, "x" | "y" | "w" | "h">>) => void;
+  onDelete: (id: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 1, h: 1 });
+  const dragRef = useRef<{
+    type: "move" | "resize" | "add";
+    id?: string;
+    handle?: DragHandle;
+    startX: number;
+    startY: number;
+    origBox?: Pick<BBox, "x" | "y" | "w" | "h">;
+  } | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setSize({ w: entry.contentRect.width, h: entry.contentRect.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const { w, h } = size;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.clearRect(0, 0, w, h);
+
+    const drawBox = (
+      b: Pick<BBox, "x" | "y" | "w" | "h"> & { id?: string; horseNumber?: number | null; gateNumber?: number | null },
+      isSelected: boolean,
+      isPreview: boolean,
+    ) => {
+      const px = b.x * w, py = b.y * h, pw = b.w * w, ph = b.h * h;
+      const cap = b.gateNumber != null ? CAP_COLORS[b.gateNumber] : null;
+      const stroke = isPreview ? "#f97316" : isSelected ? "#f97316" : cap?.bg ?? "#ea580c";
+
+      ctx.setLineDash(isPreview ? [6, 3] : []);
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = isSelected || isPreview ? 2.5 : 1.5;
+      ctx.strokeRect(px, py, pw, ph);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = isSelected ? "rgba(249,115,22,0.12)" : "rgba(255,255,255,0.05)";
+      ctx.fillRect(px, py, pw, ph);
+
+      if (!isPreview) {
+        const label = b.horseNumber != null ? String(b.horseNumber) : "?";
+        const lw = 18, lh = 14;
+        ctx.fillStyle = cap?.bg ?? "#ea580c";
+        ctx.fillRect(px, py - lh, lw, lh);
+        ctx.fillStyle = cap?.text ?? "#fff";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, px + lw / 2, py - lh / 2);
+      }
+
+      if (isSelected && isEditing && !isPreview) {
+        const corners: [number, number][] = [
+          [px, py], [px + pw, py], [px, py + ph], [px + pw, py + ph],
+        ];
+        for (const [cx, cy] of corners) {
+          ctx.fillStyle = "#f97316";
+          ctx.beginPath();
+          ctx.arc(cx, cy, HANDLE_R, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+    };
+
+    for (const bbox of bboxes) {
+      drawBox(bbox, bbox.id === selectedId, false);
+    }
+    if (addPreview && addPreview.w > 0 && addPreview.h > 0) {
+      drawBox(addPreview, false, true);
+    }
+  }, [bboxes, addPreview, selectedId, size, isEditing]);
+
+  const toRel = (px: number, py: number) => ({ rx: px / size.w, ry: py / size.h });
+  const getPos = (e: React.MouseEvent) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    return { px: e.clientX - rect.left, py: e.clientY - rect.top };
+  };
+
+  const hitTest = (px: number, py: number): { id: string; handle: DragHandle } | null => {
+    const { w, h } = size;
+    if (selectedId) {
+      const sel = bboxes.find((b) => b.id === selectedId);
+      if (sel) {
+        const bx = sel.x * w, by = sel.y * h, bw = sel.w * w, bh = sel.h * h;
+        const corners: [number, number, DragHandle][] = [
+          [bx, by, "tl"], [bx + bw, by, "tr"], [bx, by + bh, "bl"], [bx + bw, by + bh, "br"],
+        ];
+        for (const [cx, cy, handle] of corners) {
+          if (Math.hypot(px - cx, py - cy) <= HANDLE_R + 4) return { id: sel.id, handle };
+        }
+      }
+    }
+    for (const bbox of [...bboxes].reverse()) {
+      const bx = bbox.x * w, by = bbox.y * h, bw = bbox.w * w, bh = bbox.h * h;
+      if (px >= bx && px <= bx + bw && py >= by && py <= by + bh) {
+        return { id: bbox.id, handle: "body" };
+      }
+    }
+    return null;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const { px, py } = getPos(e);
+    if (addMode) {
+      const { rx, ry } = toRel(px, py);
+      dragRef.current = { type: "add", startX: px, startY: py, origBox: { x: rx, y: ry, w: 0, h: 0 } };
+      return;
+    }
+    const hit = hitTest(px, py);
+    if (!hit) { onSelect(null); return; }
+    onSelect(hit.id);
+    if (!isEditing) return;
+    const bbox = bboxes.find((b) => b.id === hit.id)!;
+    if (hit.handle === "body") {
+      dragRef.current = { type: "move", id: hit.id, startX: px, startY: py, origBox: { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } };
+    } else {
+      dragRef.current = { type: "resize", id: hit.id, handle: hit.handle, startX: px, startY: py, origBox: { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const { px, py } = getPos(e);
+    const dx = (px - d.startX) / size.w;
+    const dy = (py - d.startY) / size.h;
+
+    if (d.type === "add") {
+      const sx = d.startX / size.w, sy = d.startY / size.h;
+      const ex = px / size.w, ey = py / size.h;
+      const newPreview = {
+        x: Math.max(0, Math.min(sx, ex)),
+        y: Math.max(0, Math.min(sy, ey)),
+        w: Math.abs(ex - sx),
+        h: Math.abs(ey - sy),
+      };
+      d.origBox = newPreview;
+      (window as any).__bboxAddPreviewSetter?.(newPreview);
+      return;
+    }
+
+    if (d.type === "move" && d.id && d.origBox) {
+      const o = d.origBox;
+      onUpdate(d.id, {
+        x: Math.max(0, Math.min(1 - o.w, o.x + dx)),
+        y: Math.max(0, Math.min(1 - o.h, o.y + dy)),
+      });
+    }
+
+    if (d.type === "resize" && d.id && d.origBox) {
+      const o = d.origBox;
+      let { x, y, w, h } = o;
+      if (d.handle === "tl" || d.handle === "bl") { x = o.x + dx; w = o.w - dx; }
+      if (d.handle === "tr" || d.handle === "br") { w = o.w + dx; }
+      if (d.handle === "tl" || d.handle === "tr") { y = o.y + dy; h = o.h - dy; }
+      if (d.handle === "bl" || d.handle === "br") { h = o.h + dy; }
+      if (w > 0.02 && h > 0.02) onUpdate(d.id, { x, y, w, h });
+    }
+  };
+
+  const handleMouseUp = () => {
+    const d = dragRef.current;
+    if (d?.type === "add" && d.origBox && d.origBox.w > 0.015 && d.origBox.h > 0.015) {
+      onAdd({ horseNumber: null, gateNumber: null, ...d.origBox });
+    }
+    (window as any).__bboxAddPreviewSetter?.(null);
+    dragRef.current = null;
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+      e.preventDefault();
+      onDelete(selectedId);
+    }
+  };
+
+  const cursor = addMode ? "crosshair" : isEditing ? "default" : "default";
+
+  return (
+    <div ref={containerRef} className="absolute inset-0">
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ cursor }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onKeyDown={handleKeyDown}
+        tabIndex={-1}
+      />
+    </div>
+  );
+}
+
+// ── History Modal ─────────────────────────────────────────────────────────────
 interface HistoryEntry {
-  id: string;
-  user_name: string;
-  action_type: string;
-  description?: string;
-  created_at: string;
+  id: string; user_name: string; action_type: string;
+  description?: string; created_at: string;
 }
 
 function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
     fetch(`${API}/races/${raceId}/history`)
       .then((r) => r.json())
       .then((d) => { setEntries(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, [raceId]);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[560px] max-w-[95vw] flex flex-col max-h-[70vh]">
@@ -165,10 +458,8 @@ function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void
                     <td className="p-2">{e.user_name}</td>
                     <td className="p-2">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        e.action_type === "補正完了" || e.action_type === "データ確定"
-                          ? "bg-green-900/50 text-green-400"
-                          : e.action_type === "補正開始"
-                          ? "bg-blue-900/50 text-blue-400"
+                        e.action_type === "補正完了" || e.action_type === "データ確定" ? "bg-green-900/50 text-green-400"
+                          : e.action_type === "補正開始" ? "bg-blue-900/50 text-blue-400"
                           : "bg-zinc-700 text-zinc-300"
                       }`}>{e.action_type}</span>
                     </td>
@@ -184,7 +475,7 @@ function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void
   );
 }
 
-// ── Confirm Dialog ───────────────────────────────────────────────────────────
+// ── Confirm Dialog ─────────────────────────────────────────────────────────────
 function ConfirmDialog({
   title, message, confirmLabel, onConfirm, onCancel, loading,
 }: {
@@ -207,7 +498,7 @@ function ConfirmDialog({
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function DataCorrection() {
   const params = useParams();
   const raceId = params.raceId as string;
@@ -216,13 +507,16 @@ export default function DataCorrection() {
   const queryClient = useQueryClient();
   const { isAdmin } = useUserRole();
 
-  // ── UI state
+  // UI state
   const [showHistory, setShowHistory] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<"save" | "complete" | null>(null);
   const [leftView, setLeftView] = useState<"furlong" | "entries" | "both">("both");
   const [selectedCp, setSelectedCp] = useState<string | null>(null);
 
-  // ── Video state (mock)
+  // Edit mode: purely local; resets when leaving the page
+  const [isEditingMode, setIsEditingMode] = useState(false);
+
+  // Video state
   const [videoTime, setVideoTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1.0);
@@ -230,17 +524,58 @@ export default function DataCorrection() {
   const [rulerY, setRulerY] = useState(50);
   const [rulerAngle, setRulerAngle] = useState(0);
 
-  // ── Local edits for correction
+  // BBOX state
+  const [keyframes, setKeyframes] = useState<Keyframes>({});
+  const [selectedBboxId, setSelectedBboxId] = useState<string | null>(null);
+  const [addMode, setAddMode] = useState(false);
+  const [addPreview, setAddPreview] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  // Expose setter to canvas via window (avoids prop drilling for mouse-move preview)
+  useEffect(() => {
+    (window as any).__bboxAddPreviewSetter = setAddPreview;
+    return () => { delete (window as any).__bboxAddPreviewSetter; };
+  }, []);
+
+  // Local edits for right-panel fields
   const [localEdits, setLocalEdits] = useState<Record<string, Record<string, unknown>>>({});
 
-  // ── Video timer (mock playback)
+  // Video timer
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // API hooks
+  const { data: race, isLoading: isRaceLoading } = useGetRace(raceId, {
+    query: { enabled: !!raceId, queryKey: getGetRaceQueryKey(raceId) },
+  });
+  const { data: entries } = useGetRaceEntries(raceId, {
+    query: { enabled: !!raceId, queryKey: getGetRaceEntriesQueryKey(raceId) },
+  });
+  const { data: passingOrders, isLoading: isOrdersLoading } = useGetPassingOrders(
+    raceId,
+    { checkpoint: selectedCp ?? undefined },
+    { query: { enabled: !!raceId && !!selectedCp, queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp ?? undefined }) } },
+  );
+
+  const startCorrectionMut = useStartCorrection();
+  const completeCorrectionMut = useCompleteCorrection();
+  const updatePassingOrderMut = useUpdatePassingOrder();
+
+  // Race metadata
+  const straight = race ? getStraight(race) : 300;
+  const { pts200, ptsStr } = useMemo(
+    () => computeCheckpoints(race?.distance ?? 2000, straight),
+    [race?.distance, straight],
+  );
+  const baseSec = race ? (race.distance / 1000) * 60 + 27 : 90;
+  const totalVideoSec = VIDEO_OFFSET + baseSec;
+  const currentFrame = Math.floor(videoTime * FPS);
+
+  // Video timer effect
   useEffect(() => {
     if (isPlaying) {
       timerRef.current = setInterval(() => {
         setVideoTime((t) => {
           const next = t + 0.1 * playSpeed;
-          if (next >= 120) { setIsPlaying(false); return 120; }
+          if (next >= totalVideoSec) { setIsPlaying(false); return totalVideoSec; }
           return next;
         });
       }, 100);
@@ -248,48 +583,28 @@ export default function DataCorrection() {
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isPlaying, playSpeed]);
+  }, [isPlaying, playSpeed, totalVideoSec]);
 
-  // ── API hooks
-  const { data: race, isLoading: isRaceLoading } = useGetRace(raceId, {
-    query: { enabled: !!raceId, queryKey: getGetRaceQueryKey(raceId) },
-  });
+  // Current bboxes (interpolated)
+  const currentBboxes = useMemo(() => {
+    if (!selectedCp) return [];
+    const cpKf = keyframes[selectedCp] ?? {};
+    return interpolateBboxes(cpKf, currentFrame);
+  }, [keyframes, selectedCp, currentFrame]);
 
-  const { data: entries } = useGetRaceEntries(raceId, {
-    query: { enabled: !!raceId, queryKey: getGetRaceEntriesQueryKey(raceId) },
-  });
+  // Initialize sample bboxes when checkpoint selected and in editing mode
+  useEffect(() => {
+    if (!selectedCp || !entries || entries.length === 0 || !isEditingMode) return;
+    setKeyframes((prev) => {
+      if (Object.keys(prev[selectedCp] ?? {}).length > 0) return prev;
+      const cpType = ptsStr.some((p) => p.key === selectedCp) ? "straight"
+        : selectedCp === "5m" ? "start" : "200m";
+      const sample = generateSampleBboxes(entries, cpType);
+      return { ...prev, [selectedCp]: { 0: sample } };
+    });
+  }, [selectedCp, entries?.length, isEditingMode]);
 
-  const { data: passingOrders, isLoading: isOrdersLoading } = useGetPassingOrders(
-    raceId,
-    { checkpoint: selectedCp ?? undefined },
-    { query: { enabled: !!raceId && !!selectedCp, queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp ?? undefined }) } }
-  );
-
-  const startCorrectionMut = useStartCorrection();
-  const completeCorrectionMut = useCompleteCorrection();
-  const updatePassingOrderMut = useUpdatePassingOrder();
-
-  // ── Correction mode: if race is already 補正中, start in editing mode
-  const isCorrectionMode = race?.status === "補正中";
-
-  // ── Race metadata
-  const straight = race ? getStraight(race) : 300;
-  const { pts200, ptsStr } = useMemo(
-    () => computeCheckpoints(race?.distance ?? 2000, straight),
-    [race?.distance, straight]
-  );
-
-  // ── Checkpoints for video time display
-  const allCheckpoints = [...pts200, ...ptsStr];
-  const baseSec = race ? (race.distance / 1000) * 60 + 27 : 90;
-
-  // ── Handle checkpoint button click
-  const handleCpClick = (key: string, meter: number) => {
-    setSelectedCp(key);
-    setVideoTime(cpVideoTime(meter, race?.distance ?? 2000, baseSec) - VIDEO_OFFSET);
-  };
-
-  // ── Determine checkpoint type
+  // cpType
   const cpType = useMemo(() => {
     if (!selectedCp) return null;
     if (selectedCp === "5m") return "start";
@@ -297,37 +612,34 @@ export default function DataCorrection() {
     return "200m";
   }, [selectedCp, ptsStr]);
 
-  // ── Number of horses
-  const numHorses = (entries?.length ?? 14);
+  const numHorses = entries?.length ?? 14;
+  const furlongSplits = (entries?.[0] as any)?.furlong_splits ?? [];
 
-  // ── Merge local edits into passing orders
+  // Display orders with local edits applied
   const displayOrders = useMemo(() => {
     if (!passingOrders) return [];
-    return passingOrders.map((o) => ({
-      ...o,
-      ...(localEdits[o.id] ?? {}),
-    }));
+    return passingOrders.map((o) => ({ ...o, ...(localEdits[o.id] ?? {}) }));
   }, [passingOrders, localEdits]);
 
-  // ── Local edit helper
   const setEdit = (id: string, field: string, value: unknown) => {
-    setLocalEdits((prev) => ({
-      ...prev,
-      [id]: { ...(prev[id] ?? {}), [field]: value },
-    }));
+    setLocalEdits((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), [field]: value } }));
   };
 
-  // ── Save edits to backend (on 補正完了)
+  // Save all edits
   const saveAllEdits = useCallback(async () => {
-    const entries2 = Object.entries(localEdits);
-    for (const [id, changes] of entries2) {
+    for (const [id, changes] of Object.entries(localEdits)) {
       await updatePassingOrderMut.mutateAsync({ id, data: changes as never });
     }
     setLocalEdits({});
   }, [localEdits, updatePassingOrderMut]);
 
-  // ── 補正開始
+  // 補正開始
   const handleStart = () => {
+    const status = race?.status;
+    if (status === "補正中") {
+      setIsEditingMode(true);
+      return;
+    }
     startCorrectionMut.mutate({ raceId }, {
       onSuccess: (updated) => {
         queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
@@ -336,12 +648,13 @@ export default function DataCorrection() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ user_name: "管理者", action_type: "補正開始", description: "補正作業を開始しました" }),
         });
+        setIsEditingMode(true);
         toast({ title: "補正を開始しました" });
       },
     });
   };
 
-  // ── 一時保存
+  // 一時保存
   const handleTempSave = async () => {
     await saveAllEdits();
     fetch(`${API}/races/${raceId}/history`, {
@@ -353,7 +666,7 @@ export default function DataCorrection() {
     setConfirmDialog(null);
   };
 
-  // ── 補正完了
+  // 補正完了
   const handleComplete = async () => {
     await saveAllEdits();
     completeCorrectionMut.mutate({ raceId }, {
@@ -371,16 +684,144 @@ export default function DataCorrection() {
     setConfirmDialog(null);
   };
 
-  const raceTimeFromVideo = videoTime - VIDEO_OFFSET;
+  // キャンセル: stay on page, return to view mode
+  const handleCancel = () => {
+    setIsEditingMode(false);
+    setLocalEdits({});
+    setSelectedBboxId(null);
+    setAddMode(false);
+    setAddPreview(null);
+  };
 
-  // ── Furlong splits
-  const furlongSplits = (entries?.[0] as any)?.furlong_splits ?? [];
+  // Checkpoint click
+  const handleCpClick = (key: string, meter: number) => {
+    setSelectedCp(key);
+    setSelectedBboxId(null);
+    const vt = cpVideoTime(meter, race?.distance ?? 2000, baseSec) - VIDEO_OFFSET;
+    setVideoTime(Math.max(0, vt));
+  };
+
+  // BBOX operations
+  const handleAddBbox = useCallback((b: Omit<BBox, "id">) => {
+    if (!selectedCp) return;
+    const id = `bbox-${Date.now()}`;
+    const newBbox: BBox = { id, ...b };
+    setKeyframes((prev) => {
+      const cpKf = { ...(prev[selectedCp] ?? {}) };
+      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
+      cpKf[currentFrame] = [...existing, newBbox];
+      return { ...prev, [selectedCp]: cpKf };
+    });
+    setSelectedBboxId(id);
+    setAddMode(false);
+  }, [selectedCp, currentFrame]);
+
+  const handleUpdateBbox = useCallback((id: string, updates: Partial<Pick<BBox, "x" | "y" | "w" | "h">>) => {
+    if (!selectedCp) return;
+    setKeyframes((prev) => {
+      const cpKf = { ...(prev[selectedCp] ?? {}) };
+      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
+      cpKf[currentFrame] = existing.map((b) => b.id === id ? { ...b, ...updates } : b);
+      return { ...prev, [selectedCp]: cpKf };
+    });
+  }, [selectedCp, currentFrame]);
+
+  const handleDeleteBbox = useCallback((id: string) => {
+    if (!selectedCp) return;
+    setKeyframes((prev) => {
+      const cpKf = { ...(prev[selectedCp] ?? {}) };
+      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
+      cpKf[currentFrame] = existing.filter((b) => b.id !== id);
+      return { ...prev, [selectedCp]: cpKf };
+    });
+    setSelectedBboxId(null);
+  }, [selectedCp, currentFrame]);
+
+  const handleBboxHorseNumber = useCallback((id: string, num: number | null) => {
+    if (!selectedCp) return;
+    setKeyframes((prev) => {
+      const cpKf = { ...(prev[selectedCp] ?? {}) };
+      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
+      cpKf[currentFrame] = existing.map((b) => {
+        if (b.id !== id) return b;
+        const entry = entries?.find((e) => e.horse_number === num);
+        return { ...b, horseNumber: num, gateNumber: entry?.gate_number ?? null };
+      });
+      return { ...prev, [selectedCp]: cpKf };
+    });
+  }, [selectedCp, currentFrame, entries]);
+
+  const handleSaveKeyframe = useCallback(() => {
+    if (!selectedCp) return;
+    setKeyframes((prev) => {
+      const cpKf = { ...(prev[selectedCp] ?? {}) };
+      cpKf[currentFrame] = currentBboxes;
+      return { ...prev, [selectedCp]: cpKf };
+    });
+    toast({ title: `フレーム ${currentFrame} をキーフレームとして保存しました` });
+  }, [selectedCp, currentFrame, currentBboxes, toast]);
+
+  // Recalculation
+  const handleRecalculate = useCallback(async () => {
+    if (!selectedCp || !passingOrders?.length) return;
+
+    const assigned = currentBboxes.filter((b) => b.horseNumber != null);
+    const nums = assigned.map((b) => b.horseNumber!);
+    const dupes = nums.filter((n, i) => nums.indexOf(n) !== i);
+    if (dupes.length > 0) {
+      toast({ title: "検証エラー", description: `馬番${dupes[0]}が重複しています`, variant: "destructive" });
+      return;
+    }
+
+    const byTime = [...passingOrders].filter((o) => o.time_seconds != null).sort((a, b) => a.time_seconds - b.time_seconds);
+    if (!byTime.length) { toast({ title: "通過タイムデータがありません" }); return; }
+
+    const leaderOrder = byTime[0];
+    const leaderBbox = assigned.find((b) => b.horseNumber === leaderOrder.horse_number);
+    if (!leaderBbox) { toast({ title: "先頭馬のBBOXが未割当です" }); return; }
+
+    const leaderCx = leaderBbox.x + leaderBbox.w / 2;
+    const leaderCy = leaderBbox.y + leaderBbox.h / 2;
+    const anchor = leaderOrder.time_seconds!;
+    const SCALE = 8.0;
+    const SPEED = 14.0;
+
+    let hasInversion = false;
+    const updates: { id: string; time_seconds: number }[] = [];
+
+    for (const bbox of assigned) {
+      if (bbox.horseNumber === leaderOrder.horse_number) continue;
+      const bx = bbox.x + bbox.w / 2, by = bbox.y + bbox.h / 2;
+      const persp = 1 + (leaderCy - by) * 0.25;
+      const distM = (bx - leaderCx) * persp * SCALE;
+      const dt = distM / SPEED;
+      const est = anchor + dt;
+      if (est <= 0) { hasInversion = true; continue; }
+      const order = passingOrders.find((o) => o.horse_number === bbox.horseNumber);
+      if (order) updates.push({ id: order.id, time_seconds: est });
+    }
+
+    if (hasInversion) {
+      toast({ title: "時刻の矛盾を検出", description: "BBOXの位置を確認してください", variant: "destructive" });
+      return;
+    }
+    for (const { id, time_seconds } of updates) {
+      await updatePassingOrderMut.mutateAsync({ id, data: { time_seconds } as never });
+    }
+    queryClient.invalidateQueries({ queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp }) });
+    toast({ title: "再計算完了", description: `${updates.length}頭の通過タイムを更新しました` });
+  }, [selectedCp, currentBboxes, passingOrders, raceId, updatePassingOrderMut, queryClient, toast]);
+
+  const raceTimeFromVideo = videoTime - VIDEO_OFFSET;
+  const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
+  const canStartCorrection = race?.status === "未補正" || race?.status === "補正中";
+  const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
 
   // ── RENDER ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
 
-      {/* ── Header ─────────────────────────────────────── */}
+      {/* Header */}
       <div className="border-b border-border bg-card px-4 py-2 flex items-center justify-between gap-4 flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button
@@ -390,13 +831,10 @@ export default function DataCorrection() {
             <ArrowLeft className="h-4 w-4" />
           </button>
 
-          {isRaceLoading ? (
-            <Skeleton className="h-6 w-64" />
-          ) : race ? (
+          {isRaceLoading ? <Skeleton className="h-6 w-64" /> : race ? (
             <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                <span className="text-muted-foreground">競馬場</span>
-                <span>{race.venue}</span>
+              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                <span className="text-muted-foreground">競馬場</span><span>{race.venue}</span>
               </div>
               <span className="text-zinc-600">·</span>
               <div className="flex items-center gap-1 text-xs">
@@ -429,42 +867,27 @@ export default function DataCorrection() {
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
-          {isCorrectionMode && (
+          {race?.status === "補正中" && (
             <Badge variant="outline" className="text-[10px] border-blue-700 text-blue-400 bg-blue-900/20">補正中</Badge>
           )}
 
-          {/* 修正履歴 */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs gap-1.5 cursor-pointer"
-            onClick={() => setShowHistory(true)}
-          >
-            <History className="h-3 w-3" />
-            修正履歴
+          <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setShowHistory(true)}>
+            <History className="h-3 w-3" />修正履歴
           </Button>
 
-          {/* Action buttons */}
-          {!isCorrectionMode ? (
+          {!isEditingMode ? (
             <Button
               size="sm"
               className="h-7 text-xs gap-1.5 bg-primary hover:bg-primary/90 cursor-pointer"
               onClick={handleStart}
-              disabled={startCorrectionMut.isPending || !isAdmin}
+              disabled={startCorrectionMut.isPending || !isAdmin || !canStartCorrection}
             >
-              <Play className="h-3 w-3" />
-              補正開始
+              <Play className="h-3 w-3" />補正開始
             </Button>
           ) : (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1.5 cursor-pointer"
-                onClick={() => setConfirmDialog("save")}
-              >
-                <Save className="h-3 w-3" />
-                一時保存
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setConfirmDialog("save")}>
+                <Save className="h-3 w-3" />一時保存
               </Button>
               <Button
                 size="sm"
@@ -472,14 +895,12 @@ export default function DataCorrection() {
                 onClick={() => setConfirmDialog("complete")}
                 disabled={completeCorrectionMut.isPending}
               >
-                <CheckCircle2 className="h-3 w-3" />
-                補正完了
+                <CheckCircle2 className="h-3 w-3" />補正完了
               </Button>
               <Button
-                variant="ghost"
-                size="sm"
+                variant="ghost" size="sm"
                 className="h-7 text-xs cursor-pointer text-muted-foreground hover:text-foreground"
-                onClick={() => navigate("/")}
+                onClick={handleCancel}
               >
                 キャンセル
               </Button>
@@ -488,10 +909,10 @@ export default function DataCorrection() {
         </div>
       </div>
 
-      {/* ── 3-column body ───────────────────────────────── */}
+      {/* 3-column body */}
       <div className="flex-1 flex overflow-hidden min-h-0">
 
-        {/* ── LEFT: JRA公式データ (22%) ─────────────────── */}
+        {/* LEFT: JRA公式データ (22%) */}
         <div className="w-[22%] min-w-[200px] border-r border-border flex flex-col bg-card/40">
           <div className="px-3 py-1.5 border-b border-border bg-card flex items-center justify-between flex-shrink-0">
             <span className="text-[11px] font-semibold text-muted-foreground">JRA公式データ</span>
@@ -501,9 +922,7 @@ export default function DataCorrection() {
                   key={v}
                   onClick={() => setLeftView(v)}
                   className={`px-1.5 py-0.5 text-[10px] rounded cursor-pointer transition-colors ${
-                    leftView === v
-                      ? "bg-primary text-white"
-                      : "bg-muted text-muted-foreground hover:text-foreground"
+                    leftView === v ? "bg-primary text-white" : "bg-muted text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {v === "furlong" ? "ハロン" : v === "entries" ? "出走馬" : "両方"}
@@ -513,17 +932,13 @@ export default function DataCorrection() {
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {/* Furlong times */}
             {(leftView === "furlong" || leftView === "both") && (
               <div className="p-2 border-b border-border/50">
                 <div className="text-[10px] text-muted-foreground mb-1.5 font-medium">ハロンタイム</div>
                 {furlongSplits.length > 0 ? (
                   <div className="grid grid-cols-4 gap-0.5">
                     {furlongSplits.map((t: number, i: number) => (
-                      <div
-                        key={i}
-                        className="bg-zinc-800 rounded px-1 py-0.5 text-center text-[10px] font-mono text-zinc-200"
-                      >
+                      <div key={i} className="bg-zinc-800 rounded px-1 py-0.5 text-center text-[10px] font-mono text-zinc-200">
                         {t.toFixed(1)}
                       </div>
                     ))}
@@ -534,7 +949,6 @@ export default function DataCorrection() {
               </div>
             )}
 
-            {/* Entry table */}
             {(leftView === "entries" || leftView === "both") && (
               <div>
                 <table className="w-full text-[10px]">
@@ -545,7 +959,7 @@ export default function DataCorrection() {
                       <th className="p-1 text-left text-muted-foreground">馬名</th>
                       <th className="p-1 text-right text-muted-foreground">着<br/>順</th>
                       <th className="p-1 text-right text-muted-foreground">タイム</th>
-                      <th className="p-1 text-right text-muted-foreground">着<br/>差</th>
+                      <th className="p-1 text-right text-muted-foreground">着差</th>
                       <th className="p-1 text-right text-muted-foreground">3F</th>
                     </tr>
                   </thead>
@@ -581,74 +995,122 @@ export default function DataCorrection() {
           </div>
         </div>
 
-        {/* ── MIDDLE: Video + section buttons (38%) ────── */}
+        {/* MIDDLE: Video + section buttons (38%) */}
         <div className="w-[38%] flex flex-col border-r border-border overflow-hidden">
-          {/* Video player area */}
-          <div className="flex-shrink-0 p-2 bg-zinc-950">
-            {/* Video box 3:4 ratio centered */}
-            <div className="flex justify-center">
-              <div className="relative w-full max-w-[220px]" style={{ aspectRatio: "3/4" }}>
-                <div className="absolute inset-0 bg-zinc-900 rounded flex flex-col items-center justify-center border border-zinc-700 overflow-hidden">
-                  {/* Ruler overlay */}
-                  {rulerEnabled && (
-                    <div
-                      className="absolute inset-0 pointer-events-none"
-                      style={{ transform: `rotate(${rulerAngle}deg)`, transformOrigin: "center" }}
-                    >
-                      <div
-                        className="absolute w-full border-t-2 border-orange-400/70"
-                        style={{ top: `${rulerY}%` }}
-                      />
-                    </div>
+
+          {/* Video area */}
+          <div className="flex-shrink-0 bg-zinc-950">
+
+            {/* Video box — full column width, 16:9 */}
+            <div className="relative w-full" style={{ aspectRatio: "16/9" }}>
+              {/* Video background */}
+              <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
+                {/* Simulated video background */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  {!isEditingMode && (
+                    <>
+                      <Play className="h-12 w-12 text-zinc-700 mb-2" />
+                      <span className="text-xs text-zinc-600">レース動画</span>
+                    </>
                   )}
-                  <Play className="h-10 w-10 text-zinc-600 mb-2" />
-                  <span className="text-xs text-zinc-600">レース動画</span>
-                  {selectedCp && (
-                    <span className="text-[10px] text-zinc-500 mt-1">
-                      {selectedCp === "5m" ? "5m地点(スタート)" : selectedCp}
-                    </span>
+                  {isEditingMode && currentBboxes.length === 0 && (
+                    <span className="text-xs text-zinc-600">地点を選択してBBOXを表示</span>
                   )}
                 </div>
 
-                {/* Race time overlay top-right */}
-                <div className="absolute top-1 right-1 bg-black/70 rounded px-1 py-0.5">
-                  <div className="text-[9px] text-zinc-400">動画: {fmtVideoTime(videoTime)}</div>
-                  <div className="text-[9px] text-red-400 font-mono">
-                    レース: {raceTimeFromVideo < 0 ? `-${fmtTime(Math.abs(raceTimeFromVideo))}` : fmtTime(raceTimeFromVideo)}
+                {/* BBOX Canvas */}
+                {isEditingMode && (
+                  <BboxCanvas
+                    bboxes={currentBboxes}
+                    addPreview={addPreview}
+                    selectedId={selectedBboxId}
+                    addMode={addMode}
+                    isEditing={isEditingMode}
+                    onSelect={setSelectedBboxId}
+                    onAdd={handleAddBbox}
+                    onUpdate={handleUpdateBbox}
+                    onDelete={handleDeleteBbox}
+                  />
+                )}
+
+                {/* Selected checkpoint indicator */}
+                {selectedCp && !isEditingMode && (
+                  <div className="absolute bottom-2 left-0 right-0 flex justify-center pointer-events-none">
+                    <span className="bg-black/60 text-zinc-400 text-[10px] px-2 py-0.5 rounded">
+                      {selectedCp === "5m" ? "5m地点(スタート)" : selectedCp}
+                    </span>
                   </div>
+                )}
+              </div>
+
+              {/* Ruler — outside overflow:hidden, spans full width */}
+              {rulerEnabled && (
+                <div
+                  className="absolute left-0 right-0 pointer-events-none z-10"
+                  style={{ top: `${rulerY}%`, overflow: "visible" }}
+                >
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "-200%",
+                      right: "-200%",
+                      borderTop: "2px solid rgba(249, 115, 22, 0.85)",
+                      transform: `rotate(${rulerAngle}deg)`,
+                      transformOrigin: "center 0",
+                    }}
+                  />
                 </div>
+              )}
+
+              {/* Time overlay */}
+              <div className="absolute top-1.5 right-1.5 bg-black/75 rounded px-1.5 py-0.5 pointer-events-none z-20">
+                <div className="text-[9px] text-zinc-400">動画: {fmtVideoTime(videoTime)}</div>
+                <div className="text-[9px] text-red-400 font-mono">
+                  レース: {raceTimeFromVideo < 0
+                    ? `-${fmtTime(Math.abs(raceTimeFromVideo))}`
+                    : fmtTime(raceTimeFromVideo)}
+                </div>
+                {isEditingMode && (
+                  <div className="text-[9px] text-zinc-500 font-mono">
+                    F: {currentFrame} {cpKeyframeCount > 0 && <span className="text-primary">KF:{cpKeyframeCount}</span>}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Video controls */}
-            <div className="mt-2 space-y-1.5">
-              <div className="flex items-center gap-1.5 justify-between flex-wrap">
+            {/* Controls */}
+            <div className="px-2 pt-1.5 pb-1 space-y-1 bg-zinc-950">
+              {/* Playback row */}
+              <div className="flex items-center gap-1.5 justify-between">
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setVideoTime(0)} className="text-zinc-400 hover:text-white cursor-pointer p-0.5"><ChevronFirst className="h-3.5 w-3.5" /></button>
-                  <button onClick={() => setVideoTime((t) => Math.max(0, t - 1 / 30))} className="text-zinc-400 hover:text-white cursor-pointer p-0.5"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => setVideoTime(0)} className="text-zinc-400 hover:text-white cursor-pointer p-0.5">
+                    <ChevronFirst className="h-3.5 w-3.5" />
+                  </button>
+                  <button onClick={() => setVideoTime((t) => Math.max(0, t - 1 / 30))} className="text-zinc-400 hover:text-white cursor-pointer p-0.5">
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     onClick={() => setIsPlaying(!isPlaying)}
                     className="bg-primary/20 hover:bg-primary/40 text-primary border border-primary/40 rounded p-1 cursor-pointer"
                   >
                     {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                   </button>
-                  <button onClick={() => setVideoTime((t) => Math.min(120, t + 1 / 30))} className="text-zinc-400 hover:text-white cursor-pointer p-0.5"><ChevronRight className="h-3.5 w-3.5" /></button>
-                  <button onClick={() => setVideoTime(120)} className="text-zinc-400 hover:text-white cursor-pointer p-0.5"><ChevronLast className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => setVideoTime((t) => Math.min(totalVideoSec, t + 1 / 30))} className="text-zinc-400 hover:text-white cursor-pointer p-0.5">
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                  <button onClick={() => setVideoTime(totalVideoSec)} className="text-zinc-400 hover:text-white cursor-pointer p-0.5">
+                    <ChevronLast className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-
                 <div className="flex items-center gap-1">
                   {PLAY_SPEEDS.map((s) => (
                     <button
                       key={s}
                       onClick={() => setPlaySpeed(s)}
                       className={`text-[10px] px-1.5 py-0.5 rounded border cursor-pointer ${
-                        playSpeed === s
-                          ? "bg-primary/20 border-primary text-primary"
-                          : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                        playSpeed === s ? "bg-primary/20 border-primary text-primary" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
                       }`}
-                    >
-                      ×{s}
-                    </button>
+                    >×{s}</button>
                   ))}
                 </div>
               </div>
@@ -659,16 +1121,16 @@ export default function DataCorrection() {
                 <input
                   type="range"
                   min={0}
-                  max={120}
+                  max={totalVideoSec}
                   step={0.033}
                   value={videoTime}
                   onChange={(e) => setVideoTime(parseFloat(e.target.value))}
                   className="flex-1 h-1 accent-orange-500 cursor-pointer"
                 />
-                <span className="text-[9px] text-zinc-500 font-mono w-8">2:00</span>
+                <span className="text-[9px] text-zinc-500 font-mono w-8">{fmtVideoTime(totalVideoSec)}</span>
               </div>
 
-              {/* Ruler toggle */}
+              {/* Ruler + BBOX toolbar row */}
               <div className="flex items-center gap-2 flex-wrap">
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input
@@ -685,29 +1147,100 @@ export default function DataCorrection() {
                     <div className="flex items-center gap-1">
                       <span className="text-[9px] text-zinc-500">位置</span>
                       <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={rulerY}
+                        type="range" min={0} max={100} value={rulerY}
                         onChange={(e) => setRulerY(parseInt(e.target.value))}
-                        className="w-20 h-1 accent-orange-500 cursor-pointer"
+                        className="w-16 h-1 accent-orange-500 cursor-pointer"
                       />
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[9px] text-zinc-500">角度</span>
                       <input
-                        type="range"
-                        min={-45}
-                        max={45}
-                        value={rulerAngle}
+                        type="range" min={-45} max={45} value={rulerAngle}
                         onChange={(e) => setRulerAngle(parseInt(e.target.value))}
-                        className="w-20 h-1 accent-orange-500 cursor-pointer"
+                        className="w-16 h-1 accent-orange-500 cursor-pointer"
                       />
-                      <span className="text-[9px] text-zinc-500 w-7">{rulerAngle}°</span>
+                      <span className="text-[9px] text-zinc-500 w-6">{rulerAngle}°</span>
                     </div>
                   </>
                 )}
+
+                {/* BBOX toolbar — only in editing mode */}
+                {isEditingMode && selectedCp && (
+                  <div className="flex items-center gap-1 ml-auto">
+                    <button
+                      onClick={() => { setAddMode((m) => !m); setSelectedBboxId(null); }}
+                      title="BBOX追加"
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] cursor-pointer transition-colors ${
+                        addMode ? "bg-primary/20 border-primary text-primary" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                      }`}
+                    >
+                      <Square className="h-3 w-3" />追加
+                    </button>
+                    <button
+                      onClick={() => { if (selectedBboxId) handleDeleteBbox(selectedBboxId); }}
+                      disabled={!selectedBboxId}
+                      title="選択BBOX削除"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:border-red-500 hover:text-red-400 text-[10px] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="h-3 w-3" />削除
+                    </button>
+                    <button
+                      onClick={handleSaveKeyframe}
+                      title="キーフレーム保存"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:border-blue-500 hover:text-blue-400 text-[10px] cursor-pointer"
+                    >
+                      <Save className="h-3 w-3" />KF
+                    </button>
+                    <button
+                      onClick={handleRecalculate}
+                      title="座標から通過タイムを再計算"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:border-green-500 hover:text-green-400 text-[10px] cursor-pointer"
+                    >
+                      <RefreshCw className="h-3 w-3" />再計算
+                    </button>
+                  </div>
+                )}
               </div>
+
+              {/* Selected BBOX assignment panel */}
+              {isEditingMode && selectedBbox && (
+                <div className="flex items-center gap-2 px-2 py-1 bg-zinc-800/60 rounded border border-zinc-700/50">
+                  <MousePointer2 className="h-3 w-3 text-primary flex-shrink-0" />
+                  <span className="text-[10px] text-zinc-400">選択BBOX</span>
+                  <select
+                    value={selectedBbox.horseNumber ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      handleBboxHorseNumber(selectedBbox.id, val ? parseInt(val) : null);
+                    }}
+                    className="bg-zinc-900 border border-zinc-600 rounded text-[10px] px-1.5 py-0.5 cursor-pointer text-foreground"
+                  >
+                    <option value="">未割当</option>
+                    {Array.from({ length: numHorses }, (_, i) => (
+                      <option key={i + 1} value={i + 1}>{i + 1}番</option>
+                    ))}
+                  </select>
+                  {selectedBbox.gateNumber && (
+                    <span
+                      className="inline-flex w-5 h-5 rounded-sm items-center justify-center text-[9px] font-bold border border-white/20 flex-shrink-0"
+                      style={{
+                        backgroundColor: CAP_COLORS[selectedBbox.gateNumber]?.bg ?? "#555",
+                        color: CAP_COLORS[selectedBbox.gateNumber]?.text ?? "#fff",
+                      }}
+                    >
+                      {selectedBbox.gateNumber}
+                    </span>
+                  )}
+                  <span className="text-[9px] text-zinc-600 font-mono ml-auto">
+                    ({(selectedBbox.x * 100).toFixed(0)}%,{(selectedBbox.y * 100).toFixed(0)}%) {(selectedBbox.w * 100).toFixed(0)}×{(selectedBbox.h * 100).toFixed(0)}
+                  </span>
+                </div>
+              )}
+              {isEditingMode && addMode && !selectedBbox && (
+                <div className="text-[10px] text-primary/80 px-1 animate-pulse">
+                  ドラッグしてBBOXを追加してください
+                </div>
+              )}
             </div>
           </div>
 
@@ -715,11 +1248,8 @@ export default function DataCorrection() {
           <div className="flex-1 overflow-y-auto p-2 space-y-3">
             {race && (
               <>
-                {/* 200m毎の地点 */}
                 <div>
-                  <div className="text-[10px] text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
-                    <span>200m毎の地点</span>
-                  </div>
+                  <div className="text-[10px] text-muted-foreground font-medium mb-1.5">200m毎の地点</div>
                   <div className="flex flex-wrap gap-1.5">
                     {pts200.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, baseSec);
@@ -734,9 +1264,7 @@ export default function DataCorrection() {
                               : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
                           }`}
                         >
-                          <span className="font-medium leading-tight whitespace-pre-line text-center text-[9px]">
-                            {pt.label}
-                          </span>
+                          <span className="font-medium leading-tight whitespace-pre-line text-center text-[9px]">{pt.label}</span>
                           <span className={`mt-0.5 font-mono text-[9px] ${isSelected ? "text-white/70" : "text-muted-foreground"}`}>
                             {fmtVideoTime(vt)}
                           </span>
@@ -746,7 +1274,6 @@ export default function DataCorrection() {
                   </div>
                 </div>
 
-                {/* 最後の直線 */}
                 <div>
                   <div className="text-[10px] text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
                     <span>最後の直線</span>
@@ -780,7 +1307,7 @@ export default function DataCorrection() {
           </div>
         </div>
 
-        {/* ── RIGHT: Analysis results (40%) ─────────────── */}
+        {/* RIGHT: Analysis results (40%) */}
         <div className="w-[40%] flex flex-col overflow-hidden">
           <div className="px-3 py-1.5 border-b border-border bg-card flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2">
@@ -820,7 +1347,7 @@ export default function DataCorrection() {
                   orders={displayOrders}
                   entries={entries ?? []}
                   numHorses={numHorses}
-                  isCorrectionMode={isCorrectionMode}
+                  isCorrectionMode={isEditingMode}
                   onEdit={setEdit}
                 />
               )}
@@ -829,7 +1356,7 @@ export default function DataCorrection() {
         </div>
       </div>
 
-      {/* ── Modals ─────────────────────────────────────── */}
+      {/* Modals */}
       {showHistory && <HistoryModal raceId={raceId} onClose={() => setShowHistory(false)} />}
 
       {confirmDialog === "save" && (
@@ -841,7 +1368,6 @@ export default function DataCorrection() {
           onCancel={() => setConfirmDialog(null)}
         />
       )}
-
       {confirmDialog === "complete" && (
         <ConfirmDialog
           title="補正完了の確認"
@@ -856,14 +1382,9 @@ export default function DataCorrection() {
   );
 }
 
-// ── Right Table ──────────────────────────────────────────────────────────────
+// ── Right Table ────────────────────────────────────────────────────────────────
 function RightTable({
-  cpType,
-  orders,
-  entries,
-  numHorses,
-  isCorrectionMode,
-  onEdit,
+  cpType, orders, entries, numHorses, isCorrectionMode, onEdit,
 }: {
   cpType: "start" | "200m" | "straight";
   orders: any[];
@@ -872,32 +1393,15 @@ function RightTable({
   isCorrectionMode: boolean;
   onEdit: (id: string, field: string, value: unknown) => void;
 }) {
-  // Horse numbers from entries for dropdown
-  const horseNumbers = Array.from({ length: numHorses }, (_, i) => i + 1);
-
-  // Set of horse_numbers that appear in orders
   const presentNums = new Set(orders.map((o) => o.horse_number));
-  // Missing horses: in entries but not in orders
-  const missingHorses = entries
-    .map((e) => e.horse_number)
-    .filter((n) => !presentNums.has(n));
-
-  // Phantom rows for missing horses
+  const missingHorses = entries.map((e) => e.horse_number).filter((n) => !presentNums.has(n));
   const phantomRows = missingHorses.map((hn) => {
     const e = entries.find((x) => x.horse_number === hn);
     return {
-      id: `phantom-${hn}`,
-      position: null,
-      horse_number: hn,
-      gate_number: e?.gate_number ?? null,
-      color: null,
-      lane: null,
-      time_seconds: null,
-      accuracy: null,
-      special_note: null,
-      running_position: null,
-      absolute_speed: null,
-      speed_change: null,
+      id: `phantom-${hn}`, position: null, horse_number: hn,
+      gate_number: e?.gate_number ?? null, color: null, lane: null,
+      time_seconds: null, accuracy: null, special_note: null,
+      running_position: null, absolute_speed: null, speed_change: null,
       is_phantom: true,
     };
   });
@@ -933,16 +1437,11 @@ function RightTable({
           const cap = gn != null ? CAP_COLORS[gn] : null;
 
           return (
-            <tr
-              key={row.id ?? idx}
-              className={`border-t border-border/30 ${isPhantom ? "opacity-50" : "hover:bg-muted/20"}`}
-            >
-              {/* 順位 */}
+            <tr key={row.id ?? idx} className={`border-t border-border/30 ${isPhantom ? "opacity-50" : "hover:bg-muted/20"}`}>
               <td className="p-1.5 text-center font-mono font-bold text-sm">
-                {row.position != null ? row.position : <span className="text-zinc-600">-</span>}
+                {row.position ?? <span className="text-zinc-600">-</span>}
               </td>
 
-              {/* 馬番 */}
               <td className="p-1.5 text-center">
                 {isCorrectionMode && !isPhantom ? (
                   <select
@@ -959,7 +1458,6 @@ function RightTable({
                 )}
               </td>
 
-              {/* 枠 */}
               <td className="p-1.5 text-center">
                 {gn != null ? (
                   <span
@@ -969,17 +1467,12 @@ function RightTable({
                 ) : <span className="text-zinc-600">-</span>}
               </td>
 
-              {/* 帽色 */}
-              <td className="p-1.5 text-center">
-                <CapCircle gate={gn} />
-              </td>
+              <td className="p-1.5 text-center"><CapCircle gate={gn} /></td>
 
-              {/* 通過タイム */}
               <td className="p-1.5 text-right font-mono text-[10px]">
                 {row.time_seconds != null ? `${row.time_seconds.toFixed(2)}s` : <span className="text-zinc-600">-</span>}
               </td>
 
-              {/* レーン (200m only) */}
               {cpType === "200m" && (
                 <td className="p-1.5 text-center">
                   {isCorrectionMode && !isPhantom ? (
@@ -996,11 +1489,10 @@ function RightTable({
                 </td>
               )}
 
-              {/* Straight-only columns */}
               {cpType === "straight" && (
                 <>
                   <td className="p-1.5 text-right font-mono text-[10px] text-cyan-400">
-                    {row.absolute_speed != null ? `${row.absolute_speed.toFixed(1)}` : <span className="text-zinc-600">-</span>}
+                    {row.absolute_speed != null ? row.absolute_speed.toFixed(1) : <span className="text-zinc-600">-</span>}
                   </td>
                   <td className="p-1.5 text-right font-mono text-[10px]">
                     {row.speed_change != null ? (
@@ -1031,7 +1523,6 @@ function RightTable({
                 </>
               )}
 
-              {/* 特記事項 */}
               <td className="p-1.5 text-center">
                 {isCorrectionMode && !isPhantom ? (
                   <select
@@ -1042,15 +1533,14 @@ function RightTable({
                     {SPECIAL_NOTES.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                 ) : (
-                  <span className={`text-[10px] ${row.special_note ? "text-amber-400 font-medium" : "text-zinc-600"}`}>
-                    {row.special_note || "ー"}
+                  <span className={`text-[10px] ${row.special_note && row.special_note !== "ー" ? "text-yellow-400" : "text-zinc-600"}`}>
+                    {row.special_note || "-"}
                   </span>
                 )}
               </td>
 
-              {/* 信頼度 */}
               <td className="p-1.5 text-center">
-                <AccBadge v={isPhantom ? null : row.accuracy} />
+                <AccBadge v={row.accuracy} />
               </td>
             </tr>
           );
