@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { 
-  ActivitySquare,
+import {
   Settings,
   ListOrdered,
   ChevronLeft,
@@ -14,7 +13,7 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   const navigation = [
     { name: "処理管理", href: "/processing", icon: Settings, match: (loc: string) => loc.startsWith("/processing") },
@@ -27,18 +26,22 @@ export function Layout({ children }: LayoutProps) {
         className={`flex-shrink-0 border-r border-border bg-sidebar flex flex-col transition-all duration-200 ${collapsed ? "w-14" : "w-56"}`}
       >
         <div className="h-14 flex items-center px-3 border-b border-border relative">
-          <ActivitySquare className="h-5 w-5 text-primary flex-shrink-0" />
+          <img
+            src="/dragon.png"
+            alt="Furlong CUBE"
+            className="h-7 w-7 flex-shrink-0 object-contain"
+          />
           {!collapsed && (
             <span className="ml-2 font-semibold text-sidebar-foreground tracking-tight text-sm whitespace-nowrap overflow-hidden">
-              KEIBA DATA OPS
+              Furlong CUBE
             </span>
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className={`absolute -right-3 top-1/2 -translate-y-1/2 bg-sidebar border border-border rounded-full w-6 h-6 flex items-center justify-center text-sidebar-foreground/60 hover:text-sidebar-foreground z-10 transition-colors`}
+            className="absolute -right-3.5 top-1/2 -translate-y-1/2 bg-zinc-200 border border-zinc-300 rounded-full w-7 h-7 flex items-center justify-center text-zinc-800 hover:bg-white hover:border-white z-10 transition-colors shadow-md"
             aria-label={collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}
           >
-            {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
+            {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronLeft className="h-3.5 w-3.5" />}
           </button>
         </div>
 

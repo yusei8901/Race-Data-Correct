@@ -75,18 +75,18 @@
   --card: 220 15% 10%;
   --card-foreground: 210 20% 98%;
   --card-border: 220 15% 18%;
-  --sidebar: 220 15% 8%;
+  --sidebar: 222 20% 7%;
   --sidebar-foreground: 210 20% 98%;
-  --sidebar-border: 220 15% 18%;
-  --sidebar-primary: 210 100% 50%;
+  --sidebar-border: 220 15% 16%;
+  --sidebar-primary: 20 90% 56%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 15% 14%;
+  --sidebar-accent: 222 18% 13%;
   --sidebar-accent-foreground: 210 20% 98%;
-  --sidebar-ring: 210 100% 50%;
+  --sidebar-ring: 20 90% 56%;
   --popover: 220 15% 10%;
   --popover-foreground: 210 20% 98%;
   --popover-border: 220 15% 18%;
-  --primary: 210 100% 50%;
+  --primary: 20 90% 56%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 15% 16%;
   --secondary-foreground: 210 20% 98%;
@@ -97,7 +97,7 @@
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --input: 220 15% 22%;
-  --ring: 210 100% 50%;
+  --ring: 20 90% 56%;
 
   --app-font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --app-font-serif: Georgia, serif;

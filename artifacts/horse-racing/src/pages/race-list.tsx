@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
-import { Calendar, RefreshCcw, AlertTriangle, X } from "lucide-react";
+import { Calendar, RefreshCcw, AlertTriangle, X, RotateCcw } from "lucide-react";
 import {
   useGetRaces,
   getGetRacesQueryKey,
@@ -35,8 +35,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useQueryClient } from "@tanstack/react-query";
 
 // ---- Status Matrix ----
-// Derived display status from video_status + analysis_status + status fields
-
 type DerivedStatus =
   | "未処理"
   | "未解析"
@@ -56,64 +54,44 @@ function getDerivedStatus(race: Race): DerivedStatus {
   const as_ = race.analysis_status ?? "";
   const st = race.status ?? "";
 
-  // Status matrix per spec:
-  // video_status: 完了 | 未完了
-  // analysis_status: 完了 | 解析中 | 再解析中 | 解析失敗 | 突合失敗 | 未
-  // status: 未処理 | 未解析 | 解析中 | 再解析中 | 未補正 | 補正中 | レビュー待ち | データ確定 | 修正要請 | 解析失敗 | 再解析要請 | 突合失敗
-
-  // Step 1: if video not done, it's 未処理
   if (vs !== "完了") return "未処理";
-
-  // Step 2: analysis not yet started
   if (as_ === "未" || as_ === "") return "未解析";
-
-  // Step 3: analysis in progress
   if (as_ === "解析中") return "解析中";
   if (as_ === "再解析中") return "再解析中";
-
-  // Step 4: analysis failed
   if (as_ === "解析失敗") {
-    // 再解析要請 = user has requested re-analysis after 解析失敗
     if (st === "再解析要請") return "再解析要請";
     return "解析失敗";
   }
-
-  // Step 5: 突合失敗
   if (as_ === "突合失敗") return "突合失敗";
-
-  // Step 6: analysis complete → use status field
   if (as_ === "完了") {
     if (st === "未補正") return "未補正";
     if (st === "補正中") return "補正中";
     if (st === "レビュー待ち") return "レビュー待ち";
     if (st === "データ確定") return "データ確定";
     if (st === "修正要請") return "修正要請";
-    // Legacy status names → map to new model
     if (st === "補正完了" || st === "データ補正") return "未補正";
     if (st === "レビュー") return "レビュー待ち";
     if (st === "修正要求") return "修正要請";
-    // Default: if analysis done but status is unrecognized
     return "未補正";
   }
-
   return "未処理";
 }
 
 function getStatusBadgeProps(status: DerivedStatus) {
   switch (status) {
-    case "未処理":     return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700", label: "未処理" };
-    case "未解析":     return { className: "bg-slate-800/60 text-slate-400 border-slate-700", label: "未解析" };
-    case "解析中":     return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
-    case "再解析中":   return { className: "bg-teal-900/40 text-teal-400 border-teal-800", label: "再解析中" };
-    case "未補正":     return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "未補正" };
-    case "補正中":     return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
+    case "未処理":       return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700", label: "未処理" };
+    case "未解析":       return { className: "bg-slate-800/60 text-slate-400 border-slate-700", label: "未解析" };
+    case "解析中":       return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
+    case "再解析中":     return { className: "bg-teal-900/40 text-teal-400 border-teal-800", label: "再解析中" };
+    case "未補正":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "未補正" };
+    case "補正中":       return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
-    case "データ確定": return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
-    case "修正要請":   return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };
-    case "解析失敗":   return { className: "bg-red-900/50 text-red-400 border-red-800", label: "解析失敗" };
-    case "再解析要請": return { className: "bg-rose-900/40 text-rose-400 border-rose-800", label: "再解析要請" };
-    case "突合失敗":   return { className: "bg-red-950/60 text-red-300 border-red-900", label: "突合失敗" };
-    default:           return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
+    case "データ確定":   return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
+    case "修正要請":     return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };
+    case "解析失敗":     return { className: "bg-red-900/50 text-red-400 border-red-800", label: "解析失敗" };
+    case "再解析要請":   return { className: "bg-rose-900/40 text-rose-400 border-rose-800", label: "再解析要請" };
+    case "突合失敗":     return { className: "bg-red-950/60 text-red-300 border-red-900", label: "突合失敗" };
+    default:             return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
   }
 }
 
@@ -145,24 +123,28 @@ function formatDateTitle(dateStr: string): string {
   }
 }
 
-// Summary card config
-const STATUS_CARD_LIST: { key: DerivedStatus | "total"; label: string; colorClass: string }[] = [
-  { key: "total", label: "総レース数", colorClass: "text-foreground" },
-  { key: "未処理", label: "未処理", colorClass: "text-zinc-400" },
-  { key: "未解析", label: "未解析", colorClass: "text-slate-400" },
-  { key: "解析中", label: "解析中", colorClass: "text-cyan-400" },
-  { key: "再解析中", label: "再解析中", colorClass: "text-teal-400" },
-  { key: "未補正", label: "未補正", colorClass: "text-yellow-400" },
-  { key: "補正中", label: "補正中", colorClass: "text-blue-400" },
-  { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400" },
-  { key: "データ確定", label: "データ確定", colorClass: "text-green-400" },
-  { key: "修正要請", label: "修正要請", colorClass: "text-orange-400" },
-  { key: "解析失敗", label: "解析失敗", colorClass: "text-red-400" },
-  { key: "再解析要請", label: "再解析要請", colorClass: "text-rose-400" },
-  { key: "突合失敗", label: "突合失敗", colorClass: "text-red-300" },
+// Status filter card rows — matches the provided layout image exactly
+// Row 1: データ確定, 修正要請, 補正中, 解析中, 解析失敗
+// Row 2: レビュー待ち, 再解析要請, 未補正, 再解析中, 突合失敗
+const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] = [
+  { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400" },
+  { key: "修正要請",     label: "修正要請",     colorClass: "text-orange-400" },
+  { key: "補正中",       label: "補正中",       colorClass: "text-blue-400" },
+  { key: "解析中",       label: "解析中",       colorClass: "text-cyan-400" },
+  { key: "解析失敗",     label: "解析失敗",     colorClass: "text-red-400" },
 ];
 
-// Re-analysis confirmation dialog
+const STATUS_ROW2: { key: DerivedStatus; label: string; colorClass: string }[] = [
+  { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400" },
+  { key: "再解析要請",   label: "再解析要請",   colorClass: "text-rose-400" },
+  { key: "未補正",       label: "未補正",       colorClass: "text-yellow-400" },
+  { key: "再解析中",     label: "再解析中",     colorClass: "text-teal-400" },
+  { key: "突合失敗",     label: "突合失敗",     colorClass: "text-red-300" },
+];
+
+const ALL_STATUS_CARDS = [...STATUS_ROW1, ...STATUS_ROW2];
+
+// Re-analysis dialog
 interface ReanalyzeDialogProps {
   race: Race;
   onClose: () => void;
@@ -174,7 +156,6 @@ const ANALYSIS_PRESETS = ["標準", "逆光用", "曇り用", "雨天用"];
 
 function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialogProps) {
   const [selectedPreset, setSelectedPreset] = useState("標準");
-  const derivedStatus = getDerivedStatus(race);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
@@ -261,7 +242,7 @@ export default function RaceList() {
     { query: { queryKey: getGetRacesQueryKey(queryParams) } }
   );
 
-  const { data: summary, isLoading: isSummaryLoading } = useGetRaceSummary(
+  const { data: summary } = useGetRaceSummary(
     { date },
     { query: { queryKey: getGetRaceSummaryQueryKey({ date }) } }
   );
@@ -269,7 +250,6 @@ export default function RaceList() {
   const batchUpdateMutation = useBatchUpdateRaces();
   const reanalyzeMutation = useReanalyzeRace();
 
-  // Derive venue options from summary.by_venue
   const venueOptions = useMemo(() => {
     const opts: { value: string; label: string }[] = [{ value: "all", label: "全会場" }];
     if (summary?.by_venue) {
@@ -280,17 +260,15 @@ export default function RaceList() {
     return opts;
   }, [summary?.by_venue]);
 
-  // Reset venue when raceType changes
   const handleRaceTypeChange = (val: string) => {
     setRaceType(val);
     setVenue("all");
     setCheckedIds(new Set());
   };
 
-  // Compute derived status counts for cards
   const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    STATUS_CARD_LIST.forEach((c) => { counts[c.key] = 0; });
+    const counts: Record<string, number> = { total: 0 };
+    ALL_STATUS_CARDS.forEach((c) => { counts[c.key] = 0; });
     (races || []).forEach((race) => {
       const ds = getDerivedStatus(race);
       counts[ds] = (counts[ds] || 0) + 1;
@@ -299,14 +277,12 @@ export default function RaceList() {
     return counts;
   }, [races]);
 
-  // Filter races by status card selection
   const filteredRaces = useMemo(() => {
     if (!races) return [];
     if (!statusFilter || statusFilter === "total") return races;
     return races.filter((r) => getDerivedStatus(r) === statusFilter);
   }, [races, statusFilter]);
 
-  // Handle checkbox select all
   const eligibleIds = useMemo(
     () => filteredRaces.filter((r) => isSelectable(getDerivedStatus(r))).map((r) => r.id),
     [filteredRaces]
@@ -370,13 +346,15 @@ export default function RaceList() {
     );
   };
 
+  const totalCount = statusCounts["total"] || 0;
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="border-b border-border bg-card px-6 py-4 flex flex-col gap-3">
+      <div className="border-b border-border bg-card px-6 py-3 flex flex-col gap-3">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-white" />
+            <Calendar className="h-5 w-5 text-primary" />
             <h1 className="text-base font-semibold text-foreground">
               {formatDateTitle(date)}
             </h1>
@@ -399,9 +377,7 @@ export default function RaceList() {
               </SelectTrigger>
               <SelectContent>
                 {RACE_TYPES.map((t) => (
-                  <SelectItem key={t.value} value={t.value}>
-                    {t.label}
-                  </SelectItem>
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -411,9 +387,7 @@ export default function RaceList() {
               </SelectTrigger>
               <SelectContent>
                 {venueOptions.map((v) => (
-                  <SelectItem key={v.value} value={v.value}>
-                    {v.label}
-                  </SelectItem>
+                  <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -424,27 +398,67 @@ export default function RaceList() {
         </div>
       </div>
 
-      {/* Status summary cards */}
-      <div className="px-6 py-3 overflow-x-auto">
-        <div className="flex gap-2 min-w-max">
-          {STATUS_CARD_LIST.map((card) => {
-            const count = statusCounts[card.key] || 0;
-            const isActive = statusFilter === card.key;
-            return (
-              <button
-                key={card.key}
-                onClick={() => setStatusFilter(isActive ? null : card.key as DerivedStatus | "total")}
-                className={`flex flex-col items-start px-3 py-2 rounded-md border text-left transition-colors min-w-[90px] ${
-                  isActive
-                    ? "bg-primary/20 border-primary"
-                    : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
-                }`}
-              >
-                <span className="text-[10px] text-muted-foreground whitespace-nowrap">{card.label}</span>
-                <span className={`text-xl font-bold mt-0.5 ${card.colorClass}`}>{count}</span>
-              </button>
-            );
-          })}
+      {/* Status filter — 2-row grid per layout spec */}
+      <div className="px-6 py-3">
+        <div className="flex gap-2 items-stretch">
+          {/* Total card — spans 2 rows */}
+          <button
+            onClick={() => setStatusFilter(statusFilter === "total" ? null : "total")}
+            className={`flex flex-col items-center justify-center px-5 py-2 rounded-md border text-center transition-colors min-w-[80px] row-span-2 ${
+              statusFilter === "total"
+                ? "bg-primary/20 border-primary"
+                : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
+            }`}
+          >
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap leading-tight">総レース</span>
+            <span className="text-2xl font-bold text-foreground mt-0.5">{totalCount}</span>
+          </button>
+
+          {/* Right side: 2 rows of 5 status cards */}
+          <div className="flex-1 flex flex-col gap-1.5">
+            {/* Row 1 */}
+            <div className="grid grid-cols-5 gap-1.5">
+              {STATUS_ROW1.map((card) => {
+                const count = statusCounts[card.key] || 0;
+                const isActive = statusFilter === card.key;
+                return (
+                  <button
+                    key={card.key}
+                    onClick={() => setStatusFilter(isActive ? null : card.key)}
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors ${
+                      isActive
+                        ? "bg-primary/20 border-primary"
+                        : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
+                    }`}
+                  >
+                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">{card.label}</span>
+                    <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Row 2 */}
+            <div className="grid grid-cols-5 gap-1.5">
+              {STATUS_ROW2.map((card) => {
+                const count = statusCounts[card.key] || 0;
+                const isActive = statusFilter === card.key;
+                return (
+                  <button
+                    key={card.key}
+                    onClick={() => setStatusFilter(isActive ? null : card.key)}
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors ${
+                      isActive
+                        ? "bg-primary/20 border-primary"
+                        : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
+                    }`}
+                  >
+                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">{card.label}</span>
+                    <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -481,30 +495,30 @@ export default function RaceList() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Table — fixed layout, space-between columns */}
       <div className="flex-1 px-6 pb-6 overflow-hidden flex flex-col min-h-0">
         <div className="rounded-md border border-border bg-card flex-1 overflow-auto">
-          <Table>
+          <Table className="w-full table-fixed">
             <TableHeader className="bg-muted/50 sticky top-0 z-10 backdrop-blur">
               <TableRow>
-                <TableHead className="w-[70px] text-center">競馬場</TableHead>
-                <TableHead className="w-[40px] text-center">R</TableHead>
-                <TableHead className="w-[70px]">出走時刻</TableHead>
-                <TableHead>レース名</TableHead>
-                <TableHead className="w-[40px] text-center">芝ダ</TableHead>
-                <TableHead className="w-[70px] text-center">距離</TableHead>
-                <TableHead className="w-[70px] text-center">動画</TableHead>
-                <TableHead className="w-[30px] text-center">
+                <TableHead style={{ width: "6%" }} className="text-center text-xs">競馬場</TableHead>
+                <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
+                <TableHead style={{ width: "6.5%" }} className="text-xs">出走時刻</TableHead>
+                <TableHead style={{ width: "14%" }} className="text-xs">レース名</TableHead>
+                <TableHead style={{ width: "4%" }} className="text-center text-xs">芝ダ</TableHead>
+                <TableHead style={{ width: "6%" }} className="text-center text-xs">距離</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
+                <TableHead style={{ width: "4%" }} className="text-center">
                   <Checkbox
                     checked={allChecked ? true : someChecked ? "indeterminate" : false}
                     onCheckedChange={toggleAll}
                     aria-label="全選択"
                   />
                 </TableHead>
-                <TableHead className="w-[110px]">ステータス</TableHead>
-                <TableHead className="w-[90px]">担当者</TableHead>
-                <TableHead className="w-[70px]">更新時間</TableHead>
-                <TableHead className="w-[180px] text-center">操作</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-xs">ステータス</TableHead>
+                <TableHead style={{ width: "8%" }} className="text-xs">担当者</TableHead>
+                <TableHead style={{ width: "6.5%" }} className="text-xs">更新時間</TableHead>
+                <TableHead style={{ width: "24%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -530,14 +544,19 @@ export default function RaceList() {
                   const videoComplete = race.video_status === "完了";
                   const canSelect = isSelectable(derivedStatus);
                   const isChecked = checkedIds.has(race.id);
-                  const isReanalyzeFailed = derivedStatus === "解析失敗";
+                  const canReanalyze = derivedStatus === "解析失敗" || derivedStatus === "再解析要請";
 
-                  // Determine operation button label
+                  // Operation button label and color
                   let opLabel = "データ補正";
-                  if (derivedStatus === "レビュー待ち") opLabel = "レビュー";
-                  else if (derivedStatus === "データ確定") opLabel = "再補正";
+                  let opColorClass = "bg-red-700 hover:bg-red-600 text-white border-0";
+                  if (derivedStatus === "レビュー待ち") {
+                    opLabel = "レビュー";
+                    opColorClass = "bg-purple-700 hover:bg-purple-600 text-white border-0";
+                  } else if (derivedStatus === "データ確定") {
+                    opLabel = "再補正";
+                    opColorClass = "bg-blue-700 hover:bg-blue-600 text-white border-0";
+                  }
 
-                  // Updated time formatted as HH:mm
                   let updatedTime = "-";
                   if (race.updated_at) {
                     try {
@@ -551,7 +570,7 @@ export default function RaceList() {
                       <TableCell className="text-xs text-center font-medium">{race.venue}</TableCell>
                       <TableCell className="text-xs text-center font-bold">{race.race_number}R</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{race.start_time?.substring(0, 5) || "-"}</TableCell>
-                      <TableCell className="text-xs font-medium">{race.race_name}</TableCell>
+                      <TableCell className="text-xs font-medium truncate">{race.race_name}</TableCell>
                       <TableCell className="text-center">
                         <span className={`text-xs font-bold ${isTurf ? "text-green-400" : "text-amber-500"}`}>
                           {isTurf ? "芝" : "ダ"}
@@ -586,26 +605,30 @@ export default function RaceList() {
                           {badgeProps.label}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{race.assigned_user || "-"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
                           <Link href={`/races/${race.id}`}>
-                            <Button size="sm" variant="secondary" className="h-6 text-[11px] px-2">
+                            <Button
+                              size="sm"
+                              className={`h-6 text-[11px] px-2 ${opColorClass}`}
+                            >
                               {opLabel}
                             </Button>
                           </Link>
                           <Button
                             size="sm"
                             variant="outline"
-                            className={`h-6 text-[11px] px-2 ${
-                              isReanalyzeFailed
+                            className={`h-6 text-[11px] px-2 flex items-center gap-0.5 ${
+                              canReanalyze
                                 ? "border-red-700 text-red-400 hover:bg-red-900/20"
                                 : "opacity-30 cursor-not-allowed"
                             }`}
-                            disabled={!isReanalyzeFailed}
-                            onClick={() => isReanalyzeFailed && setReanalyzeRace(race)}
+                            disabled={!canReanalyze}
+                            onClick={() => canReanalyze && setReanalyzeRace(race)}
                           >
+                            <RotateCcw className="h-3 w-3" />
                             再解析
                           </Button>
                         </div>
