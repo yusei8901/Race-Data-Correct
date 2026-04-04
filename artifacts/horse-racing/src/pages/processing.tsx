@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Play, Square, Settings2, Plus, Trash2, Power, Save } from "lucide-react";
+import { Settings2, Plus, Trash2, Save, Pencil } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { 
@@ -11,12 +11,14 @@ import {
   useToggleBatchJob,
   useDeleteBatchJob,
   useCreateBatchJob,
+  useUpdateBatchJob,
   useGetVenues,
   getGetVenuesQueryKey,
   useGetAnalysisParams,
   getGetAnalysisParamsQueryKey,
   useUpdateAnalysisParams
 } from "@workspace/api-client-react";
+import type { BatchJob } from "@workspace/api-client-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -38,10 +40,16 @@ const batchJobSchema = z.object({
   is_enabled: z.boolean().default(true),
 });
 
+const editJobSchema = z.object({
+  name: z.string().min(1, "ジョブ名は必須です"),
+  cron_expression: z.string().min(1, "クーロン式は必須です"),
+});
+
 export default function ProcessingManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<BatchJob | null>(null);
   const [selectedVenueId, setSelectedVenueId] = useState<string>("");
 
   const { data: jobs, isLoading: isJobsLoading } = useGetBatchJobs({
@@ -66,6 +74,7 @@ export default function ProcessingManagement() {
   const toggleJob = useToggleBatchJob();
   const deleteJob = useDeleteBatchJob();
   const createJob = useCreateBatchJob();
+  const updateJob = useUpdateBatchJob();
   const updateParams = useUpdateAnalysisParams();
 
   const form = useForm<z.infer<typeof batchJobSchema>>({
@@ -96,6 +105,30 @@ export default function ProcessingManagement() {
       onSuccess: () => {
         toast({ title: `ジョブを${currentEnabled ? "無効化" : "有効化"}しました` });
         queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
+      }
+    });
+  };
+
+  const editForm = useForm<z.infer<typeof editJobSchema>>({
+    resolver: zodResolver(editJobSchema),
+    defaultValues: { name: "", cron_expression: "" },
+  });
+
+  const handleOpenEdit = (job: BatchJob) => {
+    setEditingJob(job);
+    editForm.reset({ name: job.name, cron_expression: job.cron_expression });
+  };
+
+  const handleEditSubmit = (values: z.infer<typeof editJobSchema>) => {
+    if (!editingJob) return;
+    updateJob.mutate({ jobId: editingJob.id, data: values }, {
+      onSuccess: () => {
+        toast({ title: "バッチジョブを更新しました" });
+        setEditingJob(null);
+        queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
+      },
+      onError: () => {
+        toast({ title: "更新に失敗しました", variant: "destructive" });
       }
     });
   };
@@ -280,15 +313,25 @@ export default function ProcessingManagement() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{job.next_run_at || "-"}</TableCell>
                       <TableCell className="text-right">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => handleDelete(job.id)}
-                          disabled={deleteJob.isPending}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                            onClick={() => handleOpenEdit(job)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => handleDelete(job.id)}
+                            disabled={deleteJob.isPending}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -377,6 +420,48 @@ export default function ProcessingManagement() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!editingJob} onOpenChange={(open) => !open && setEditingJob(null)}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>バッチジョブ編集</DialogTitle>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit(handleEditSubmit)} className="space-y-4 mt-4">
+              <FormField
+                control={editForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>ジョブ名</FormLabel>
+                    <FormControl>
+                      <Input {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="cron_expression"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>クーロン式</FormLabel>
+                    <FormControl>
+                      <Input placeholder="0 0 * * *" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter className="mt-6">
+                <Button type="button" variant="outline" onClick={() => setEditingJob(null)}>キャンセル</Button>
+                <Button type="submit" disabled={updateJob.isPending}>更新</Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

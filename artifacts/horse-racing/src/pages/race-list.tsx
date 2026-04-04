@@ -28,19 +28,77 @@ function getStatusBadgeProps(status: string) {
   }
 }
 
+const RACE_TYPES = [
+  { value: "all", label: "全種別" },
+  { value: "中央競馬", label: "中央競馬" },
+  { value: "地方競馬", label: "地方競馬" },
+  { value: "海外競馬", label: "海外競馬" },
+];
+
+const VENUES_BY_TYPE: Record<string, { value: string; label: string }[]> = {
+  all: [
+    { value: "all", label: "全会場" },
+    { value: "東京", label: "東京" },
+    { value: "中山", label: "中山" },
+    { value: "京都", label: "京都" },
+    { value: "阪神", label: "阪神" },
+    { value: "大井", label: "大井" },
+    { value: "川崎", label: "川崎" },
+    { value: "船橋", label: "船橋" },
+    { value: "浦和", label: "浦和" },
+  ],
+  中央競馬: [
+    { value: "all", label: "全会場" },
+    { value: "東京", label: "東京" },
+    { value: "中山", label: "中山" },
+    { value: "京都", label: "京都" },
+    { value: "阪神", label: "阪神" },
+    { value: "中京", label: "中京" },
+    { value: "小倉", label: "小倉" },
+    { value: "函館", label: "函館" },
+    { value: "札幌", label: "札幌" },
+    { value: "新潟", label: "新潟" },
+    { value: "福島", label: "福島" },
+  ],
+  地方競馬: [
+    { value: "all", label: "全会場" },
+    { value: "大井", label: "大井" },
+    { value: "川崎", label: "川崎" },
+    { value: "船橋", label: "船橋" },
+    { value: "浦和", label: "浦和" },
+    { value: "門別", label: "門別" },
+    { value: "盛岡", label: "盛岡" },
+  ],
+  海外競馬: [{ value: "all", label: "全会場" }],
+};
+
 export default function RaceList() {
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [venue, setVenue] = useState<string>("all");
-  
-  const { data: races, isLoading: isRacesLoading } = useGetRaces(
-    { date, venue: venue !== "all" ? venue : undefined },
-    { query: { enabled: true, queryKey: getGetRacesQueryKey({ date, venue: venue !== "all" ? venue : undefined }) } }
+  const [raceType, setRaceType] = useState<string>("all");
+
+  const venueOptions = VENUES_BY_TYPE[raceType] || VENUES_BY_TYPE["all"];
+
+  const queryParams = {
+    date,
+    venue: venue !== "all" ? venue : undefined,
+    race_type: raceType !== "all" ? raceType : undefined,
+  };
+
+  const { data: races, isLoading: isRacesLoading, refetch } = useGetRaces(
+    queryParams,
+    { query: { enabled: true, queryKey: getGetRacesQueryKey(queryParams) } }
   );
 
   const { data: summary, isLoading: isSummaryLoading } = useGetRaceSummary(
     { date },
     { query: { enabled: true, queryKey: getGetRaceSummaryQueryKey({ date }) } }
   );
+
+  const handleRaceTypeChange = (val: string) => {
+    setRaceType(val);
+    setVenue("all");
+  };
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -49,26 +107,34 @@ export default function RaceList() {
           <h1 className="text-xl font-bold text-foreground">レース一覧</h1>
           <p className="text-xs text-muted-foreground mt-1">処理対象のレースデータ一覧と状況サマリー</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Input 
             type="date" 
             value={date}
             onChange={(e) => setDate(e.target.value)}
             className="w-[150px] h-9 text-sm"
           />
-          <Select value={venue} onValueChange={setVenue}>
-            <SelectTrigger className="w-[150px] h-9 text-sm">
-              <SelectValue placeholder="会場フィルタ" />
+          <Select value={raceType} onValueChange={handleRaceTypeChange}>
+            <SelectTrigger className="w-[130px] h-9 text-sm">
+              <SelectValue placeholder="競馬種別" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全会場</SelectItem>
-              <SelectItem value="東京">東京</SelectItem>
-              <SelectItem value="中山">中山</SelectItem>
-              <SelectItem value="京都">京都</SelectItem>
-              <SelectItem value="阪神">阪神</SelectItem>
+              {RACE_TYPES.map((t) => (
+                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="icon" className="h-9 w-9">
+          <Select value={venue} onValueChange={setVenue}>
+            <SelectTrigger className="w-[120px] h-9 text-sm">
+              <SelectValue placeholder="競馬場" />
+            </SelectTrigger>
+            <SelectContent>
+              {venueOptions.map((v) => (
+                <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => refetch()}>
             <RefreshCcw className="h-4 w-4" />
           </Button>
         </div>

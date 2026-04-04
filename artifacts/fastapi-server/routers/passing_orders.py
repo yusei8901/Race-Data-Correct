@@ -32,7 +32,7 @@ def update_passing_order(id: str, body: dict):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            "SELECT id, position FROM passing_orders WHERE id = %s",
+            "SELECT id, position, original_position FROM passing_orders WHERE id = %s",
             (id,),
         )
         existing = cur.fetchone()
