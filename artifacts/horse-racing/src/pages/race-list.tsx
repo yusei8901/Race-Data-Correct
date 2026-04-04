@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
 import { Calendar, RefreshCcw, AlertTriangle, X, RotateCcw } from "lucide-react";
@@ -33,6 +33,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUserRole } from "@/contexts/user-role";
+
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // ---- Status Matrix ----
 type DerivedStatus =
@@ -226,7 +228,7 @@ function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialo
 export default function RaceList() {
   const { isAdmin } = useUserRole();
 
-  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [date, setDate] = useState("");
   const [venue, setVenue] = useState<string>("all");
   const [raceType, setRaceType] = useState<string>("中央競馬");
   const [statusFilter, setStatusFilter] = useState<DerivedStatus | "total" | null>(null);
@@ -235,6 +237,18 @@ export default function RaceList() {
   const [reanalyzeRace, setReanalyzeRace] = useState<Race | null>(null);
 
   const queryClient = useQueryClient();
+
+  // Initialize date to the most recent race date in the DB
+  useEffect(() => {
+    fetch(`${BASE_URL}/fastapi/races/latest-date`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.date) setDate(data.date);
+      })
+      .catch(() => {
+        setDate(format(new Date(), "yyyy-MM-dd"));
+      });
+  }, []);
 
   const queryParams = {
     date,

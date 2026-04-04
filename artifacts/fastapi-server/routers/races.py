@@ -6,6 +6,15 @@ from database import get_db, dict_cursor
 router = APIRouter(prefix="/fastapi")
 
 
+@router.get("/races/latest-date")
+def get_latest_race_date():
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT MAX(race_date)::text AS latest_date FROM races WHERE race_date IS NOT NULL")
+        row = cur.fetchone()
+        return {"date": row["latest_date"] if row else None}
+
+
 @router.get("/races")
 def get_races(
     date: Optional[str] = Query(None),
