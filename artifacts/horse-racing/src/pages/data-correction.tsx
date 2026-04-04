@@ -160,7 +160,7 @@ export default function DataCorrection() {
     const newPos = parseInt(editValue);
     
     updatePassingOrder.mutate({ 
-      passingOrderId: id, 
+      id, 
       data: { position: newPos } 
     }, {
       onSuccess: (updatedOrder) => {

@@ -101,7 +101,7 @@ export default function ProcessingManagement() {
   };
 
   const handleToggle = (id: string, currentEnabled: boolean) => {
-    toggleJob.mutate({ jobId: id }, {
+    toggleJob.mutate({ id }, {
       onSuccess: () => {
         toast({ title: `ジョブを${currentEnabled ? "無効化" : "有効化"}しました` });
         queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
@@ -121,7 +121,7 @@ export default function ProcessingManagement() {
 
   const handleEditSubmit = (values: z.infer<typeof editJobSchema>) => {
     if (!editingJob) return;
-    updateJob.mutate({ jobId: editingJob.id, data: values }, {
+    updateJob.mutate({ id: editingJob.id, data: values }, {
       onSuccess: () => {
         toast({ title: "バッチジョブを更新しました" });
         setEditingJob(null);
@@ -135,7 +135,7 @@ export default function ProcessingManagement() {
 
   const handleDelete = (id: string) => {
     if (confirm("このバッチジョブを削除しますか？")) {
-      deleteJob.mutate({ jobId: id }, {
+      deleteJob.mutate({ id }, {
         onSuccess: () => {
           toast({ title: "ジョブを削除しました" });
           queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
