@@ -389,9 +389,9 @@ export default function DataCorrection() {
                     return a.position - b.position;
                   }).map((order) => {
                     const isEditing = editingPositionId === order.id;
-                    const accuracyColor = order.accuracy && order.accuracy > 0.8 
+                    const accuracyColor = order.accuracy && order.accuracy > 80 
                       ? "text-green-500" 
-                      : order.accuracy && order.accuracy > 0.5 
+                      : order.accuracy && order.accuracy > 50 
                         ? "text-yellow-500" 
                         : "text-red-500";
 
@@ -406,7 +406,7 @@ export default function DataCorrection() {
                         <TableCell className="p-2 text-right text-xs font-mono">{order.time_seconds ? order.time_seconds.toFixed(2) : "-"}</TableCell>
                         <TableCell className="p-2 text-right text-xs font-mono">
                           <span className={accuracyColor}>
-                            {order.accuracy ? `${(order.accuracy * 100).toFixed(0)}%` : "-"}
+                            {order.accuracy != null ? `${order.accuracy}%` : "-"}
                           </span>
                         </TableCell>
                         <TableCell className="p-2 text-center bg-muted/10 border-l border-border/50">
