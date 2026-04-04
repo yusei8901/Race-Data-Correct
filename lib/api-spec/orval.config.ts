@@ -26,7 +26,7 @@ export default defineConfig({
       target: "generated",
       client: "react-query",
       mode: "split",
-      baseUrl: "/api",
+      baseUrl: "/fastapi",
       clean: true,
       prettier: true,
       override: {

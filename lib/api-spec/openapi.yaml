@@ -3,20 +3,29 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Horse racing data correction API
 servers:
-  - url: /api
-    description: Base API path
+  - url: /fastapi
+    description: FastAPI server base path
 tags:
   - name: health
     description: Health operations
+  - name: races
+    description: Race management
+  - name: entries
+    description: Race entry (horse) data
+  - name: passing-orders
+    description: Passing order data and corrections
+  - name: batch-jobs
+    description: Batch job management
+  - name: analysis
+    description: Analysis tool management
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +33,386 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /races:
+    get:
+      operationId: getRaces
+      tags: [races]
+      summary: Get races by date
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            description: "Date in YYYY-MM-DD format"
+        - name: venue
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: race_type
+          in: query
+          schema:
+            type: ["string", "null"]
+            description: "中央競馬 | 地方競馬 | 海外競馬"
+        - name: video_status
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: analysis_status
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: List of races
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Race"
+
+  /races/summary:
+    get:
+      operationId: getRaceSummary
+      tags: [races]
+      summary: Get summary statistics for a date
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Race summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RaceSummary"
+
+  /races/{race_id}:
+    get:
+      operationId: getRace
+      tags: [races]
+      summary: Get race by ID
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Race details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Race"
+        "404":
+          description: Race not found
+    patch:
+      operationId: updateRace
+      tags: [races]
+      summary: Update race status/assignment
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRaceBody"
+      responses:
+        "200":
+          description: Updated race
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Race"
+
+  /races/{race_id}/reanalyze:
+    post:
+      operationId: reanalyzeRace
+      tags: [races]
+      summary: Request re-analysis for a race
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Re-analysis requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /races/{race_id}/corrections/start:
+    post:
+      operationId: startCorrection
+      tags: [races]
+      summary: Start correction session for a race
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Correction started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Race"
+
+  /races/{race_id}/corrections/complete:
+    post:
+      operationId: completeCorrection
+      tags: [races]
+      summary: Complete correction session for a race
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Correction completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Race"
+
+  /races/{race_id}/entries:
+    get:
+      operationId: getRaceEntries
+      tags: [entries]
+      summary: Get race entries (horses) for a race
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of race entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RaceEntry"
+
+  /races/{race_id}/passing-orders:
+    get:
+      operationId: getPassingOrders
+      tags: [passing-orders]
+      summary: Get passing order data for a race at a checkpoint
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: checkpoint
+          in: query
+          schema:
+            type: ["string", "null"]
+            description: "Checkpoint name e.g. '200m'"
+      responses:
+        "200":
+          description: Passing order data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PassingOrder"
+
+  /passing-orders/{id}:
+    patch:
+      operationId: updatePassingOrder
+      tags: [passing-orders]
+      summary: Update/correct a passing order record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePassingOrderBody"
+      responses:
+        "200":
+          description: Updated passing order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassingOrder"
+
+  /batch-jobs:
+    get:
+      operationId: getBatchJobs
+      tags: [batch-jobs]
+      summary: Get all batch jobs
+      responses:
+        "200":
+          description: List of batch jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BatchJob"
+    post:
+      operationId: createBatchJob
+      tags: [batch-jobs]
+      summary: Create a new batch job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBatchJobBody"
+      responses:
+        "201":
+          description: Created batch job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchJob"
+
+  /batch-jobs/{id}:
+    patch:
+      operationId: updateBatchJob
+      tags: [batch-jobs]
+      summary: Update a batch job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBatchJobBody"
+      responses:
+        "200":
+          description: Updated batch job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchJob"
+    delete:
+      operationId: deleteBatchJob
+      tags: [batch-jobs]
+      summary: Delete a batch job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /batch-jobs/{id}/toggle:
+    patch:
+      operationId: toggleBatchJob
+      tags: [batch-jobs]
+      summary: Toggle batch job enabled/disabled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Toggled batch job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchJob"
+
+  /venues:
+    get:
+      operationId: getVenues
+      tags: [analysis]
+      summary: Get all venues grouped by race type
+      responses:
+        "200":
+          description: List of venues
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Venue"
+
+  /analysis-params/{venue_id}:
+    get:
+      operationId: getAnalysisParams
+      tags: [analysis]
+      summary: Get analysis parameters for a venue
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Analysis parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisParams"
+    patch:
+      operationId: updateAnalysisParams
+      tags: [analysis]
+      summary: Update analysis parameters for a venue
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAnalysisParamsBody"
+      responses:
+        "200":
+          description: Updated analysis parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisParams"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +423,290 @@ components:
       required:
         - status
 
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    Race:
+      type: object
+      properties:
+        id:
+          type: string
+        race_date:
+          type: string
+        venue:
+          type: string
+        race_type:
+          type: string
+          description: "中央競馬 | 地方競馬 | 海外競馬"
+        race_number:
+          type: integer
+        race_name:
+          type: string
+        surface_type:
+          type: string
+          description: "芝 | ダート"
+        distance:
+          type: integer
+        direction:
+          type: ["string", "null"]
+        weather:
+          type: ["string", "null"]
+        condition:
+          type: ["string", "null"]
+        start_time:
+          type: ["string", "null"]
+        status:
+          type: string
+          description: "未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"
+        video_status:
+          type: ["string", "null"]
+        video_url:
+          type: ["string", "null"]
+        analysis_status:
+          type: ["string", "null"]
+        assigned_user:
+          type: ["string", "null"]
+        updated_at:
+          type: string
+        created_at:
+          type: string
+      required:
+        - id
+        - race_date
+        - venue
+        - race_type
+        - race_number
+        - race_name
+        - surface_type
+        - distance
+        - status
+        - updated_at
+        - created_at
+
+    UpdateRaceBody:
+      type: object
+      properties:
+        status:
+          type: ["string", "null"]
+        assigned_user:
+          type: ["string", "null"]
+        video_status:
+          type: ["string", "null"]
+
+    RaceSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+        completed:
+          type: integer
+        in_progress:
+          type: integer
+        needs_correction:
+          type: integer
+        review:
+          type: integer
+        by_venue:
+          type: array
+          items:
+            type: object
+            properties:
+              venue:
+                type: string
+              count:
+                type: integer
+            required:
+              - venue
+              - count
+      required:
+        - total
+        - completed
+        - in_progress
+        - needs_correction
+        - review
+        - by_venue
+
+    RaceEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        race_id:
+          type: string
+        horse_number:
+          type: integer
+        gate_number:
+          type: integer
+        horse_name:
+          type: string
+        jockey_name:
+          type: ["string", "null"]
+        trainer_name:
+          type: ["string", "null"]
+        last_3f:
+          type: ["number", "null"]
+        finish_time:
+          type: ["number", "null"]
+        finish_position:
+          type: ["integer", "null"]
+        margin:
+          type: ["number", "null"]
+        color:
+          type: ["string", "null"]
+        lane:
+          type: ["string", "null"]
+      required:
+        - id
+        - race_id
+        - horse_number
+        - gate_number
+        - horse_name
+
+    PassingOrder:
+      type: object
+      properties:
+        id:
+          type: string
+        race_id:
+          type: string
+        checkpoint:
+          type: string
+        horse_number:
+          type: integer
+        horse_name:
+          type: string
+        gate_number:
+          type: integer
+        color:
+          type: ["string", "null"]
+        lane:
+          type: ["string", "null"]
+        time_seconds:
+          type: ["number", "null"]
+        accuracy:
+          type: ["integer", "null"]
+        position:
+          type: integer
+        is_corrected:
+          type: boolean
+        original_position:
+          type: ["integer", "null"]
+      required:
+        - id
+        - race_id
+        - checkpoint
+        - horse_number
+        - horse_name
+        - gate_number
+        - position
+        - is_corrected
+
+    UpdatePassingOrderBody:
+      type: object
+      properties:
+        position:
+          type: ["integer", "null"]
+        lane:
+          type: ["string", "null"]
+        time_seconds:
+          type: ["number", "null"]
+
+    BatchJob:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        cron_expression:
+          type: string
+        status:
+          type: string
+          description: "有効 | 停止中 | 実行中"
+        is_enabled:
+          type: boolean
+        next_run_at:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+        - name
+        - cron_expression
+        - status
+        - is_enabled
+        - created_at
+        - updated_at
+
+    CreateBatchJobBody:
+      type: object
+      properties:
+        name:
+          type: string
+        cron_expression:
+          type: string
+        is_enabled:
+          type: boolean
+      required:
+        - name
+        - cron_expression
+
+    UpdateBatchJobBody:
+      type: object
+      properties:
+        name:
+          type: ["string", "null"]
+        cron_expression:
+          type: ["string", "null"]
+        is_enabled:
+          type: ["boolean", "null"]
+
+    Venue:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        race_type:
+          type: string
+      required:
+        - id
+        - name
+        - race_type
+
+    AnalysisParams:
+      type: object
+      properties:
+        venue_id:
+          type: string
+        venue_name:
+          type: string
+        race_type:
+          type: string
+        params:
+          type: object
+          additionalProperties: true
+        updated_at:
+          type: string
+      required:
+        - venue_id
+        - venue_name
+        - race_type
+        - params
+
+    UpdateAnalysisParamsBody:
+      type: object
+      properties:
+        params:
+          type: object
+          additionalProperties: true
+      required:
+        - params

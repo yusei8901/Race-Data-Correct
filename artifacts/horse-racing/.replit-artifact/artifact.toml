@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "競馬データ補正アプリ"
+version = "1.0.0"
+id = "artifacts/horse-racing"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22782
+
+[services.development]
+run = "pnpm --filter @workspace/horse-racing run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/horse-racing", "run", "build" ]
+publicDir = "artifacts/horse-racing/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22782"
+BASE_PATH = "/"
