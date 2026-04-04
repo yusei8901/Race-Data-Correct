@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
 from database import get_db, dict_cursor
 
 router = APIRouter(prefix="/fastapi")
@@ -72,6 +73,28 @@ def get_race_summary(date: Optional[str] = Query(None)):
         )
         summary["by_venue"] = [{"venue": r["venue"], "count": r["count"]} for r in cur.fetchall()]
         return summary
+
+
+class BatchUpdateBody(BaseModel):
+    race_ids: List[str]
+    status: str
+
+
+@router.patch("/races/batch-update")
+def batch_update_races(body: BatchUpdateBody):
+    if not body.race_ids:
+        raise HTTPException(status_code=400, detail="race_ids must not be empty")
+    allowed_statuses = {"未補正", "補正中", "レビュー待ち", "修正要請", "データ確定"}
+    if body.status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {body.status}")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            """UPDATE races SET status = %s, updated_at = NOW()
+                WHERE id = ANY(%s::uuid[])""",
+            (body.status, body.race_ids),
+        )
+        return {"updated": cur.rowcount}
 
 
 @router.get("/races/{race_id}")

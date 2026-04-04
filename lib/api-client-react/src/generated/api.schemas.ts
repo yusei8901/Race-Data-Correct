@@ -55,6 +55,15 @@ export interface UpdateRaceBody {
   video_status?: string | null;
 }
 
+export interface BatchUpdateRacesBody {
+  race_ids: string[];
+  status: string;
+}
+
+export interface BatchUpdateResult {
+  updated: number;
+}
+
 export type RaceSummaryByVenueItem = {
   venue: string;
   count: number;

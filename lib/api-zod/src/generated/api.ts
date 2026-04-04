@@ -51,6 +51,18 @@ export const GetRacesResponseItem = zod.object({
 export const GetRacesResponse = zod.array(GetRacesResponseItem);
 
 /**
+ * @summary Batch update race statuses
+ */
+export const BatchUpdateRacesBody = zod.object({
+  race_ids: zod.array(zod.string()),
+  status: zod.string(),
+});
+
+export const BatchUpdateRacesResponse = zod.object({
+  updated: zod.number(),
+});
+
+/**
  * @summary Get summary statistics for a date
  */
 export const GetRaceSummaryQueryParams = zod.object({

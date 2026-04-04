@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { 
-  LayoutDashboard, 
   ActivitySquare,
   Settings,
-  ClipboardEdit
+  ListOrdered,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -12,68 +14,72 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
-
-  const isOnDataCorrection = location.startsWith("/races/") && location.length > 7;
-  const currentRaceHref = isOnDataCorrection ? location : null;
+  const [collapsed, setCollapsed] = useState(false);
 
   const navigation = [
-    { name: "レース一覧", href: "/", icon: LayoutDashboard, match: (loc: string) => loc === "/" },
-    { 
-      name: "データ補正", 
-      href: currentRaceHref || "/", 
-      icon: ClipboardEdit, 
-      match: (loc: string) => loc.startsWith("/races/"),
-      disabled: !isOnDataCorrection
-    },
     { name: "処理管理", href: "/processing", icon: Settings, match: (loc: string) => loc.startsWith("/processing") },
+    { name: "レース一覧", href: "/", icon: ListOrdered, match: (loc: string) => loc === "/" || loc.startsWith("/races/") },
   ];
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className="w-56 flex-shrink-0 border-r border-border bg-sidebar flex flex-col">
-        <div className="h-14 flex items-center px-4 border-b border-border">
-          <ActivitySquare className="h-5 w-5 text-primary mr-2 flex-shrink-0" />
-          <span className="font-semibold text-sidebar-foreground tracking-tight text-sm">KEIBA DATA OPS</span>
+      <div
+        className={`flex-shrink-0 border-r border-border bg-sidebar flex flex-col transition-all duration-200 ${collapsed ? "w-14" : "w-56"}`}
+      >
+        <div className="h-14 flex items-center px-3 border-b border-border relative">
+          <ActivitySquare className="h-5 w-5 text-primary flex-shrink-0" />
+          {!collapsed && (
+            <span className="ml-2 font-semibold text-sidebar-foreground tracking-tight text-sm whitespace-nowrap overflow-hidden">
+              KEIBA DATA OPS
+            </span>
+          )}
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className={`absolute -right-3 top-1/2 -translate-y-1/2 bg-sidebar border border-border rounded-full w-6 h-6 flex items-center justify-center text-sidebar-foreground/60 hover:text-sidebar-foreground z-10 transition-colors`}
+            aria-label={collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}
+          >
+            {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
+          </button>
         </div>
+
         <div className="flex-1 overflow-y-auto py-4">
-          <nav className="px-2 space-y-1">
+          <nav className={`space-y-1 ${collapsed ? "px-1" : "px-2"}`}>
             {navigation.map((item) => {
               const isActive = item.match(location);
               return (
-                <Link key={item.name} href={item.disabled ? "/" : item.href}>
+                <Link key={item.name} href={item.href}>
                   <div
-                    className={`group flex items-center px-3 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors ${
+                    className={`group flex items-center py-2 text-sm font-medium rounded-md cursor-pointer transition-colors ${collapsed ? "px-2 justify-center" : "px-3"} ${
                       isActive
                         ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : item.disabled
-                        ? "text-sidebar-foreground/30 cursor-not-allowed"
                         : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
                     }`}
+                    title={collapsed ? item.name : undefined}
                   >
                     <item.icon
-                      className={`mr-3 flex-shrink-0 h-4 w-4 ${
-                        isActive ? "text-primary" : item.disabled ? "text-sidebar-foreground/20" : "text-sidebar-foreground/50 group-hover:text-sidebar-foreground/70"
+                      className={`flex-shrink-0 h-4 w-4 ${collapsed ? "" : "mr-3"} ${
+                        isActive ? "text-primary" : "text-sidebar-foreground/50 group-hover:text-sidebar-foreground/70"
                       }`}
                     />
-                    <span>{item.name}</span>
-                    {item.name === "データ補正" && !isOnDataCorrection && (
-                      <span className="ml-auto text-[10px] text-sidebar-foreground/30">要選択</span>
-                    )}
+                    {!collapsed && <span>{item.name}</span>}
                   </div>
                 </Link>
               );
             })}
           </nav>
         </div>
-        <div className="p-4 border-t border-border">
+
+        <div className={`border-t border-border ${collapsed ? "p-2" : "p-4"}`}>
           <div className="flex items-center">
             <div className="h-8 w-8 rounded bg-secondary flex items-center justify-center text-xs font-medium text-secondary-foreground border border-border flex-shrink-0">
               AN
             </div>
-            <div className="ml-3">
-              <p className="text-xs font-medium text-sidebar-foreground">アナリスト</p>
-              <p className="text-[10px] text-muted-foreground">ID: 88912</p>
-            </div>
+            {!collapsed && (
+              <div className="ml-3 min-w-0">
+                <p className="text-xs font-medium text-sidebar-foreground">アナリスト</p>
+                <p className="text-[10px] text-muted-foreground">ID: 88912</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

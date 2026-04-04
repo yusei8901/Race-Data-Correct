@@ -19,6 +19,8 @@ import type {
 import type {
   AnalysisParams,
   BatchJob,
+  BatchUpdateRacesBody,
+  BatchUpdateResult,
   CreateBatchJobBody,
   GetPassingOrdersParams,
   GetRaceSummaryParams,
@@ -213,6 +215,92 @@ export function useGetRaces<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Batch update race statuses
+ */
+export const getBatchUpdateRacesUrl = () => {
+  return `/fastapi/races/batch-update`;
+};
+
+export const batchUpdateRaces = async (
+  batchUpdateRacesBody: BatchUpdateRacesBody,
+  options?: RequestInit,
+): Promise<BatchUpdateResult> => {
+  return customFetch<BatchUpdateResult>(getBatchUpdateRacesUrl(), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(batchUpdateRacesBody),
+  });
+};
+
+export const getBatchUpdateRacesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof batchUpdateRaces>>,
+    TError,
+    { data: BodyType<BatchUpdateRacesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof batchUpdateRaces>>,
+  TError,
+  { data: BodyType<BatchUpdateRacesBody> },
+  TContext
+> => {
+  const mutationKey = ["batchUpdateRaces"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof batchUpdateRaces>>,
+    { data: BodyType<BatchUpdateRacesBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return batchUpdateRaces(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BatchUpdateRacesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof batchUpdateRaces>>
+>;
+export type BatchUpdateRacesMutationBody = BodyType<BatchUpdateRacesBody>;
+export type BatchUpdateRacesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Batch update race statuses
+ */
+export const useBatchUpdateRaces = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof batchUpdateRaces>>,
+    TError,
+    { data: BodyType<BatchUpdateRacesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof batchUpdateRaces>>,
+  TError,
+  { data: BodyType<BatchUpdateRacesBody> },
+  TContext
+> => {
+  return useMutation(getBatchUpdateRacesMutationOptions(options));
+};
 
 /**
  * @summary Get summary statistics for a date

@@ -72,6 +72,25 @@ paths:
                 items:
                   $ref: "#/components/schemas/Race"
 
+  /races/batch-update:
+    patch:
+      operationId: batchUpdateRaces
+      tags: [races]
+      summary: Batch update race statuses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchUpdateRacesBody"
+      responses:
+        "200":
+          description: Number of updated races
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchUpdateResult"
+
   /races/summary:
     get:
       operationId: getRaceSummary
@@ -497,6 +516,27 @@ components:
           type: ["string", "null"]
         video_status:
           type: ["string", "null"]
+
+    BatchUpdateRacesBody:
+      type: object
+      properties:
+        race_ids:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+      required:
+        - race_ids
+        - status
+
+    BatchUpdateResult:
+      type: object
+      properties:
+        updated:
+          type: integer
+      required:
+        - updated
 
     RaceSummary:
       type: object
