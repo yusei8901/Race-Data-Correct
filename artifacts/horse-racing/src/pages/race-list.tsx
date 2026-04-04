@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
-import { ja } from "date-fns/locale";
 import { Calendar, RefreshCcw, AlertTriangle, X, RotateCcw } from "lucide-react";
 import {
   useGetRaces,
@@ -33,6 +32,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useQueryClient } from "@tanstack/react-query";
+import { useUserRole } from "@/contexts/user-role";
 
 // ---- Status Matrix ----
 type DerivedStatus =
@@ -95,6 +95,11 @@ function getStatusBadgeProps(status: DerivedStatus) {
   }
 }
 
+// Statuses where the main operation button is disabled
+const CORRECTION_DISABLED_STATUSES: DerivedStatus[] = [
+  "未処理", "未解析", "解析中", "再解析中", "解析失敗",
+];
+
 const SELECTABLE_STATUSES: DerivedStatus[] = ["未補正", "補正中", "レビュー待ち", "修正要請", "データ確定"];
 const BULK_STATUS_OPTIONS: DerivedStatus[] = ["未補正", "補正中", "レビュー待ち", "修正要請", "データ確定"];
 
@@ -123,9 +128,7 @@ function formatDateTitle(dateStr: string): string {
   }
 }
 
-// Status filter card rows — matches the provided layout image exactly
-// Row 1: データ確定, 修正要請, 補正中, 解析中, 解析失敗
-// Row 2: レビュー待ち, 再解析要請, 未補正, 再解析中, 突合失敗
+// Status filter card layout — matches provided reference image
 const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] = [
   { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400" },
   { key: "修正要請",     label: "修正要請",     colorClass: "text-orange-400" },
@@ -162,7 +165,7 @@ function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialo
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-foreground">再解析の確認</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors">
+          <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors cursor-pointer">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -191,7 +194,7 @@ function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialo
               <button
                 key={preset}
                 onClick={() => setSelectedPreset(preset)}
-                className={`py-2 px-3 rounded-md text-sm font-medium border transition-colors ${
+                className={`py-2 px-3 rounded-md text-sm font-medium border transition-colors cursor-pointer ${
                   selectedPreset === preset
                     ? "bg-orange-500/20 border-orange-500 text-orange-400"
                     : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
@@ -204,13 +207,13 @@ function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialo
         </div>
 
         <div className="flex gap-2 justify-end">
-          <Button variant="outline" onClick={onClose} disabled={isLoading} className="h-8 text-xs">
+          <Button variant="outline" onClick={onClose} disabled={isLoading} className="h-8 text-xs cursor-pointer">
             キャンセル
           </Button>
           <Button
             onClick={() => onExecute(selectedPreset)}
             disabled={isLoading}
-            className="h-8 text-xs bg-orange-600 hover:bg-orange-500 text-white border-0"
+            className="h-8 text-xs bg-orange-600 hover:bg-orange-500 text-white border-0 cursor-pointer"
           >
             {isLoading ? "実行中..." : "再解析を実行"}
           </Button>
@@ -221,6 +224,8 @@ function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialo
 }
 
 export default function RaceList() {
+  const { isAdmin } = useUserRole();
+
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [venue, setVenue] = useState<string>("all");
   const [raceType, setRaceType] = useState<string>("中央競馬");
@@ -242,23 +247,18 @@ export default function RaceList() {
     { query: { queryKey: getGetRacesQueryKey(queryParams) } }
   );
 
-  const { data: summary } = useGetRaceSummary(
-    { date },
-    { query: { queryKey: getGetRaceSummaryQueryKey({ date }) } }
-  );
-
-  const batchUpdateMutation = useBatchUpdateRaces();
-  const reanalyzeMutation = useReanalyzeRace();
-
+  // Derive venue options from fetched races (already filtered by date + race_type)
   const venueOptions = useMemo(() => {
     const opts: { value: string; label: string }[] = [{ value: "all", label: "全会場" }];
-    if (summary?.by_venue) {
-      summary.by_venue.forEach((v) => {
-        opts.push({ value: v.venue, label: v.venue });
-      });
-    }
+    const seen = new Set<string>();
+    (races || []).forEach((r) => {
+      if (!seen.has(r.venue)) {
+        seen.add(r.venue);
+        opts.push({ value: r.venue, label: r.venue });
+      }
+    });
     return opts;
-  }, [summary?.by_venue]);
+  }, [races]);
 
   const handleRaceTypeChange = (val: string) => {
     setRaceType(val);
@@ -266,6 +266,14 @@ export default function RaceList() {
     setCheckedIds(new Set());
   };
 
+  const handleDateChange = (val: string) => {
+    setDate(val);
+    setVenue("all");
+    setCheckedIds(new Set());
+    setStatusFilter(null);
+  };
+
+  // Status counts for filter cards
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { total: 0 };
     ALL_STATUS_CARDS.forEach((c) => { counts[c.key] = 0; });
@@ -320,6 +328,9 @@ export default function RaceList() {
     .filter((r) => checkedIds.has(r.id) && isSelectable(getDerivedStatus(r)))
     .map((r) => r.id);
 
+  const batchUpdateMutation = useBatchUpdateRaces();
+  const reanalyzeMutation = useReanalyzeRace();
+
   const handleBulkUpdate = () => {
     if (selectedIds.length === 0) return;
     batchUpdateMutation.mutate(
@@ -363,16 +374,11 @@ export default function RaceList() {
             <Input
               type="date"
               value={date}
-              onChange={(e) => {
-                setDate(e.target.value);
-                setVenue("all");
-                setCheckedIds(new Set());
-                setStatusFilter(null);
-              }}
-              className="w-[150px] h-8 text-sm"
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="w-[150px] h-8 text-sm cursor-pointer"
             />
             <Select value={raceType} onValueChange={handleRaceTypeChange}>
-              <SelectTrigger className="w-[130px] h-8 text-sm">
+              <SelectTrigger className="w-[130px] h-8 text-sm cursor-pointer">
                 <SelectValue placeholder="競馬種別" />
               </SelectTrigger>
               <SelectContent>
@@ -381,8 +387,11 @@ export default function RaceList() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={venue} onValueChange={(v) => { setVenue(v); setCheckedIds(new Set()); }}>
-              <SelectTrigger className="w-[120px] h-8 text-sm">
+            <Select
+              value={venue}
+              onValueChange={(v) => { setVenue(v); setCheckedIds(new Set()); }}
+            >
+              <SelectTrigger className="w-[120px] h-8 text-sm cursor-pointer">
                 <SelectValue placeholder="会場" />
               </SelectTrigger>
               <SelectContent>
@@ -391,20 +400,25 @@ export default function RaceList() {
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => refetch()}>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 cursor-pointer"
+              onClick={() => refetch()}
+            >
               <RefreshCcw className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Status filter — 2-row grid per layout spec */}
+      {/* Status filter — 2-row grid */}
       <div className="px-6 py-3">
         <div className="flex gap-2 items-stretch">
-          {/* Total card — spans 2 rows */}
+          {/* Total card */}
           <button
             onClick={() => setStatusFilter(statusFilter === "total" ? null : "total")}
-            className={`flex flex-col items-center justify-center px-5 py-2 rounded-md border text-center transition-colors min-w-[80px] row-span-2 ${
+            className={`flex flex-col items-center justify-center px-5 py-2 rounded-md border text-center transition-colors min-w-[80px] cursor-pointer ${
               statusFilter === "total"
                 ? "bg-primary/20 border-primary"
                 : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
@@ -414,9 +428,8 @@ export default function RaceList() {
             <span className="text-2xl font-bold text-foreground mt-0.5">{totalCount}</span>
           </button>
 
-          {/* Right side: 2 rows of 5 status cards */}
+          {/* Right side: 2 rows × 5 status cards */}
           <div className="flex-1 flex flex-col gap-1.5">
-            {/* Row 1 */}
             <div className="grid grid-cols-5 gap-1.5">
               {STATUS_ROW1.map((card) => {
                 const count = statusCounts[card.key] || 0;
@@ -425,7 +438,7 @@ export default function RaceList() {
                   <button
                     key={card.key}
                     onClick={() => setStatusFilter(isActive ? null : card.key)}
-                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors ${
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
                       isActive
                         ? "bg-primary/20 border-primary"
                         : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
@@ -437,7 +450,6 @@ export default function RaceList() {
                 );
               })}
             </div>
-            {/* Row 2 */}
             <div className="grid grid-cols-5 gap-1.5">
               {STATUS_ROW2.map((card) => {
                 const count = statusCounts[card.key] || 0;
@@ -446,7 +458,7 @@ export default function RaceList() {
                   <button
                     key={card.key}
                     onClick={() => setStatusFilter(isActive ? null : card.key)}
-                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors ${
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
                       isActive
                         ? "bg-primary/20 border-primary"
                         : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
@@ -462,12 +474,12 @@ export default function RaceList() {
         </div>
       </div>
 
-      {/* Bulk action bar */}
-      {selectedIds.length > 0 && (
+      {/* Bulk action bar — admin only */}
+      {isAdmin && selectedIds.length > 0 && (
         <div className="mx-6 mb-2 flex items-center gap-3 bg-primary/10 border border-primary/30 rounded-md px-4 py-2">
           <span className="text-xs text-muted-foreground">{selectedIds.length}件選択中</span>
           <Select value={bulkStatus} onValueChange={setBulkStatus}>
-            <SelectTrigger className="w-[140px] h-7 text-xs">
+            <SelectTrigger className="w-[140px] h-7 text-xs cursor-pointer">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -478,7 +490,7 @@ export default function RaceList() {
           </Select>
           <Button
             size="sm"
-            className="h-7 text-xs"
+            className="h-7 text-xs cursor-pointer"
             onClick={handleBulkUpdate}
             disabled={batchUpdateMutation.isPending}
           >
@@ -487,7 +499,7 @@ export default function RaceList() {
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 text-xs ml-auto"
+            className="h-7 text-xs ml-auto cursor-pointer"
             onClick={() => setCheckedIds(new Set())}
           >
             選択解除
@@ -495,7 +507,7 @@ export default function RaceList() {
         </div>
       )}
 
-      {/* Table — fixed layout, space-between columns */}
+      {/* Table */}
       <div className="flex-1 px-6 pb-6 overflow-hidden flex flex-col min-h-0">
         <div className="rounded-md border border-border bg-card flex-1 overflow-auto">
           <Table className="w-full table-fixed">
@@ -508,14 +520,18 @@ export default function RaceList() {
                 <TableHead style={{ width: "4%" }} className="text-center text-xs">芝ダ</TableHead>
                 <TableHead style={{ width: "6%" }} className="text-center text-xs">距離</TableHead>
                 <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
-                <TableHead style={{ width: "4%" }} className="text-center">
-                  <Checkbox
-                    checked={allChecked ? true : someChecked ? "indeterminate" : false}
-                    onCheckedChange={toggleAll}
-                    aria-label="全選択"
-                  />
-                </TableHead>
-                <TableHead style={{ width: "10%" }} className="text-xs">ステータス</TableHead>
+                {/* Checkbox column — admin only */}
+                {isAdmin && (
+                  <TableHead style={{ width: "4%" }} className="text-center">
+                    <Checkbox
+                      checked={allChecked ? true : someChecked ? "indeterminate" : false}
+                      onCheckedChange={toggleAll}
+                      aria-label="全選択"
+                      className="cursor-pointer"
+                    />
+                  </TableHead>
+                )}
+                <TableHead style={{ width: isAdmin ? "10%" : "14%" }} className="text-xs">ステータス</TableHead>
                 <TableHead style={{ width: "8%" }} className="text-xs">担当者</TableHead>
                 <TableHead style={{ width: "6.5%" }} className="text-xs">更新時間</TableHead>
                 <TableHead style={{ width: "24%" }} className="text-center text-xs">操作</TableHead>
@@ -525,14 +541,14 @@ export default function RaceList() {
               {isRacesLoading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 12 }).map((_, j) => (
+                    {Array.from({ length: isAdmin ? 12 : 11 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : filteredRaces.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} className="h-32 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={isAdmin ? 12 : 11} className="h-32 text-center text-muted-foreground text-sm">
                     該当するレースが見つかりません
                   </TableCell>
                 </TableRow>
@@ -546,6 +562,9 @@ export default function RaceList() {
                   const isChecked = checkedIds.has(race.id);
                   const canReanalyze = derivedStatus === "解析失敗" || derivedStatus === "再解析要請";
 
+                  // Correction button disabled for non-correctable statuses
+                  const correctionDisabled = CORRECTION_DISABLED_STATUSES.includes(derivedStatus);
+
                   // Operation button label and color
                   let opLabel = "データ補正";
                   let opColorClass = "bg-red-700 hover:bg-red-600 text-white border-0";
@@ -556,6 +575,10 @@ export default function RaceList() {
                     opLabel = "再補正";
                     opColorClass = "bg-blue-700 hover:bg-blue-600 text-white border-0";
                   }
+
+                  // Role-based: 一般ユーザー cannot use レビュー, 再補正, 再解析
+                  const opActionBlocked = !isAdmin && (derivedStatus === "レビュー待ち" || derivedStatus === "データ確定");
+                  const reanalyzeBlocked = !isAdmin;
 
                   let updatedTime = "-";
                   if (race.updated_at) {
@@ -589,17 +612,21 @@ export default function RaceList() {
                           {videoComplete ? "完了" : "未完了"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-center">
-                        {canSelect ? (
-                          <Checkbox
-                            checked={isChecked}
-                            onCheckedChange={() => toggleRow(race.id)}
-                            aria-label={`${race.race_number}R選択`}
-                          />
-                        ) : (
-                          <span className="block w-4 h-4" />
-                        )}
-                      </TableCell>
+                      {/* Checkbox — admin only */}
+                      {isAdmin && (
+                        <TableCell className="text-center">
+                          {canSelect ? (
+                            <Checkbox
+                              checked={isChecked}
+                              onCheckedChange={() => toggleRow(race.id)}
+                              aria-label={`${race.race_number}R選択`}
+                              className="cursor-pointer"
+                            />
+                          ) : (
+                            <span className="block w-4 h-4" />
+                          )}
+                        </TableCell>
+                      )}
                       <TableCell>
                         <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className}`}>
                           {badgeProps.label}
@@ -609,24 +636,36 @@ export default function RaceList() {
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
-                          <Link href={`/races/${race.id}`}>
+                          {/* Main operation button */}
+                          {correctionDisabled || opActionBlocked ? (
                             <Button
                               size="sm"
-                              className={`h-6 text-[11px] px-2 ${opColorClass}`}
+                              disabled
+                              className={`h-6 text-[11px] px-2 opacity-30 cursor-not-allowed ${opColorClass}`}
                             >
                               {opLabel}
                             </Button>
-                          </Link>
+                          ) : (
+                            <Link href={`/races/${race.id}`}>
+                              <Button
+                                size="sm"
+                                className={`h-6 text-[11px] px-2 cursor-pointer ${opColorClass}`}
+                              >
+                                {opLabel}
+                              </Button>
+                            </Link>
+                          )}
+                          {/* Re-analysis button */}
                           <Button
                             size="sm"
                             variant="outline"
                             className={`h-6 text-[11px] px-2 flex items-center gap-0.5 ${
-                              canReanalyze
-                                ? "border-red-700 text-red-400 hover:bg-red-900/20"
+                              canReanalyze && !reanalyzeBlocked
+                                ? "border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
                                 : "opacity-30 cursor-not-allowed"
                             }`}
-                            disabled={!canReanalyze}
-                            onClick={() => canReanalyze && setReanalyzeRace(race)}
+                            disabled={!canReanalyze || reanalyzeBlocked}
+                            onClick={() => canReanalyze && !reanalyzeBlocked && setReanalyzeRace(race)}
                           >
                             <RotateCcw className="h-3 w-3" />
                             再解析

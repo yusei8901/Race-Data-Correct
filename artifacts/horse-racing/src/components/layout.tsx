@@ -5,7 +5,11 @@ import {
   ListOrdered,
   ChevronLeft,
   ChevronRight,
+  ShieldCheck,
+  User,
 } from "lucide-react";
+import { useUserRole } from "@/contexts/user-role";
+import type { UserRole } from "@/contexts/user-role";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -14,14 +18,22 @@ interface LayoutProps {
 export function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(true);
+  const { role, setRole, isAdmin } = useUserRole();
 
-  const navigation = [
-    { name: "処理管理", href: "/processing", icon: Settings, match: (loc: string) => loc.startsWith("/processing") },
-    { name: "レース一覧", href: "/", icon: ListOrdered, match: (loc: string) => loc === "/" || loc.startsWith("/races/") },
+  const allNavItems = [
+    { name: "処理管理", href: "/processing", icon: Settings, adminOnly: true, match: (loc: string) => loc.startsWith("/processing") },
+    { name: "レース一覧", href: "/", icon: ListOrdered, adminOnly: false, match: (loc: string) => loc === "/" || loc.startsWith("/races/") },
   ];
+
+  const navigation = allNavItems.filter(item => !item.adminOnly || isAdmin);
+
+  const handleRoleToggle = () => {
+    setRole(role === "管理者" ? "一般ユーザー" : "管理者");
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Sidebar */}
       <div
         className={`flex-shrink-0 border-r border-border bg-sidebar flex flex-col transition-all duration-200 ${collapsed ? "w-14" : "w-56"}`}
       >
@@ -38,7 +50,7 @@ export function Layout({ children }: LayoutProps) {
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="absolute -right-3.5 top-1/2 -translate-y-1/2 bg-zinc-200 border border-zinc-300 rounded-full w-7 h-7 flex items-center justify-center text-zinc-800 hover:bg-white hover:border-white z-10 transition-colors shadow-md"
+            className="absolute -right-3.5 top-1/2 -translate-y-1/2 bg-zinc-200 border border-zinc-300 rounded-full w-7 h-7 flex items-center justify-center text-zinc-800 hover:bg-white hover:border-white z-10 transition-colors shadow-md cursor-pointer"
             aria-label={collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}
           >
             {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronLeft className="h-3.5 w-3.5" />}
@@ -87,7 +99,28 @@ export function Layout({ children }: LayoutProps) {
         </div>
       </div>
 
+      {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Top header bar with role switcher */}
+        <div className="h-9 border-b border-border bg-card flex items-center justify-end px-4 gap-2 flex-shrink-0">
+          <span className="text-[11px] text-muted-foreground">権限:</span>
+          <button
+            onClick={handleRoleToggle}
+            className={`flex items-center gap-1.5 h-6 px-3 rounded-full text-[11px] font-medium border transition-colors cursor-pointer ${
+              isAdmin
+                ? "bg-primary/20 border-primary/60 text-primary hover:bg-primary/30"
+                : "bg-muted border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+            }`}
+            title="クリックして権限を切り替え"
+          >
+            {isAdmin
+              ? <><ShieldCheck className="h-3 w-3" />管理者</>
+              : <><User className="h-3 w-3" />一般ユーザー</>
+            }
+          </button>
+          <span className="text-[10px] text-muted-foreground/50">（デモ用）</span>
+        </div>
+
         <main className="flex-1 overflow-y-auto focus:outline-none">
           {children}
         </main>

@@ -113,4 +113,25 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  /* White calendar/time picker icon on date inputs */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: brightness(0) invert(1);
+    cursor: pointer;
+    opacity: 0.8;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  input[type="time"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  /* Pointer cursor on all interactive elements */
+  button:not([disabled]),
+  [role="checkbox"],
+  [role="combobox"],
+  label[for],
+  select {
+    cursor: pointer;
+  }
 }

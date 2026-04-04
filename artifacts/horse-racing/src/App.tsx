@@ -1,9 +1,10 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout";
+import { UserRoleProvider, useUserRole } from "@/contexts/user-role";
 
 // Pages
 import RaceList from "@/pages/race-list";
@@ -20,12 +21,16 @@ const queryClient = new QueryClient({
 });
 
 function Router() {
+  const { isAdmin } = useUserRole();
+
   return (
     <Layout>
       <Switch>
         <Route path="/" component={RaceList} />
         <Route path="/races/:raceId" component={DataCorrection} />
-        <Route path="/processing" component={ProcessingManagement} />
+        <Route path="/processing">
+          {isAdmin ? <ProcessingManagement /> : <Redirect to="/" />}
+        </Route>
         <Route component={NotFound} />
       </Switch>
     </Layout>
@@ -36,9 +41,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
+        <UserRoleProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
+        </UserRoleProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
