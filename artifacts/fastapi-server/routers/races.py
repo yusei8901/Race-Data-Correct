@@ -176,7 +176,7 @@ def complete_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            """UPDATE races SET status = '補正完了', updated_at = NOW()
+            """UPDATE races SET status = 'レビュー待ち', updated_at = NOW()
                WHERE id = %s RETURNING id, race_date::text, venue, race_type, race_number,
                race_name, surface_type, distance, direction, weather, condition, start_time,
                status, video_status, video_url, analysis_status, assigned_user,

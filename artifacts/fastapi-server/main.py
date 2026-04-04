@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import races, entries, passing_orders, batch_jobs, analysis
+from routers import races, entries, passing_orders, batch_jobs, analysis, history
 
 app = FastAPI(title="Horse Racing Data Correction API")
 
@@ -17,6 +17,7 @@ app.include_router(entries.router)
 app.include_router(passing_orders.router)
 app.include_router(batch_jobs.router)
 app.include_router(analysis.router)
+app.include_router(history.router)
 
 
 @app.get("/fastapi/healthz")

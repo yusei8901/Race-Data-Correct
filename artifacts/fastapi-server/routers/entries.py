@@ -14,7 +14,7 @@ def get_race_entries(race_id: str):
                       last_3f::float, finish_time::float,
                       finish_position,
                       margin::float,
-                      color, lane
+                      color, lane, furlong_splits
                FROM race_entries
                WHERE race_id = %s
                ORDER BY horse_number""",
