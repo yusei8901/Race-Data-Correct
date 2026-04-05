@@ -42,7 +42,7 @@ type DerivedStatus =
   | "未解析"
   | "解析中"
   | "再解析中"
-  | "未補正"
+  | "待機中"
   | "補正中"
   | "レビュー待ち"
   | "データ確定"
@@ -66,15 +66,15 @@ function getDerivedStatus(race: Race): DerivedStatus {
   }
   if (as_ === "突合失敗") return "突合失敗";
   if (as_ === "完了") {
-    if (st === "未補正") return "未補正";
+    if (st === "待機中" || st === "未補正") return "待機中";
     if (st === "補正中") return "補正中";
     if (st === "レビュー待ち") return "レビュー待ち";
     if (st === "データ確定") return "データ確定";
     if (st === "修正要請") return "修正要請";
-    if (st === "補正完了" || st === "データ補正") return "未補正";
+    if (st === "補正完了" || st === "データ補正") return "待機中";
     if (st === "レビュー") return "レビュー待ち";
     if (st === "修正要求") return "修正要請";
-    return "未補正";
+    return "待機中";
   }
   return "未処理";
 }
@@ -85,7 +85,7 @@ function getStatusBadgeProps(status: DerivedStatus) {
     case "未解析":       return { className: "bg-slate-800/60 text-slate-400 border-slate-700", label: "未解析" };
     case "解析中":       return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
     case "再解析中":     return { className: "bg-teal-900/40 text-teal-400 border-teal-800", label: "再解析中" };
-    case "未補正":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "未補正" };
+    case "待機中":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "待機中" };
     case "補正中":       return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
     case "データ確定":   return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
@@ -102,8 +102,8 @@ const CORRECTION_DISABLED_STATUSES: DerivedStatus[] = [
   "未処理", "未解析", "解析中", "再解析中", "解析失敗",
 ];
 
-const SELECTABLE_STATUSES: DerivedStatus[] = ["未補正", "補正中", "レビュー待ち", "修正要請", "データ確定"];
-const BULK_STATUS_OPTIONS: DerivedStatus[] = ["未補正", "補正中", "レビュー待ち", "修正要請", "データ確定"];
+const SELECTABLE_STATUSES: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
+const BULK_STATUS_OPTIONS: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
 
 function isSelectable(status: DerivedStatus): boolean {
   return SELECTABLE_STATUSES.includes(status);
@@ -142,7 +142,7 @@ const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] =
 const STATUS_ROW2: { key: DerivedStatus; label: string; colorClass: string }[] = [
   { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400" },
   { key: "再解析要請",   label: "再解析要請",   colorClass: "text-rose-400" },
-  { key: "未補正",       label: "未補正",       colorClass: "text-yellow-400" },
+  { key: "待機中",       label: "待機中",       colorClass: "text-yellow-400" },
   { key: "再解析中",     label: "再解析中",     colorClass: "text-teal-400" },
   { key: "突合失敗",     label: "突合失敗",     colorClass: "text-red-300" },
 ];

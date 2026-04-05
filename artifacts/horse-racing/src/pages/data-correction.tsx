@@ -415,27 +415,57 @@ interface HistoryEntry {
   description?: string; created_at: string;
 }
 
-function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void }) {
+function HistoryModal({
+  raceId, onClose, correctionRequestComment, isEditingMode, onRestore,
+}: {
+  raceId: string; onClose: () => void; correctionRequestComment?: string | null;
+  isEditingMode: boolean; onRestore?: (entryId: string) => void;
+}) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"history" | "comment">("history");
+  const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
+
   useEffect(() => {
     fetch(`${API}/races/${raceId}/history`)
       .then((r) => r.json())
       .then((d) => { setEntries(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, [raceId]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[560px] max-w-[95vw] flex flex-col max-h-[70vh]">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[600px] max-w-[95vw] flex flex-col max-h-[70vh]">
         <div className="flex items-center justify-between p-4 border-b border-zinc-700">
           <div className="flex items-center gap-2">
             <History className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">修正履歴</h2>
+            <h2 className="text-sm font-semibold">修正履歴 / コメント</h2>
           </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer text-lg leading-none">✕</button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-zinc-800 rounded overflow-hidden border border-zinc-700">
+              <button
+                onClick={() => setTab("history")}
+                className={`px-3 py-1 text-[10px] cursor-pointer transition-colors ${tab === "history" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
+              >修正履歴</button>
+              {correctionRequestComment && (
+                <button
+                  onClick={() => setTab("comment")}
+                  className={`px-3 py-1 text-[10px] cursor-pointer transition-colors ${tab === "comment" ? "bg-orange-600 text-white" : "text-zinc-400 hover:text-white"}`}
+                >修正要請コメント</button>
+              )}
+            </div>
+            <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer text-lg leading-none">✕</button>
+          </div>
         </div>
         <div className="flex-1 overflow-auto">
-          {loading ? (
+          {tab === "comment" && correctionRequestComment ? (
+            <div className="p-5">
+              <div className="bg-orange-950/30 border border-orange-800/50 rounded-lg p-4">
+                <div className="text-xs font-semibold text-orange-400 mb-2">修正要請コメント</div>
+                <p className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">{correctionRequestComment}</p>
+              </div>
+            </div>
+          ) : loading ? (
             <div className="p-4 space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
           ) : entries.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">履歴がありません</div>
@@ -447,6 +477,7 @@ function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void
                   <th className="p-2 text-left text-muted-foreground font-medium w-20">担当者</th>
                   <th className="p-2 text-left text-muted-foreground font-medium w-20">種別</th>
                   <th className="p-2 text-left text-muted-foreground font-medium">内容</th>
+                  {isEditingMode && <th className="p-2 text-center text-muted-foreground font-medium w-16">復元</th>}
                 </tr>
               </thead>
               <tbody>
@@ -459,11 +490,20 @@ function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void
                     <td className="p-2">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                         e.action_type === "補正完了" || e.action_type === "データ確定" ? "bg-green-900/50 text-green-400"
-                          : e.action_type === "補正開始" ? "bg-blue-900/50 text-blue-400"
+                          : e.action_type === "補正開始" || e.action_type === "補正再開" ? "bg-blue-900/50 text-blue-400"
+                          : e.action_type === "修正要請" ? "bg-orange-900/50 text-orange-400"
                           : "bg-zinc-700 text-zinc-300"
                       }`}>{e.action_type}</span>
                     </td>
                     <td className="p-2 text-muted-foreground">{e.description || "-"}</td>
+                    {isEditingMode && (
+                      <td className="p-2 text-center">
+                        <button
+                          onClick={() => setRestoreTarget(e.id)}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 cursor-pointer underline"
+                        >復元</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -471,16 +511,29 @@ function HistoryModal({ raceId, onClose }: { raceId: string; onClose: () => void
           )}
         </div>
       </div>
+
+      {restoreTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[400px] p-6">
+            <h2 className="text-sm font-semibold mb-2">データ復元の確認</h2>
+            <p className="text-sm text-muted-foreground mb-5">この時点の状態に復元しますか？現在の編集内容は失われます。</p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setRestoreTarget(null)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+              <Button size="sm" onClick={() => { onRestore?.(restoreTarget); setRestoreTarget(null); onClose(); }} className="h-8 text-xs cursor-pointer bg-cyan-700 hover:bg-cyan-600">復元する</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Confirm Dialog ─────────────────────────────────────────────────────────────
 function ConfirmDialog({
-  title, message, confirmLabel, onConfirm, onCancel, loading,
+  title, message, confirmLabel, onConfirm, onCancel, loading, confirmColor,
 }: {
   title: string; message: string; confirmLabel: string;
-  onConfirm: () => void; onCancel: () => void; loading?: boolean;
+  onConfirm: () => void; onCancel: () => void; loading?: boolean; confirmColor?: string;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
@@ -489,9 +542,164 @@ function ConfirmDialog({
         <p className="text-sm text-muted-foreground mb-5">{message}</p>
         <div className="flex gap-2 justify-end">
           <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="h-8 text-xs cursor-pointer">キャンセル</Button>
-          <Button size="sm" onClick={onConfirm} disabled={loading} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
+          <Button size="sm" onClick={onConfirm} disabled={loading} className={`h-8 text-xs cursor-pointer ${confirmColor || "bg-primary hover:bg-primary/90"}`}>
             {loading ? "処理中..." : confirmLabel}
           </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Temp Save Dialog (3 options) ──────────────────────────────────────────────
+function TempSaveDialog({
+  onCancel, onSaveAndExit, onSaveAndContinue, loading,
+}: {
+  onCancel: () => void; onSaveAndExit: () => void; onSaveAndContinue: () => void; loading?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[440px] max-w-[95vw] p-6">
+        <h2 className="text-sm font-semibold mb-2">一時保存の確認</h2>
+        <p className="text-sm text-muted-foreground mb-5">現在の入力情報を一時保存しますか？</p>
+        <div className="flex flex-col gap-2">
+          <Button size="sm" onClick={onSaveAndContinue} disabled={loading} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90 w-full">
+            {loading ? "保存中..." : "一時保存して編集続行"}
+          </Button>
+          <Button size="sm" onClick={onSaveAndExit} disabled={loading} className="h-8 text-xs cursor-pointer bg-blue-700 hover:bg-blue-600 w-full">
+            一時保存して編集モードを終了
+          </Button>
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="h-8 text-xs cursor-pointer w-full">
+            キャンセル
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reanalysis Request Dialog ─────────────────────────────────────────────────
+const REANALYSIS_REASONS = ["逆光", "曇り", "雨天", "その他"];
+
+function ReanalysisRequestDialog({
+  raceName, onCancel, onSubmit, loading,
+}: {
+  raceName: string; onCancel: () => void; onSubmit: (reason: string, comment: string) => void; loading?: boolean;
+}) {
+  const [reason, setReason] = useState("逆光");
+  const [comment, setComment] = useState("");
+  const isOther = reason === "その他";
+  const canSubmit = !isOther || comment.trim().length > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
+        <h2 className="text-sm font-semibold mb-3">再解析申請</h2>
+        <div className="text-xs text-muted-foreground mb-1">対象レース</div>
+        <div className="text-sm font-medium mb-4">{raceName}</div>
+        <div className="mb-3">
+          <div className="text-xs font-medium text-muted-foreground mb-2">再解析理由</div>
+          <div className="grid grid-cols-2 gap-2">
+            {REANALYSIS_REASONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => setReason(r)}
+                className={`py-2 px-3 rounded-md text-sm font-medium border transition-colors cursor-pointer ${
+                  reason === r
+                    ? "bg-red-500/20 border-red-500 text-red-400"
+                    : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
+                }`}
+              >{r}</button>
+            ))}
+          </div>
+        </div>
+        <div className="mb-5">
+          <div className="text-xs font-medium text-muted-foreground mb-1">
+            コメント{isOther ? <span className="text-red-400 ml-1">（必須）</span> : "（任意）"}
+          </div>
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground resize-none h-20"
+            placeholder="再解析の理由を入力してください"
+          />
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+          <Button size="sm" onClick={() => onSubmit(reason, comment)} disabled={loading || !canSubmit} className="h-8 text-xs cursor-pointer bg-red-700 hover:bg-red-600">
+            {loading ? "申請中..." : "再解析を申請"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Correction Request Dialog (修正要請) ──────────────────────────────────────
+function CorrectionRequestDialog({
+  raceName, onCancel, onSubmit, loading,
+}: {
+  raceName: string; onCancel: () => void; onSubmit: (comment: string) => void; loading?: boolean;
+}) {
+  const [comment, setComment] = useState("");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
+        <h2 className="text-sm font-semibold mb-3">修正要請</h2>
+        <div className="text-xs text-muted-foreground mb-1">対象レース</div>
+        <div className="text-sm font-medium mb-4">{raceName}</div>
+        <div className="mb-5">
+          <div className="text-xs font-medium text-muted-foreground mb-1">差し戻し理由 <span className="text-red-400">（必須）</span></div>
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground resize-none h-24"
+            placeholder="差し戻しの理由を入力してください"
+          />
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+          <Button size="sm" onClick={() => onSubmit(comment)} disabled={loading || !comment.trim()} className="h-8 text-xs cursor-pointer bg-yellow-700 hover:bg-yellow-600">
+            {loading ? "送信中..." : "修正要請を送信"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Status Detail Popup ───────────────────────────────────────────────────────
+function StatusDetailPopup({
+  race, onClose,
+}: {
+  race: any; onClose: () => void;
+}) {
+  const status = race?.status;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[440px] max-w-[95vw] p-6">
+        {status === "再解析要請" && (
+          <>
+            <h2 className="text-sm font-semibold mb-3 text-rose-400">再解析要請の詳細</h2>
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">理由: <span className="text-foreground font-medium">{race.reanalysis_reason || "-"}</span></div>
+              {race.reanalysis_comment && (
+                <div className="bg-zinc-800 rounded p-3 text-sm text-zinc-200">{race.reanalysis_comment}</div>
+              )}
+            </div>
+          </>
+        )}
+        {status === "修正要請" && (
+          <>
+            <h2 className="text-sm font-semibold mb-3 text-orange-400">修正要請の詳細</h2>
+            {race.correction_request_comment && (
+              <div className="bg-zinc-800 rounded p-3 text-sm text-zinc-200">{race.correction_request_comment}</div>
+            )}
+          </>
+        )}
+        <div className="flex justify-end mt-4">
+          <Button variant="outline" size="sm" onClick={onClose} className="h-8 text-xs cursor-pointer">閉じる</Button>
         </div>
       </div>
     </div>
@@ -509,12 +717,15 @@ export default function DataCorrection() {
 
   // UI state
   const [showHistory, setShowHistory] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<"save" | "complete" | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<
+    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "reanalysis" | "correctionRequest" | "statusDetail" | null
+  >(null);
   const [leftView, setLeftView] = useState<"furlong" | "entries" | "both">("both");
   const [selectedCp, setSelectedCp] = useState<string | null>(null);
 
   // Edit mode: purely local; resets when leaving the page
   const [isEditingMode, setIsEditingMode] = useState(false);
+  const [savingTemp, setSavingTemp] = useState(false);
 
   // Video state
   const [videoTime, setVideoTime] = useState(0);
@@ -633,41 +844,87 @@ export default function DataCorrection() {
     setLocalEdits({});
   }, [localEdits, updatePassingOrderMut]);
 
-  // 補正開始
+  const currentUserName = isAdmin ? "管理者" : "ユーザー";
+  const raceLockedBy = race?.locked_by;
+  const isLockedByMe = raceLockedBy === currentUserName || !raceLockedBy;
+  const isLockedByOther = !!raceLockedBy && raceLockedBy !== currentUserName;
+  const raceStatus = race?.status ?? "";
+
+  // 補正開始 / 補正再開
   const handleStart = () => {
-    const status = race?.status;
-    if (status === "補正中") {
+    if (raceStatus === "補正中" && isLockedByMe) {
       setIsEditingMode(true);
       return;
     }
-    startCorrectionMut.mutate({ raceId }, {
-      onSuccess: (updated) => {
+    fetch(`${API}/races/${raceId}/corrections/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_name: currentUserName }),
+    })
+      .then((r) => { if (!r.ok) throw new Error("Lock failed"); return r.json(); })
+      .then((updated) => {
         queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+        const actionType = raceStatus === "修正要請" || raceStatus === "補正中" ? "補正再開" : "補正開始";
         fetch(`${API}/races/${raceId}/history`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_name: "管理者", action_type: "補正開始", description: "補正作業を開始しました" }),
+          body: JSON.stringify({ user_name: currentUserName, action_type: actionType, description: `${actionType}しました` }),
         });
         setIsEditingMode(true);
-        toast({ title: "補正を開始しました" });
-      },
-    });
+        toast({ title: `${actionType}しました` });
+      })
+      .catch(() => toast({ title: "ロック取得に失敗しました。他のユーザーが編集中です。", variant: "destructive" }));
   };
 
-  // 一時保存
-  const handleTempSave = async () => {
+  // 一時保存 + 編集続行
+  const handleTempSaveContinue = async () => {
+    setSavingTemp(true);
     await saveAllEdits();
+    fetch(`${API}/races/${raceId}/corrections/temp-save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_name: currentUserName, exit_editing: false }),
+    });
     fetch(`${API}/races/${raceId}/history`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_name: "管理者", action_type: "一時保存", description: "入力データを一時保存しました" }),
+      body: JSON.stringify({ user_name: currentUserName, action_type: "一時保存", description: "入力データを一時保存しました" }),
     });
     toast({ title: "一時保存しました" });
+    setSavingTemp(false);
+    setConfirmDialog(null);
+  };
+
+  // 一時保存 + 編集終了
+  const handleTempSaveExit = async () => {
+    setSavingTemp(true);
+    await saveAllEdits();
+    const res = await fetch(`${API}/races/${raceId}/corrections/temp-save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_name: currentUserName, exit_editing: true }),
+    });
+    const updated = await res.json();
+    queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+    fetch(`${API}/races/${raceId}/history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_name: currentUserName, action_type: "一時保存", description: "一時保存して編集を終了しました" }),
+    });
+    toast({ title: "一時保存して編集を終了しました" });
+    setIsEditingMode(false);
+    setLocalEdits({});
+    setSavingTemp(false);
     setConfirmDialog(null);
   };
 
   // 補正完了
   const handleComplete = async () => {
+    if (hasDuplicateHorseNumbers) {
+      toast({ title: "同一地点に同じ馬番が複数あります", description: "馬番の重複を解消してください", variant: "destructive" });
+      setConfirmDialog(null);
+      return;
+    }
     await saveAllEdits();
     completeCorrectionMut.mutate({ raceId }, {
       onSuccess: (updated) => {
@@ -675,22 +932,151 @@ export default function DataCorrection() {
         fetch(`${API}/races/${raceId}/history`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_name: "管理者", action_type: "補正完了", description: "補正を完了しレビュー待ちに変更しました" }),
+          body: JSON.stringify({ user_name: currentUserName, action_type: "補正完了", description: "補正を完了しレビュー待ちに変更しました" }),
         });
         toast({ title: "補正完了。レビュー待ちに変更されました。" });
+        setIsEditingMode(false);
         navigate("/");
       },
     });
     setConfirmDialog(null);
   };
 
-  // キャンセル: stay on page, return to view mode
+  // キャンセル: check for unsaved changes
   const handleCancel = () => {
+    if (Object.keys(localEdits).length > 0) {
+      setConfirmDialog("cancel");
+    } else {
+      doCancel();
+    }
+  };
+
+  const doCancel = async () => {
+    await fetch(`${API}/races/${raceId}/corrections/cancel`, { method: "POST" });
+    const res = await fetch(`${API}/races/${raceId}`);
+    const updated = await res.json();
+    queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
     setIsEditingMode(false);
     setLocalEdits({});
     setSelectedBboxId(null);
     setAddMode(false);
     setAddPreview(null);
+    setConfirmDialog(null);
+    toast({ title: "編集をキャンセルしました" });
+  };
+
+  // 突合申請
+  const handleMatchingFailure = async () => {
+    try {
+      const res = await fetch(`${API}/races/${raceId}/matching-failure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName, action_type: "突合失敗", description: "突合失敗を申請しました" }),
+      });
+      toast({ title: "突合失敗を申請しました" });
+      setIsEditingMode(false);
+    } catch {
+      toast({ title: "突合申請に失敗しました", variant: "destructive" });
+    }
+    setConfirmDialog(null);
+  };
+
+  // 再解析申請
+  const handleReanalysisRequest = async (reason: string, comment: string) => {
+    try {
+      const res = await fetch(`${API}/races/${raceId}/reanalysis-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, comment: comment || null }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName, action_type: "再解析要請", description: `理由: ${reason}${comment ? ` / ${comment}` : ""}` }),
+      });
+      toast({ title: "再解析を申請しました" });
+      setIsEditingMode(false);
+    } catch {
+      toast({ title: "再解析申請に失敗しました", variant: "destructive" });
+    }
+    setConfirmDialog(null);
+  };
+
+  // 修正要請 (admin)
+  const handleCorrectionRequest = async (comment: string) => {
+    try {
+      const res = await fetch(`${API}/races/${raceId}/correction-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName, action_type: "修正要請", description: comment }),
+      });
+      toast({ title: "修正要請を送信しました" });
+    } catch {
+      toast({ title: "修正要請の送信に失敗しました", variant: "destructive" });
+    }
+    setConfirmDialog(null);
+  };
+
+  // データ確定 (admin)
+  const handleConfirm = async () => {
+    try {
+      const res = await fetch(`${API}/races/${raceId}/confirm`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName, action_type: "データ確定", description: "データを確定しました" }),
+      });
+      toast({ title: "データを確定しました" });
+    } catch {
+      toast({ title: "データ確定に失敗しました", variant: "destructive" });
+    }
+    setConfirmDialog(null);
+  };
+
+  // 強制ロック解除 (admin)
+  const handleForceUnlock = async () => {
+    try {
+      const res = await fetch(`${API}/races/${raceId}/force-unlock`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName, action_type: "強制ロック解除", description: `${raceLockedBy}のロックを強制解除しました` }),
+      });
+      toast({ title: "ロックを強制解除しました" });
+    } catch {
+      toast({ title: "ロック解除に失敗しました", variant: "destructive" });
+    }
+    setConfirmDialog(null);
+  };
+
+  // 履歴復元 (stub - requires backend restore endpoint)
+  const handleRestore = (entryId: string) => {
+    toast({ title: "復元機能は準備中です", description: `対象履歴: ${entryId}` });
   };
 
   // Checkpoint click
@@ -814,8 +1200,26 @@ export default function DataCorrection() {
 
   const raceTimeFromVideo = videoTime - VIDEO_OFFSET;
   const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
-  const canStartCorrection = race?.status === "未補正" || race?.status === "補正中";
+  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || (raceStatus === "補正中" && isLockedByMe);
   const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
+
+  // Duplicate horse number validation
+  const hasDuplicateHorseNumbers = useMemo(() => {
+    if (!passingOrders) return false;
+    const merged = passingOrders.map((o) => ({ ...o, ...(localEdits[o.id] ?? {}) }));
+    const nums = merged.map((o) => o.horse_number).filter((n) => n != null);
+    return nums.length !== new Set(nums).size;
+  }, [passingOrders, localEdits]);
+
+  const duplicateHorseNumbers = useMemo(() => {
+    if (!passingOrders) return new Set<number>();
+    const merged = passingOrders.map((o) => ({ ...o, ...(localEdits[o.id] ?? {}) }));
+    const counts: Record<number, number> = {};
+    merged.forEach((o) => { if (o.horse_number != null) counts[o.horse_number] = (counts[o.horse_number] || 0) + 1; });
+    return new Set(Object.entries(counts).filter(([, c]) => c > 1).map(([n]) => Number(n)));
+  }, [passingOrders, localEdits]);
+
+  const raceName = race ? `${race.venue} ${race.race_number}R ${race.race_name}` : "";
 
   // ── RENDER ─────────────────────────────────────────────────────────────────
   return (
@@ -866,25 +1270,44 @@ export default function DataCorrection() {
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {race?.status === "補正中" && (
-            <Badge variant="outline" className="text-[10px] border-blue-700 text-blue-400 bg-blue-900/20">補正中</Badge>
+        <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+          {/* Status badge */}
+          {(raceStatus === "補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析要請" || raceStatus === "突合失敗") && (
+            <Badge
+              variant="outline"
+              className={`text-[10px] cursor-pointer ${
+                raceStatus === "補正中" ? "border-blue-700 text-blue-400 bg-blue-900/20"
+                : raceStatus === "待機中" ? "border-yellow-700 text-yellow-400 bg-yellow-900/20"
+                : raceStatus === "レビュー待ち" ? "border-purple-700 text-purple-400 bg-purple-900/20"
+                : raceStatus === "修正要請" ? "border-orange-700 text-orange-400 bg-orange-900/20"
+                : raceStatus === "データ確定" ? "border-green-700 text-green-400 bg-green-900/20"
+                : raceStatus === "再解析要請" ? "border-rose-700 text-rose-400 bg-rose-900/20"
+                : raceStatus === "突合失敗" ? "border-red-700 text-red-400 bg-red-900/20"
+                : "border-zinc-700 text-zinc-400"
+              }`}
+              onClick={() => (raceStatus === "再解析要請" || raceStatus === "修正要請") && setConfirmDialog("statusDetail")}
+            >
+              {raceStatus}
+              {raceStatus === "再解析要請" && race?.reanalysis_reason && (
+                <span className="ml-1 text-[9px]">({race.reanalysis_reason})</span>
+              )}
+            </Badge>
           )}
 
+          {/* Lock indicator */}
+          {raceStatus === "補正中" && isLockedByOther && (
+            <Badge variant="outline" className="text-[10px] border-amber-700 text-amber-400 bg-amber-900/20">
+              {raceLockedBy}が編集中
+            </Badge>
+          )}
+
+          {/* 修正履歴/コメント — always visible */}
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setShowHistory(true)}>
-            <History className="h-3 w-3" />修正履歴
+            <History className="h-3 w-3" />修正履歴/コメント
           </Button>
 
-          {!isEditingMode ? (
-            <Button
-              size="sm"
-              className="h-7 text-xs gap-1.5 bg-primary hover:bg-primary/90 cursor-pointer"
-              onClick={handleStart}
-              disabled={startCorrectionMut.isPending || !isAdmin || !canStartCorrection}
-            >
-              <Play className="h-3 w-3" />補正開始
-            </Button>
-          ) : (
+          {/* Editing mode buttons */}
+          {isEditingMode ? (
             <>
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setConfirmDialog("save")}>
                 <Save className="h-3 w-3" />一時保存
@@ -892,7 +1315,13 @@ export default function DataCorrection() {
               <Button
                 size="sm"
                 className="h-7 text-xs gap-1.5 bg-green-700 hover:bg-green-600 text-white border-0 cursor-pointer"
-                onClick={() => setConfirmDialog("complete")}
+                onClick={() => {
+                  if (hasDuplicateHorseNumbers) {
+                    toast({ title: "馬番の重複があります", description: "同一地点に同じ馬番が存在します。解消してから完了してください。", variant: "destructive" });
+                    return;
+                  }
+                  setConfirmDialog("complete");
+                }}
                 disabled={completeCorrectionMut.isPending}
               >
                 <CheckCircle2 className="h-3 w-3" />補正完了
@@ -905,7 +1334,81 @@ export default function DataCorrection() {
                 キャンセル
               </Button>
             </>
+          ) : (
+            <>
+              {/* 補正開始 / 補正再開 — when 待機中 or 修正要請 */}
+              {canStartCorrection && !isLockedByOther && (
+                <Button
+                  size="sm"
+                  className={`h-7 text-xs gap-1.5 cursor-pointer ${raceStatus === "修正要請" ? "bg-cyan-700 hover:bg-cyan-600" : "bg-primary hover:bg-primary/90"} text-white border-0`}
+                  onClick={handleStart}
+                >
+                  <Play className="h-3 w-3" />{raceStatus === "修正要請" ? "補正再開" : "補正開始"}
+                </Button>
+              )}
+
+              {/* Lock warning for non-owner */}
+              {raceStatus === "補正中" && isLockedByOther && (
+                <span className="text-xs text-amber-400 px-2 py-1 bg-amber-900/20 border border-amber-800/50 rounded">
+                  {raceLockedBy}が編集中
+                </span>
+              )}
+
+              {/* データ確定 — admin only, レビュー待ち */}
+              {isAdmin && raceStatus === "レビュー待ち" && (
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1.5 bg-green-700 hover:bg-green-600 text-white border-0 cursor-pointer"
+                  onClick={() => setConfirmDialog("confirm")}
+                >
+                  <CheckCircle2 className="h-3 w-3" />データ確定
+                </Button>
+              )}
+
+              {/* 修正要請 — admin only, レビュー待ち */}
+              {isAdmin && raceStatus === "レビュー待ち" && (
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1.5 bg-yellow-700 hover:bg-yellow-600 text-white border-0 cursor-pointer"
+                  onClick={() => setConfirmDialog("correctionRequest")}
+                >
+                  修正要請
+                </Button>
+              )}
+
+              {/* 強制ロック解除 — admin only, 補正中 */}
+              {isAdmin && raceStatus === "補正中" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5 border-amber-700 text-amber-400 hover:bg-amber-900/20 cursor-pointer"
+                  onClick={() => setConfirmDialog("forceUnlock")}
+                >
+                  強制ロック解除
+                </Button>
+              )}
+            </>
           )}
+
+          {/* 突合申請 — always available */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
+            onClick={() => setConfirmDialog("matchingFailure")}
+          >
+            突合申請
+          </Button>
+
+          {/* 再解析申請 — always available */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
+            onClick={() => setConfirmDialog("reanalysis")}
+          >
+            再解析申請
+          </Button>
         </div>
       </div>
 
@@ -1349,6 +1852,7 @@ export default function DataCorrection() {
                   numHorses={numHorses}
                   isCorrectionMode={isEditingMode}
                   onEdit={setEdit}
+                  duplicateHorseNumbers={duplicateHorseNumbers}
                 />
               )}
             </div>
@@ -1357,25 +1861,92 @@ export default function DataCorrection() {
       </div>
 
       {/* Modals */}
-      {showHistory && <HistoryModal raceId={raceId} onClose={() => setShowHistory(false)} />}
+      {showHistory && (
+        <HistoryModal
+          raceId={raceId}
+          onClose={() => setShowHistory(false)}
+          correctionRequestComment={race?.correction_request_comment}
+          isEditingMode={isEditingMode}
+          onRestore={handleRestore}
+        />
+      )}
 
       {confirmDialog === "save" && (
-        <ConfirmDialog
-          title="一時保存の確認"
-          message="現在の入力情報を一時保存しますか？"
-          confirmLabel="一時保存"
-          onConfirm={handleTempSave}
+        <TempSaveDialog
           onCancel={() => setConfirmDialog(null)}
+          onSaveAndContinue={handleTempSaveContinue}
+          onSaveAndExit={handleTempSaveExit}
+          loading={savingTemp}
         />
       )}
       {confirmDialog === "complete" && (
         <ConfirmDialog
           title="補正完了の確認"
-          message="補正を完了しますか？ステータスがレビュー待ちに変わり、レース一覧へ戻ります。"
+          message="補正を完了しますか？ステータスがレビュー待ちに変わります。"
           confirmLabel="補正完了"
           onConfirm={handleComplete}
           onCancel={() => setConfirmDialog(null)}
           loading={completeCorrectionMut.isPending}
+        />
+      )}
+      {confirmDialog === "cancel" && (
+        <ConfirmDialog
+          title="編集キャンセルの確認"
+          message="未保存の変更があります。キャンセルすると変更が失われます。"
+          confirmLabel="キャンセル"
+          onConfirm={doCancel}
+          onCancel={() => setConfirmDialog(null)}
+          confirmColor="bg-red-700 hover:bg-red-600"
+        />
+      )}
+      {confirmDialog === "confirm" && (
+        <ConfirmDialog
+          title="データ確定の確認"
+          message="このレースのデータを確定しますか？確定後は変更できません。"
+          confirmLabel="データ確定"
+          onConfirm={handleConfirm}
+          onCancel={() => setConfirmDialog(null)}
+          confirmColor="bg-green-700 hover:bg-green-600"
+        />
+      )}
+      {confirmDialog === "forceUnlock" && (
+        <ConfirmDialog
+          title="強制ロック解除の確認"
+          message={`${raceLockedBy}のロックを強制的に解除しますか？`}
+          confirmLabel="強制解除"
+          onConfirm={handleForceUnlock}
+          onCancel={() => setConfirmDialog(null)}
+          confirmColor="bg-amber-700 hover:bg-amber-600"
+        />
+      )}
+      {confirmDialog === "matchingFailure" && (
+        <ConfirmDialog
+          title="突合申請の確認"
+          message="このレースを突合失敗として報告しますか？"
+          confirmLabel="突合申請"
+          onConfirm={handleMatchingFailure}
+          onCancel={() => setConfirmDialog(null)}
+          confirmColor="bg-red-700 hover:bg-red-600"
+        />
+      )}
+      {confirmDialog === "reanalysis" && (
+        <ReanalysisRequestDialog
+          raceName={raceName}
+          onCancel={() => setConfirmDialog(null)}
+          onSubmit={handleReanalysisRequest}
+        />
+      )}
+      {confirmDialog === "correctionRequest" && (
+        <CorrectionRequestDialog
+          raceName={raceName}
+          onCancel={() => setConfirmDialog(null)}
+          onSubmit={handleCorrectionRequest}
+        />
+      )}
+      {confirmDialog === "statusDetail" && race && (
+        <StatusDetailPopup
+          race={race}
+          onClose={() => setConfirmDialog(null)}
         />
       )}
     </div>
@@ -1384,7 +1955,7 @@ export default function DataCorrection() {
 
 // ── Right Table ────────────────────────────────────────────────────────────────
 function RightTable({
-  cpType, orders, entries, numHorses, isCorrectionMode, onEdit,
+  cpType, orders, entries, numHorses, isCorrectionMode, onEdit, duplicateHorseNumbers,
 }: {
   cpType: "start" | "200m" | "straight";
   orders: any[];
@@ -1392,6 +1963,7 @@ function RightTable({
   numHorses: number;
   isCorrectionMode: boolean;
   onEdit: (id: string, field: string, value: unknown) => void;
+  duplicateHorseNumbers?: Set<number>;
 }) {
   const presentNums = new Set(orders.map((o) => o.horse_number));
   const missingHorses = entries.map((e) => e.horse_number).filter((n) => !presentNums.has(n));
@@ -1435,27 +2007,32 @@ function RightTable({
           const hn = row.horse_number;
           const gn = row.gate_number;
           const cap = gn != null ? CAP_COLORS[gn] : null;
+          const isDuplicate = hn != null && duplicateHorseNumbers?.has(hn);
 
           return (
-            <tr key={row.id ?? idx} className={`border-t border-border/30 ${isPhantom ? "opacity-50" : "hover:bg-muted/20"}`}>
+            <tr key={row.id ?? idx} className={`border-t border-border/30 ${isPhantom ? "opacity-50" : isDuplicate ? "bg-red-900/20 hover:bg-red-900/30" : "hover:bg-muted/20"}`}>
               <td className="p-1.5 text-center font-mono font-bold text-sm">
                 {row.position ?? <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className="p-1.5 text-center">
+              <td className={`p-1.5 text-center ${isDuplicate ? "ring-1 ring-red-500 rounded" : ""}`}>
                 {isCorrectionMode && !isPhantom ? (
                   <select
                     value={hn ?? ""}
-                    onChange={(e) => onEdit(row.id, "horse_number", parseInt(e.target.value))}
-                    className="bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground w-10"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v) onEdit(row.id, "horse_number", parseInt(v, 10));
+                    }}
+                    className={`bg-zinc-800 border rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground w-10 ${isDuplicate ? "border-red-500 text-red-400" : "border-zinc-600"}`}
                   >
                     {Array.from({ length: numHorses }, (_, i) => (
                       <option key={i + 1} value={i + 1}>{i + 1}</option>
                     ))}
                   </select>
                 ) : (
-                  <span className="font-mono font-bold">{hn ?? "-"}</span>
+                  <span className={`font-mono font-bold ${isDuplicate ? "text-red-400" : ""}`}>{hn ?? "-"}</span>
                 )}
+                {isDuplicate && <span className="text-[8px] text-red-400 block">重複</span>}
               </td>
 
               <td className="p-1.5 text-center">

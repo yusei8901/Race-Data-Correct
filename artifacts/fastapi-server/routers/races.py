@@ -5,6 +5,13 @@ from database import get_db, dict_cursor
 
 router = APIRouter(prefix="/fastapi")
 
+RACE_COLUMNS = """id, race_date::text, venue, race_type, race_number, race_name,
+    surface_type, distance, direction, weather, condition, start_time,
+    status, video_status, video_url, analysis_status, assigned_user,
+    locked_by, locked_at::text, reanalysis_reason, reanalysis_comment,
+    correction_request_comment,
+    updated_at::text, created_at::text"""
+
 
 @router.get("/races/latest-date")
 def get_latest_race_date():
@@ -46,12 +53,7 @@ def get_races(
 
         where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         cur.execute(
-            f"""SELECT id, race_date::text, venue, race_type, race_number, race_name,
-                       surface_type, distance, direction, weather, condition, start_time,
-                       status, video_status, video_url, analysis_status, assigned_user,
-                       updated_at::text, created_at::text
-                FROM races {where_sql}
-                ORDER BY venue, race_number""",
+            f"SELECT {RACE_COLUMNS} FROM races {where_sql} ORDER BY venue, race_number",
             params,
         )
         return cur.fetchall()
@@ -77,7 +79,7 @@ def get_race_summary(date: Optional[str] = Query(None)):
         summary = dict(cur.fetchone())
 
         cur.execute(
-            f"""SELECT venue, COUNT(*) as count FROM races {where_sql} GROUP BY venue ORDER BY venue""",
+            f"SELECT venue, COUNT(*) as count FROM races {where_sql} GROUP BY venue ORDER BY venue",
             params,
         )
         summary["by_venue"] = [{"venue": r["venue"], "count": r["count"]} for r in cur.fetchall()]
@@ -93,14 +95,13 @@ class BatchUpdateBody(BaseModel):
 def batch_update_races(body: BatchUpdateBody):
     if not body.race_ids:
         raise HTTPException(status_code=400, detail="race_ids must not be empty")
-    allowed_statuses = {"未補正", "補正中", "レビュー待ち", "修正要請", "データ確定"}
+    allowed_statuses = {"待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"}
     if body.status not in allowed_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status: {body.status}")
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            """UPDATE races SET status = %s, updated_at = NOW()
-                WHERE id = ANY(%s::uuid[])""",
+            "UPDATE races SET status = %s, updated_at = NOW() WHERE id = ANY(%s::uuid[])",
             (body.status, body.race_ids),
         )
         return {"updated": cur.rowcount}
@@ -110,14 +111,7 @@ def batch_update_races(body: BatchUpdateBody):
 def get_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT id, race_date::text, venue, race_type, race_number, race_name,
-                      surface_type, distance, direction, weather, condition, start_time,
-                      status, video_status, video_url, analysis_status, assigned_user,
-                      updated_at::text, created_at::text
-               FROM races WHERE id = %s""",
-            (race_id,),
-        )
+        cur.execute(f"SELECT {RACE_COLUMNS} FROM races WHERE id = %s", (race_id,))
         race = cur.fetchone()
         if not race:
             raise HTTPException(status_code=404, detail="Race not found")
@@ -136,11 +130,7 @@ def update_race(race_id: str, body: dict):
         set_clause = ", ".join(f"{k} = %s" for k in updates)
         params = list(updates.values()) + [race_id]
         cur.execute(
-            f"""UPDATE races SET {set_clause}, updated_at = NOW()
-                WHERE id = %s RETURNING id, race_date::text, venue, race_type, race_number,
-                race_name, surface_type, distance, direction, weather, condition, start_time,
-                status, video_status, video_url, analysis_status, assigned_user,
-                updated_at::text, created_at::text""",
+            f"UPDATE races SET {set_clause}, updated_at = NOW() WHERE id = %s RETURNING {RACE_COLUMNS}",
             params,
         )
         race = cur.fetchone()
@@ -162,16 +152,35 @@ def reanalyze_race(race_id: str):
         return {"message": "再解析リクエストを送信しました"}
 
 
+class StartCorrectionBody(BaseModel):
+    user_name: str = "管理者"
+
+
 @router.post("/races/{race_id}/corrections/start")
-def start_correction(race_id: str):
+def start_correction(race_id: str, body: StartCorrectionBody = StartCorrectionBody()):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT status, locked_by FROM races WHERE id = %s", (race_id,))
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        if race["status"] == "補正中" and race["locked_by"] and race["locked_by"] != body.user_name:
+            raise HTTPException(status_code=409, detail=f"{race['locked_by']}が編集中です")
+        cur.execute(
+            f"""UPDATE races SET status = '補正中', locked_by = %s, locked_at = NOW(), updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (body.user_name, race_id),
+        )
+        return cur.fetchone()
+
+
+@router.post("/races/{race_id}/corrections/complete")
+def complete_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            """UPDATE races SET status = '補正中', updated_at = NOW()
-               WHERE id = %s RETURNING id, race_date::text, venue, race_type, race_number,
-               race_name, surface_type, distance, direction, weather, condition, start_time,
-               status, video_status, video_url, analysis_status, assigned_user,
-               updated_at::text, created_at::text""",
+            f"""UPDATE races SET status = 'レビュー待ち', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
             (race_id,),
         )
         race = cur.fetchone()
@@ -180,16 +189,153 @@ def start_correction(race_id: str):
         return race
 
 
-@router.post("/races/{race_id}/corrections/complete")
-def complete_correction(race_id: str):
+class TempSaveBody(BaseModel):
+    user_name: str = "管理者"
+    exit_editing: bool = False
+
+
+@router.post("/races/{race_id}/corrections/temp-save")
+def temp_save_correction(race_id: str, body: TempSaveBody = TempSaveBody()):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        if body.exit_editing:
+            cur.execute(
+                f"""UPDATE races SET status = '待機中', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+                   WHERE id = %s RETURNING {RACE_COLUMNS}""",
+                (race_id,),
+            )
+        else:
+            cur.execute(
+                f"UPDATE races SET updated_at = NOW() WHERE id = %s RETURNING {RACE_COLUMNS}",
+                (race_id,),
+            )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+@router.post("/races/{race_id}/corrections/cancel")
+def cancel_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            """UPDATE races SET status = 'レビュー待ち', updated_at = NOW()
-               WHERE id = %s RETURNING id, race_date::text, venue, race_type, race_number,
-               race_name, surface_type, distance, direction, weather, condition, start_time,
-               status, video_status, video_url, analysis_status, assigned_user,
-               updated_at::text, created_at::text""",
+            f"""UPDATE races SET status = '待機中', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (race_id,),
+        )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+@router.post("/races/{race_id}/force-unlock")
+def force_unlock(race_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"""UPDATE races SET status = '待機中', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (race_id,),
+        )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+class ReanalysisRequestBody(BaseModel):
+    reason: str
+    comment: Optional[str] = None
+
+
+@router.post("/races/{race_id}/reanalysis-request")
+def request_reanalysis(race_id: str, body: ReanalysisRequestBody):
+    if body.reason == "その他" and not body.comment:
+        raise HTTPException(status_code=400, detail="「その他」を選択した場合はコメントが必須です")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"""UPDATE races SET status = '再解析要請', analysis_status = '解析失敗',
+               reanalysis_reason = %s, reanalysis_comment = %s,
+               locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (body.reason, body.comment, race_id),
+        )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+class MatchingFailureBody(BaseModel):
+    user_name: str = "管理者"
+
+
+@router.post("/races/{race_id}/matching-failure")
+def report_matching_failure(race_id: str, body: MatchingFailureBody = MatchingFailureBody()):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"""UPDATE races SET status = '突合失敗', analysis_status = '突合失敗',
+               locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (race_id,),
+        )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+class CorrectionRequestBody(BaseModel):
+    comment: str
+
+
+@router.post("/races/{race_id}/correction-request")
+def request_correction(race_id: str, body: CorrectionRequestBody):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"""UPDATE races SET status = '修正要請', correction_request_comment = %s,
+               locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (body.comment, race_id),
+        )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+@router.post("/races/{race_id}/confirm")
+def confirm_race(race_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"""UPDATE races SET status = 'データ確定', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
+            (race_id,),
+        )
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        return race
+
+
+class DataBindingBody(BaseModel):
+    analysis_data_id: str
+
+
+@router.post("/races/{race_id}/bind-analysis")
+def bind_analysis_data(race_id: str, body: DataBindingBody):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"""UPDATE races SET status = '待機中', analysis_status = '完了',
+               updated_at = NOW()
+               WHERE id = %s RETURNING {RACE_COLUMNS}""",
             (race_id,),
         )
         race = cur.fetchone()

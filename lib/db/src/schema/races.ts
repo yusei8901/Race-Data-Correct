@@ -20,6 +20,11 @@ export const racesTable = pgTable("races", {
   videoUrl: text("video_url"),
   analysisStatus: varchar("analysis_status", { length: 20 }).default("未"),
   assignedUser: varchar("assigned_user", { length: 50 }),
+  lockedBy: varchar("locked_by", { length: 50 }),
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
+  reanalysisReason: varchar("reanalysis_reason", { length: 50 }),
+  reanalysisComment: text("reanalysis_comment"),
+  correctionRequestComment: text("correction_request_comment"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
