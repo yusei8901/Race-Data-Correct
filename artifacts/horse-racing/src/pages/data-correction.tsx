@@ -798,6 +798,7 @@ export default function DataCorrection() {
   // Edit mode: purely local; resets when leaving the page
   const [isEditingMode, setIsEditingMode] = useState(false);
   const [savingTemp, setSavingTemp] = useState(false);
+  const [cpErrors, setCpErrors] = useState<Record<string, number>>({});
 
   // Video state
   const [videoTime, setVideoTime] = useState(0);
@@ -851,6 +852,14 @@ export default function DataCorrection() {
   const baseSec = race ? (race.distance / 1000) * 60 + 27 : 90;
   const totalVideoSec = VIDEO_OFFSET + baseSec;
   const currentFrame = Math.floor(videoTime * FPS);
+
+  useEffect(() => {
+    if (!raceId) return;
+    fetch(`${API}/races/${raceId}/checkpoint-errors`)
+      .then((r) => r.json())
+      .then((data) => setCpErrors(data))
+      .catch(() => {});
+  }, [raceId]);
 
   // Video timer effect
   useEffect(() => {
@@ -1868,16 +1877,24 @@ export default function DataCorrection() {
                     {pts200.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, baseSec);
                       const isSelected = selectedCp === pt.key;
+                      const errCount = cpErrors[pt.key] || 0;
                       return (
                         <button
                           key={pt.key}
                           onClick={() => handleCpClick(pt.key, pt.meter)}
-                          className={`flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
+                          className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-primary border-primary text-white"
-                              : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
+                              : errCount > 0
+                                ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
+                                : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
                           }`}
                         >
+                          {errCount > 0 && (
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5">
+                              {errCount}
+                            </span>
+                          )}
                           <span className="font-medium leading-tight whitespace-pre-line text-center text-[9px]">{pt.label}</span>
                           <span className={`mt-0.5 font-mono text-[9px] ${isSelected ? "text-white/70" : "text-muted-foreground"}`}>
                             {fmtVideoTime(vt)}
@@ -1897,16 +1914,24 @@ export default function DataCorrection() {
                     {ptsStr.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, baseSec);
                       const isSelected = selectedCp === pt.key;
+                      const errCount = cpErrors[pt.key] || 0;
                       return (
                         <button
                           key={pt.key}
                           onClick={() => handleCpClick(pt.key, pt.meter)}
-                          className={`flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
+                          className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-orange-600 border-orange-500 text-white"
-                              : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
+                              : errCount > 0
+                                ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
+                                : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
                           }`}
                         >
+                          {errCount > 0 && (
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5">
+                              {errCount}
+                            </span>
+                          )}
                           <span className="font-medium text-[9px]">{pt.label}</span>
                           <span className={`mt-0.5 font-mono text-[9px] ${isSelected ? "text-white/70" : "text-muted-foreground"}`}>
                             {fmtVideoTime(vt)}
@@ -2099,6 +2124,21 @@ function RightTable({
 
   const allRows = [...orders, ...phantomRows];
 
+  const hasRowError = (row: any) => {
+    if ((row as any).is_phantom) return false;
+    if (row.time_seconds == null) return true;
+    if (row.time_seconds > 300 || row.time_seconds < 0.05) return true;
+    if (row.accuracy != null && row.accuracy < 30) return true;
+    if (row.lane == null) return true;
+    if (row.absolute_speed != null && row.absolute_speed > 80) return true;
+    if (row.speed_change != null && Math.abs(row.speed_change) > 30) return true;
+    return false;
+  };
+
+  const isTimeAnomaly = (t: number | null) => t != null && (t > 300 || t < 0.05);
+  const isSpeedAnomaly = (s: number | null) => s != null && s > 80;
+  const isSpeedChangeAnomaly = (sc: number | null) => sc != null && Math.abs(sc) > 30;
+
   return (
     <table className="w-full text-xs">
       <thead className="bg-muted/60 sticky top-0 z-10">
@@ -2130,9 +2170,18 @@ function RightTable({
           const isDuplicate = hn != null && duplicateHorseNumbers?.has(hn);
           const entryForRow = hn != null ? entries.find((e) => e.horse_number === hn) : null;
           const horseName = entryForRow?.horse_name ?? null;
+          const rowError = hasRowError(row);
+
+          const rowBg = isPhantom
+            ? "opacity-50"
+            : isDuplicate
+              ? "bg-red-900/20 hover:bg-red-900/30"
+              : rowError
+                ? "bg-amber-900/15 hover:bg-amber-900/25"
+                : "hover:bg-muted/20";
 
           return (
-            <tr key={row.id ?? idx} className={`border-t border-border/30 ${isPhantom ? "opacity-50" : isDuplicate ? "bg-red-900/20 hover:bg-red-900/30" : "hover:bg-muted/20"}`}>
+            <tr key={row.id ?? idx} className={`border-t border-border/30 ${rowBg}`}>
               <td className="p-1.5 text-center font-mono font-bold text-sm">
                 {row.position ?? <span className="text-zinc-600">-</span>}
               </td>
@@ -2172,34 +2221,46 @@ function RightTable({
                 {horseName ?? <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className="p-1.5 text-right font-mono text-[10px]">
-                {row.time_seconds != null ? `${row.time_seconds.toFixed(2)}s` : <span className="text-zinc-600">-</span>}
+              <td className={`p-1.5 text-right font-mono text-[10px] ${row.time_seconds == null ? "bg-red-900/30" : isTimeAnomaly(row.time_seconds) ? "bg-amber-900/40" : ""}`}>
+                {row.time_seconds != null ? (
+                  <span className={isTimeAnomaly(row.time_seconds) ? "text-amber-400 font-bold" : ""}>
+                    {row.time_seconds.toFixed(2)}s
+                  </span>
+                ) : (
+                  <span className="text-red-400 font-bold">欠損</span>
+                )}
               </td>
 
               {cpType === "200m" && (
-                <td className="p-1.5 text-center">
+                <td className={`p-1.5 text-center ${row.lane == null && !isPhantom ? "bg-red-900/30" : ""}`}>
                   {isCorrectionMode && !isPhantom ? (
                     <select
                       value={row.lane ?? "中"}
                       onChange={(e) => onEdit(row.id, "lane", e.target.value)}
-                      className="bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground"
+                      className={`bg-zinc-800 border rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground ${row.lane == null ? "border-red-500" : "border-zinc-600"}`}
                     >
                       {LANES.map((l) => <option key={l} value={l}>{l}</option>)}
                     </select>
                   ) : (
-                    <span className="text-muted-foreground">{row.lane ?? "-"}</span>
+                    <span className={row.lane == null ? "text-red-400 font-bold" : "text-muted-foreground"}>
+                      {row.lane ?? "欠損"}
+                    </span>
                   )}
                 </td>
               )}
 
               {cpType === "straight" && (
                 <>
-                  <td className="p-1.5 text-right font-mono text-[10px] text-cyan-400">
-                    {row.absolute_speed != null ? row.absolute_speed.toFixed(1) : <span className="text-zinc-600">-</span>}
+                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedAnomaly(row.absolute_speed) ? "bg-amber-900/40" : ""}`}>
+                    {row.absolute_speed != null ? (
+                      <span className={isSpeedAnomaly(row.absolute_speed) ? "text-amber-400 font-bold" : "text-cyan-400"}>
+                        {row.absolute_speed.toFixed(1)}
+                      </span>
+                    ) : <span className="text-zinc-600">-</span>}
                   </td>
-                  <td className="p-1.5 text-right font-mono text-[10px]">
+                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedChangeAnomaly(row.speed_change) ? "bg-amber-900/40" : ""}`}>
                     {row.speed_change != null ? (
-                      <span className={row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
+                      <span className={isSpeedChangeAnomaly(row.speed_change) ? "text-amber-400 font-bold" : row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
                         {row.speed_change >= 0 ? "+" : ""}{row.speed_change.toFixed(1)}
                       </span>
                     ) : <span className="text-zinc-600">-</span>}
@@ -2242,7 +2303,7 @@ function RightTable({
                 )}
               </td>
 
-              <td className="p-1.5 text-center">
+              <td className={`p-1.5 text-center ${row.accuracy != null && row.accuracy < 30 ? "bg-red-900/30" : ""}`}>
                 <AccBadge v={row.accuracy} />
               </td>
             </tr>

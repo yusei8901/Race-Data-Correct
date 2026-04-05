@@ -30,6 +30,27 @@ def get_passing_orders(race_id: str, checkpoint: Optional[str] = Query(None)):
         return cur.fetchall()
 
 
+@router.get("/races/{race_id}/checkpoint-errors")
+def get_checkpoint_errors(race_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            """SELECT checkpoint, COUNT(*) FILTER (
+                WHERE time_seconds IS NULL
+                   OR time_seconds > 300
+                   OR time_seconds < 0.05
+                   OR accuracy IS NOT NULL AND accuracy < 30
+                   OR lane IS NULL
+                   OR (absolute_speed IS NOT NULL AND absolute_speed > 80)
+               ) AS error_count
+               FROM passing_orders
+               WHERE race_id = %s
+               GROUP BY checkpoint""",
+            (race_id,),
+        )
+        return {r["checkpoint"]: r["error_count"] for r in cur.fetchall()}
+
+
 @router.patch("/passing-orders/{id}")
 def update_passing_order(id: str, body: dict):
     with get_db() as conn:

@@ -130,7 +130,8 @@ function formatDateTitle(dateStr: string): string {
   }
 }
 
-// Status filter card layout — matches provided reference image
+const ALERT_STATUSES: Set<DerivedStatus> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
+
 const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] = [
   { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400" },
   { key: "修正要請",     label: "修正要請",     colorClass: "text-orange-400" },
@@ -444,46 +445,31 @@ export default function RaceList() {
 
           {/* Right side: 2 rows × 5 status cards */}
           <div className="flex-1 flex flex-col gap-1.5">
-            <div className="grid grid-cols-5 gap-1.5">
-              {STATUS_ROW1.map((card) => {
-                const count = statusCounts[card.key] || 0;
-                const isActive = statusFilter === card.key;
-                return (
-                  <button
-                    key={card.key}
-                    onClick={() => setStatusFilter(isActive ? null : card.key)}
-                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
-                      isActive
-                        ? "bg-primary/20 border-primary"
-                        : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
-                    }`}
-                  >
-                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">{card.label}</span>
-                    <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="grid grid-cols-5 gap-1.5">
-              {STATUS_ROW2.map((card) => {
-                const count = statusCounts[card.key] || 0;
-                const isActive = statusFilter === card.key;
-                return (
-                  <button
-                    key={card.key}
-                    onClick={() => setStatusFilter(isActive ? null : card.key)}
-                    className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
-                      isActive
-                        ? "bg-primary/20 border-primary"
-                        : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
-                    }`}
-                  >
-                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">{card.label}</span>
-                    <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {[STATUS_ROW1, STATUS_ROW2].map((row, ri) => (
+              <div key={ri} className="grid grid-cols-5 gap-1.5">
+                {row.map((card) => {
+                  const count = statusCounts[card.key] || 0;
+                  const isActive = statusFilter === card.key;
+                  const isAlert = ALERT_STATUSES.has(card.key) && count > 0;
+                  return (
+                    <button
+                      key={card.key}
+                      onClick={() => setStatusFilter(isActive ? null : card.key)}
+                      className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
+                        isActive
+                          ? "bg-primary/20 border-primary"
+                          : isAlert
+                            ? "bg-red-950/60 border-red-700 hover:border-red-500 hover:bg-red-900/40 animate-pulse-subtle"
+                            : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
+                      }`}
+                    >
+                      <span className={`text-[11px] whitespace-nowrap ${isAlert ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
+                      <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </div>
       </div>

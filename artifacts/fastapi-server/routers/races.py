@@ -396,12 +396,12 @@ def bind_analysis_data(race_id: str, body: DataBindingBody):
 
         cur.execute(
             """INSERT INTO passing_orders
-               (race_id, checkpoint, horse_number, gate_number, passing_time, lane,
-                speed, absolute_speed, speed_change, running_position, special_note,
-                frame_number, bbox_x, bbox_y, bbox_w, bbox_h, analysis_status)
-               SELECT %s, checkpoint, horse_number, gate_number, passing_time, lane,
-                speed, absolute_speed, speed_change, running_position, special_note,
-                frame_number, bbox_x, bbox_y, bbox_w, bbox_h, analysis_status
+               (race_id, checkpoint, horse_number, gate_number, time_seconds, lane,
+                accuracy, absolute_speed, speed_change, running_position, special_note,
+                position, color, horse_name, is_corrected, original_position)
+               SELECT %s, checkpoint, horse_number, gate_number, time_seconds, lane,
+                accuracy, absolute_speed, speed_change, running_position, special_note,
+                position, color, horse_name, false, original_position
                FROM passing_orders WHERE race_id = %s""",
             (race_id, body.analysis_data_id),
         )
