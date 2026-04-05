@@ -669,6 +669,78 @@ function CorrectionRequestDialog({
   );
 }
 
+// ── Bind Analysis Dialog (解析データ再紐付け) ─────────────────────────────────
+interface AnalysisDataItem {
+  id: string; label: string; date: string; venue: string; race_number: number;
+  distance: number; surface_type: string;
+}
+
+function BindAnalysisDialog({
+  raceId, raceName, onCancel, onBind, loading,
+}: {
+  raceId: string; raceName: string; onCancel: () => void;
+  onBind: (analysisDataId: string) => void; loading?: boolean;
+}) {
+  const [items, setItems] = useState<AnalysisDataItem[]>([]);
+  const [fetching, setFetching] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/races/${raceId}/available-analysis`)
+      .then((r) => r.json())
+      .then((d) => { setItems(d); setFetching(false); })
+      .catch(() => setFetching(false));
+  }, [raceId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[560px] max-w-[95vw] flex flex-col max-h-[70vh]">
+        <div className="p-4 border-b border-zinc-700">
+          <h2 className="text-sm font-semibold mb-1">解析データ再紐付け</h2>
+          <p className="text-xs text-muted-foreground">対象: {raceName}</p>
+          <p className="text-xs text-zinc-500 mt-1">正しい解析データ（動画＋解析情報セット）を選択してください</p>
+        </div>
+        <div className="flex-1 overflow-auto p-2">
+          {fetching ? (
+            <div className="p-4 space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : items.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground text-sm">利用可能な解析データがありません</div>
+          ) : (
+            <div className="space-y-1.5">
+              {items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setSelectedId(item.id)}
+                  className={`w-full text-left px-3 py-2.5 rounded border transition-colors cursor-pointer ${
+                    selectedId === item.id
+                      ? "bg-indigo-900/30 border-indigo-500 text-indigo-300"
+                      : "bg-zinc-800/60 border-zinc-700 text-zinc-300 hover:border-zinc-500"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold">{item.venue} {item.race_number}R</span>
+                      <span className="text-[10px] text-zinc-400">{item.surface_type} {item.distance}m</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-500">{item.date}</span>
+                  </div>
+                  <div className="text-[10px] text-zinc-400 mt-0.5">{item.label}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2 justify-end p-4 border-t border-zinc-700">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+          <Button size="sm" onClick={() => selectedId && onBind(selectedId)} disabled={loading || !selectedId} className="h-8 text-xs cursor-pointer bg-indigo-700 hover:bg-indigo-600">
+            {loading ? "紐付け中..." : "この解析データに紐付ける"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Status Detail Popup ───────────────────────────────────────────────────────
 function StatusDetailPopup({
   race, onClose,
@@ -718,7 +790,7 @@ export default function DataCorrection() {
   // UI state
   const [showHistory, setShowHistory] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<
-    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "reanalysis" | "correctionRequest" | "statusDetail" | null
+    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "reanalysis" | "correctionRequest" | "statusDetail" | "bindAnalysis" | null
   >(null);
   const [leftView, setLeftView] = useState<"furlong" | "entries" | "both">("both");
   const [selectedCp, setSelectedCp] = useState<string | null>(null);
@@ -1074,6 +1146,30 @@ export default function DataCorrection() {
     setConfirmDialog(null);
   };
 
+  // 解析データ再紐付け (admin)
+  const handleBindAnalysis = async (analysisDataId: string) => {
+    try {
+      const res = await fetch(`${API}/races/${raceId}/bind-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis_data_id: analysisDataId }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated = await res.json();
+      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: currentUserName, action_type: "解析データ再紐付け", description: `解析データID: ${analysisDataId} に再紐付けしました` }),
+      });
+      toast({ title: "解析データを再紐付けしました" });
+      queryClient.invalidateQueries({ queryKey: getGetPassingOrdersQueryKey(raceId, {}) });
+    } catch {
+      toast({ title: "再紐付けに失敗しました", variant: "destructive" });
+    }
+    setConfirmDialog(null);
+  };
+
   // 履歴復元 (stub - requires backend restore endpoint)
   const handleRestore = (entryId: string) => {
     toast({ title: "復元機能は準備中です", description: `対象履歴: ${entryId}` });
@@ -1390,25 +1486,40 @@ export default function DataCorrection() {
             </>
           )}
 
-          {/* 突合申請 — always available */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
-            onClick={() => setConfirmDialog("matchingFailure")}
-          >
-            突合申請
-          </Button>
+          {/* 突合申請 — editing mode only */}
+          {isEditingMode && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
+              onClick={() => setConfirmDialog("matchingFailure")}
+            >
+              突合申請
+            </Button>
+          )}
 
-          {/* 再解析申請 — always available */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
-            onClick={() => setConfirmDialog("reanalysis")}
-          >
-            再解析申請
-          </Button>
+          {/* 再解析申請 — editing mode only */}
+          {isEditingMode && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
+              onClick={() => setConfirmDialog("reanalysis")}
+            >
+              再解析申請
+            </Button>
+          )}
+
+          {/* 解析データ再紐付け — admin only, 突合失敗 status */}
+          {isAdmin && raceStatus === "突合失敗" && !isEditingMode && (
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1.5 bg-indigo-700 hover:bg-indigo-600 text-white border-0 cursor-pointer"
+              onClick={() => setConfirmDialog("bindAnalysis")}
+            >
+              解析データ再紐付け
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1949,6 +2060,14 @@ export default function DataCorrection() {
           onClose={() => setConfirmDialog(null)}
         />
       )}
+      {confirmDialog === "bindAnalysis" && (
+        <BindAnalysisDialog
+          raceId={raceId}
+          raceName={raceName}
+          onCancel={() => setConfirmDialog(null)}
+          onBind={handleBindAnalysis}
+        />
+      )}
     </div>
   );
 }
@@ -1988,6 +2107,7 @@ function RightTable({
           <th className="p-1.5 text-center text-muted-foreground text-[10px]">馬番</th>
           <th className="p-1.5 text-center text-muted-foreground text-[10px]">枠</th>
           <th className="p-1.5 text-center text-muted-foreground text-[10px]">帽色</th>
+          <th className="p-1.5 text-left text-muted-foreground text-[10px]">馬名</th>
           <th className="p-1.5 text-right text-muted-foreground text-[10px]">通過タイム</th>
           {cpType === "200m" && <th className="p-1.5 text-center text-muted-foreground text-[10px]">レーン</th>}
           {cpType === "straight" && (
@@ -2008,6 +2128,8 @@ function RightTable({
           const gn = row.gate_number;
           const cap = gn != null ? CAP_COLORS[gn] : null;
           const isDuplicate = hn != null && duplicateHorseNumbers?.has(hn);
+          const entryForRow = hn != null ? entries.find((e) => e.horse_number === hn) : null;
+          const horseName = entryForRow?.horse_name ?? null;
 
           return (
             <tr key={row.id ?? idx} className={`border-t border-border/30 ${isPhantom ? "opacity-50" : isDuplicate ? "bg-red-900/20 hover:bg-red-900/30" : "hover:bg-muted/20"}`}>
@@ -2045,6 +2167,10 @@ function RightTable({
               </td>
 
               <td className="p-1.5 text-center"><CapCircle gate={gn} /></td>
+
+              <td className="p-1.5 text-left text-[10px] text-zinc-200 max-w-[80px] truncate" title={horseName ?? ""}>
+                {horseName ?? <span className="text-zinc-600">-</span>}
+              </td>
 
               <td className="p-1.5 text-right font-mono text-[10px]">
                 {row.time_seconds != null ? `${row.time_seconds.toFixed(2)}s` : <span className="text-zinc-600">-</span>}

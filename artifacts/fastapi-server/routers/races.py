@@ -51,6 +51,12 @@ def get_races(
             where_clauses.append("analysis_status = %s")
             params.append(analysis_status)
 
+        cur.execute(
+            """UPDATE races SET status = '待機中', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE status = '補正中' AND locked_at IS NOT NULL
+               AND locked_at < NOW() - INTERVAL '30 minutes'"""
+        )
+
         where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         cur.execute(
             f"SELECT {RACE_COLUMNS} FROM races {where_sql} ORDER BY venue, race_number",
@@ -69,10 +75,16 @@ def get_race_summary(date: Optional[str] = Query(None)):
         cur.execute(
             f"""SELECT
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE status = '補正完了') as completed,
+                COUNT(*) FILTER (WHERE status = 'データ確定') as confirmed,
                 COUNT(*) FILTER (WHERE status = '補正中') as in_progress,
-                COUNT(*) FILTER (WHERE status IN ('修正要求', 'データ補正')) as needs_correction,
-                COUNT(*) FILTER (WHERE status = 'レビュー') as review
+                COUNT(*) FILTER (WHERE status = '待機中') as standby,
+                COUNT(*) FILTER (WHERE status = 'レビュー待ち') as review,
+                COUNT(*) FILTER (WHERE status = '修正要請') as correction_request,
+                COUNT(*) FILTER (WHERE status = '再解析要請') as reanalysis_request,
+                COUNT(*) FILTER (WHERE status = '突合失敗') as matching_failure,
+                COUNT(*) FILTER (WHERE analysis_status = '解析中') as analyzing,
+                COUNT(*) FILTER (WHERE analysis_status = '再解析中') as reanalyzing,
+                COUNT(*) FILTER (WHERE analysis_status = '解析失敗') as analysis_failed
             FROM races {where_sql}""",
             params,
         )
@@ -111,11 +123,51 @@ def batch_update_races(body: BatchUpdateBody):
 def get_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute(
+            """UPDATE races SET status = '待機中', locked_by = NULL, locked_at = NULL, updated_at = NOW()
+               WHERE id = %s AND status = '補正中' AND locked_at IS NOT NULL
+               AND locked_at < NOW() - INTERVAL '30 minutes'""",
+            (race_id,),
+        )
         cur.execute(f"SELECT {RACE_COLUMNS} FROM races WHERE id = %s", (race_id,))
         race = cur.fetchone()
         if not race:
             raise HTTPException(status_code=404, detail="Race not found")
         return race
+
+
+@router.get("/races/{race_id}/available-analysis")
+def get_available_analysis(race_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT race_date, venue, distance, surface_type FROM races WHERE id = %s", (race_id,))
+        target = cur.fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="Race not found")
+        cur.execute(
+            """SELECT id, race_date::text AS date, venue, race_number, race_name,
+                      distance, surface_type
+               FROM races
+               WHERE id != %s
+                 AND race_date = %s
+                 AND venue = %s
+                 AND analysis_status = '完了'
+               ORDER BY race_number""",
+            (race_id, target["race_date"], target["venue"]),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "label": f"{r['race_name']} (解析済み)",
+                "date": r["date"],
+                "venue": r["venue"],
+                "race_number": r["race_number"],
+                "distance": r["distance"],
+                "surface_type": r["surface_type"],
+            }
+            for r in rows
+        ]
 
 
 @router.patch("/races/{race_id}")
@@ -332,6 +384,28 @@ class DataBindingBody(BaseModel):
 def bind_analysis_data(race_id: str, body: DataBindingBody):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT id FROM races WHERE id = %s AND analysis_status = '完了'",
+            (body.analysis_data_id,),
+        )
+        source = cur.fetchone()
+        if not source:
+            raise HTTPException(status_code=400, detail="指定された解析データが見つかりません")
+
+        cur.execute("DELETE FROM passing_orders WHERE race_id = %s", (race_id,))
+
+        cur.execute(
+            """INSERT INTO passing_orders
+               (race_id, checkpoint, horse_number, gate_number, passing_time, lane,
+                speed, absolute_speed, speed_change, running_position, special_note,
+                frame_number, bbox_x, bbox_y, bbox_w, bbox_h, analysis_status)
+               SELECT %s, checkpoint, horse_number, gate_number, passing_time, lane,
+                speed, absolute_speed, speed_change, running_position, special_note,
+                frame_number, bbox_x, bbox_y, bbox_w, bbox_h, analysis_status
+               FROM passing_orders WHERE race_id = %s""",
+            (race_id, body.analysis_data_id),
+        )
+
         cur.execute(
             f"""UPDATE races SET status = '待機中', analysis_status = '完了',
                updated_at = NOW()
