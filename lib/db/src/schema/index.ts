@@ -17,3 +17,5 @@ export * from "./audit_log";
 export * from "./race_status_history";
 export * from "./csv_export_job";
 export * from "./correction_memo_master";
+export * from "./analysis_venue_config";
+export * from "./batch_job";
