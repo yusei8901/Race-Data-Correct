@@ -64,6 +64,10 @@ export interface Race {
   locked_by?: string | null;
   /** @nullable */
   locked_at?: string | null;
+  /** @nullable */
+  confirmed_at?: string | null;
+  /** @nullable */
+  confirmed_by?: string | null;
   updated_at: string;
   created_at: string;
 }
