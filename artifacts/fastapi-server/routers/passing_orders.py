@@ -4,109 +4,139 @@ from database import get_db, dict_cursor
 
 router = APIRouter(prefix="/fastapi")
 
-RETURN_COLS = """id, race_id, checkpoint, horse_number, horse_name, gate_number,
-                 color, lane, time_seconds::float, accuracy, position,
-                 is_corrected, original_position, special_note,
-                 running_position, absolute_speed::float, speed_change::float"""
+ERROR_FILTER = """(
+    (ard.time_sec IS NOT NULL AND (ard.time_sec > 300 OR ard.time_sec < 0.05))
+    OR (ard.absolute_speed IS NOT NULL AND ard.absolute_speed > 80)
+    OR (ard.speed_change IS NOT NULL AND ABS(ard.speed_change) > 30)
+    OR (ard.accuracy IS NOT NULL AND ard.accuracy < 30)
+)"""
 
-EXEMPT_NOTES = ('映像見切れ', '確認困難', '他馬と重複', '落馬', '失格')
+
+def fmt_order(row: dict, race_id: str) -> dict:
+    return {
+        "id": row["id"],
+        "race_id": race_id,
+        "checkpoint": row["marker_type"],
+        "horse_number": row["horse_number"],
+        "horse_name": row["horse_name"] or "",
+        "gate_number": row["gate_number"] or 1,
+        "color": row.get("color"),
+        "lane": row.get("lane"),
+        "time_seconds": row.get("time_sec"),
+        "accuracy": row.get("accuracy"),
+        "position": row.get("position") or row.get("rank") or 0,
+        "is_corrected": row.get("is_corrected") or False,
+        "original_position": None,
+        "absolute_speed": row.get("absolute_speed"),
+        "speed_change": row.get("speed_change"),
+        "running_position": row.get("running_position"),
+        "special_note": row.get("special_note"),
+    }
 
 
 @router.get("/races/{race_id}/passing-orders")
-def get_passing_orders(race_id: str, checkpoint: Optional[str] = Query(None)):
+def get_passing_orders(
+    race_id: str,
+    checkpoint: Optional[str] = Query(None),
+):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        where_extra = ""
-        params = [race_id]
-        if checkpoint:
-            where_extra = " AND checkpoint = %s"
-            params.append(checkpoint)
+        cur.execute(
+            """SELECT id FROM analysis_result_header
+               WHERE race_id = %s AND is_current = TRUE
+               LIMIT 1""",
+            (race_id,),
+        )
+        header = cur.fetchone()
+        if not header:
+            return []
+
+        header_id = header["id"]
+        extra_where = "AND ard.marker_type = %s" if checkpoint else ""
+        params = [header_id] + ([checkpoint] if checkpoint else [])
 
         cur.execute(
-            f"""SELECT {RETURN_COLS}
-                FROM passing_orders
-                WHERE race_id = %s{where_extra}
-                ORDER BY position""",
+            f"""SELECT ard.*
+                FROM analysis_result_detail ard
+                WHERE ard.header_id = %s {extra_where}
+                ORDER BY ard.position, ard.rank""",
             params,
         )
-        return cur.fetchall()
+        return [fmt_order(r, race_id) for r in cur.fetchall()]
 
 
 @router.get("/races/{race_id}/checkpoint-errors")
 def get_checkpoint_errors(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-
-        # Total entry count for this race
-        cur.execute("SELECT COUNT(*) AS total FROM race_entries WHERE race_id = %s", (race_id,))
-        total_entries = cur.fetchone()["total"]
-
-        # Error and present count per checkpoint
-        # Errors: exempt rows with special_note in exempt list from error conditions
         cur.execute(
-            """SELECT
-                 po.checkpoint,
-                 COUNT(*) AS present_count,
-                 COUNT(*) FILTER (
-                   WHERE po.special_note NOT IN %s
-                     AND (
-                       po.time_seconds IS NULL
-                       OR po.time_seconds > 300
-                       OR po.time_seconds < 0.05
-                       OR (po.accuracy IS NOT NULL AND po.accuracy < 30)
-                       OR po.lane IS NULL
-                       OR (po.absolute_speed IS NOT NULL AND po.absolute_speed > 80)
-                       OR (po.absolute_speed IS NOT NULL AND po.absolute_speed < 30)
-                       OR (re.gate_number IS NOT NULL AND po.gate_number != re.gate_number)
-                     )
-                 ) AS error_count
-               FROM passing_orders po
-               LEFT JOIN race_entries re
-                 ON re.race_id = po.race_id AND re.horse_number = po.horse_number
-               WHERE po.race_id = %s
-               GROUP BY po.checkpoint""",
-            (EXEMPT_NOTES, race_id),
+            """SELECT id, horse_count
+               FROM analysis_result_header
+               WHERE race_id = %s AND is_current = TRUE
+               LIMIT 1""",
+            (race_id,),
         )
-        rows = cur.fetchall()
+        header = cur.fetchone()
+        if not header:
+            return {}
+
+        expected = header["horse_count"] or 14
+
+        cur.execute(
+            f"""SELECT
+                    ard.marker_type          AS checkpoint,
+                    COUNT(*)                 AS row_count,
+                    COUNT(*) FILTER (WHERE {ERROR_FILTER}) AS error_count
+                FROM analysis_result_detail ard
+                WHERE ard.header_id = %s
+                GROUP BY ard.marker_type""",
+            (header["id"],),
+        )
         result = {}
-        for r in rows:
-            missing = max(0, total_entries - r["present_count"])
-            result[r["checkpoint"]] = {
-                "errors": r["error_count"],
+        for row in cur.fetchall():
+            cp = row["checkpoint"]
+            missing = max(0, expected - row["row_count"])
+            result[cp] = {
+                "errors": row["error_count"],
                 "missing": missing,
             }
         return result
 
 
-@router.patch("/passing-orders/{id}")
-def update_passing_order(id: str, body: dict):
+@router.patch("/passing-orders/{order_id}")
+def update_passing_order(order_id: str, body: dict):
+    allowed = {"position", "lane", "time_seconds", "horse_number", "special_note"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
     with get_db() as conn:
         cur = dict_cursor(conn)
+        field_map = {"time_seconds": "time_sec"}
+        set_clauses, params = [], []
+        for field, value in updates.items():
+            db_field = field_map.get(field, field)
+            set_clauses.append(f"{db_field} = %s")
+            params.append(value)
+
+        params.append(order_id)
         cur.execute(
-            "SELECT id, position, original_position FROM passing_orders WHERE id = %s",
-            (id,),
-        )
-        existing = cur.fetchone()
-        if not existing:
-            raise HTTPException(status_code=404, detail="Passing order not found")
-
-        allowed = {"position", "lane", "time_seconds", "horse_number",
-                   "special_note", "running_position", "gate_number", "color"}
-        updates = {k: v for k, v in body.items() if k in allowed}
-
-        if "position" in updates and updates["position"] != existing["position"]:
-            updates["is_corrected"] = True
-            if existing["original_position"] is None:
-                updates["original_position"] = existing["position"]
-
-        if not updates:
-            raise HTTPException(status_code=400, detail="No valid fields to update")
-
-        set_clause = ", ".join(f"{k} = %s" for k in updates)
-        params = list(updates.values()) + [id]
-        cur.execute(
-            f"""UPDATE passing_orders SET {set_clause}
-                WHERE id = %s RETURNING {RETURN_COLS}""",
+            f"UPDATE analysis_result_detail SET {', '.join(set_clauses)} WHERE id = %s RETURNING id",
             params,
         )
-        return cur.fetchone()
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="PassingOrder not found")
+        conn.commit()
+
+        cur.execute("SELECT * FROM analysis_result_detail WHERE id = %s", (order_id,))
+        updated = cur.fetchone()
+        if not updated:
+            raise HTTPException(status_code=404, detail="Not found after update")
+
+        cur.execute(
+            "SELECT race_id FROM analysis_result_header WHERE id = %s", (updated["header_id"],)
+        )
+        h = cur.fetchone()
+        race_id = h["race_id"] if h else order_id
+        return fmt_order(updated, str(race_id))

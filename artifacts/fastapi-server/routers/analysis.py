@@ -1,47 +1,49 @@
-from fastapi import APIRouter, HTTPException
-from database import get_db, dict_cursor
+from fastapi import APIRouter
 
 router = APIRouter(prefix="/fastapi")
+
+VENUE_MAP = {
+    "nakayama": ("中山", "中央競馬"),
+    "hanshin":  ("阪神", "中央競馬"),
+    "kyoto":    ("京都", "中央競馬"),
+    "tokyo":    ("東京", "中央競馬"),
+    "oi":       ("大井", "地方競馬"),
+    "kawasaki": ("川崎", "地方競馬"),
+}
 
 
 @router.get("/venues")
 def get_venues():
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT id::text, venue_id, name, race_type FROM venues ORDER BY race_type, name")
-        return [{"id": r["venue_id"], "name": r["name"], "race_type": r["race_type"]} for r in cur.fetchall()]
+    return [
+        {"id": vid, "name": names[0], "race_type": names[1]}
+        for vid, names in VENUE_MAP.items()
+    ]
 
 
 @router.get("/analysis-params/{venue_id}")
 def get_analysis_params(venue_id: str):
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT venue_id, venue_name, race_type, params, updated_at::text
-               FROM analysis_params WHERE venue_id = %s""",
-            (venue_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Analysis params not found")
-        return row
+    info = VENUE_MAP.get(venue_id, (venue_id, "中央競馬"))
+    return {
+        "venue_id": venue_id,
+        "venue_name": info[0],
+        "race_type": info[1],
+        "params": {
+            "brightness_threshold": 128,
+            "contrast_boost": 1.2,
+            "noise_reduction": 0.5,
+            "tracking_sensitivity": 0.8,
+        },
+        "updated_at": None,
+    }
 
 
 @router.patch("/analysis-params/{venue_id}")
 def update_analysis_params(venue_id: str, body: dict):
-    params = body.get("params")
-    if params is None:
-        raise HTTPException(status_code=400, detail="params is required")
-
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        import json
-        cur.execute(
-            """UPDATE analysis_params SET params = %s, updated_at = NOW()
-               WHERE venue_id = %s RETURNING venue_id, venue_name, race_type, params, updated_at::text""",
-            (json.dumps(params), venue_id),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Analysis params not found")
-        return row
+    info = VENUE_MAP.get(venue_id, (venue_id, "中央競馬"))
+    return {
+        "venue_id": venue_id,
+        "venue_name": info[0],
+        "race_type": info[1],
+        "params": body.get("params", {}),
+        "updated_at": None,
+    }

@@ -39,11 +39,11 @@ def seed():
           race_video, race, race_event, race_category,
           official_horse_furlong_time, official_horse_reference,
           jra_race_reference, venue_weather_preset,
-          correction_memo_master, users
+          correction_memo_master, "user"
         CASCADE
     """)
 
-    # ── 1. users ──────────────────────────────────────────────────────────────
+    # ── 1. "user" ─────────────────────────────────────────────────────────────
     user_ids = {}
     users_data = [
         ("iap_user1", "iap_google", "user1@example.com", "ユーザー1"),
@@ -54,7 +54,7 @@ def seed():
         uid = str(uuid.uuid4())
         user_ids[name] = uid
         cur.execute(
-            """INSERT INTO users (id, external_subject_id, auth_provider, email, name)
+            """INSERT INTO "user" (id, external_subject_id, auth_provider, email, name)
                VALUES (%s, %s, %s, %s, %s)""",
             (uid, ext_id, provider, email, name),
         )
@@ -144,6 +144,8 @@ def seed():
     ]
     # Indices where video should be INCOMPLETE (未処理)
     incomplete_video_idxs_04 = {12, 13, 25}
+    # Index 10 (中山R6, PENDING): video FILE_RACE_LINK_FAILED (動画ファイル名とレースの紐付け失敗)
+    file_race_link_failed_idxs_04 = {10}
 
     # ── 4/5 race definitions ──────────────────────────────────────────────────
     race_date_2 = "2026-04-05"
@@ -255,10 +257,10 @@ def seed():
                         gn = (correct_gn % 8) + 1
                         acc = max(40, acc - 20)
                     elif err_type == 1:
-                        time_val = round(time_val + 75.0, 2)
+                        time_val = 9999.0
                         acc = max(20, acc - 30)
                     elif err_type == 2:
-                        speed_val = round(random.uniform(10.0, 27.0), 1)
+                        speed_change_val = round(random.uniform(35.0, 55.0), 1)
                         acc = max(25, acc - 35)
                     else:
                         speed_val = round(random.uniform(82.0, 96.0), 1)
@@ -367,9 +369,12 @@ def seed():
         return sess_id
 
     # ── Process a list of races ───────────────────────────────────────────────
-    def process_races(race_date, races_list, inject_bad_data=False, incomplete_video_idxs=None):
+    def process_races(race_date, races_list, inject_bad_data=False,
+                      incomplete_video_idxs=None, file_race_link_failed_idxs=None):
         if incomplete_video_idxs is None:
             incomplete_video_idxs = set()
+        if file_race_link_failed_idxs is None:
+            file_race_link_failed_idxs = set()
         sys_user = user_ids["管理者"]
 
         for race_idx, row in enumerate(races_list):
@@ -387,8 +392,13 @@ def seed():
                  dist, direction, weather, cond, status),
             )
 
-            # race_video: INCOMPLETE for designated PENDING races, COMPLETED for all others
-            video_status = "INCOMPLETE" if race_idx in incomplete_video_idxs else "COMPLETED"
+            # race_video: INCOMPLETE, FILE_RACE_LINK_FAILED, or COMPLETED
+            if race_idx in incomplete_video_idxs:
+                video_status = "INCOMPLETE"
+            elif race_idx in file_race_link_failed_idxs:
+                video_status = "FILE_RACE_LINK_FAILED"
+            else:
+                video_status = "COMPLETED"
             video_id = str(uuid.uuid4())
             storage_path = f"gs://furlong-bucket/{race_date.replace('-', '')}/{venue_code}_{rnum:02d}.mp4"
             cur.execute(
@@ -462,7 +472,8 @@ def seed():
 
     # ── Run seeds ─────────────────────────────────────────────────────────────
     process_races(race_date_1, races_0404, inject_bad_data=False,
-                  incomplete_video_idxs=incomplete_video_idxs_04)
+                  incomplete_video_idxs=incomplete_video_idxs_04,
+                  file_race_link_failed_idxs=file_race_link_failed_idxs_04)
     process_races(race_date_2, races_0405, inject_bad_data=True,
                   incomplete_video_idxs=incomplete_video_idxs_05)
 

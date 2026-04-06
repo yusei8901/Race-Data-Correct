@@ -5,7 +5,7 @@ import { raceCategoryTable } from "./race_category";
 
 export const raceEventTable = pgTable("race_event", {
   id: uuid("id").primaryKey().defaultRandom(),
-  categoryId: uuid("category_id").notNull().references(() => raceCategoryTable.id),
+  categoryId: uuid("category_id").notNull().references(() => raceCategoryTable.id, { onDelete: "cascade" }),
   eventDate: date("event_date").notNull(),
   venueCode: varchar("venue_code", { length: 20 }).notNull(),
   venueName: varchar("venue_name", { length: 100 }).notNull(),

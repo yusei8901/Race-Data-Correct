@@ -1,7 +1,7 @@
 -- 19-table schema migration for Furlong CUBE
 
--- 1. users (no FK deps)
-CREATE TABLE IF NOT EXISTS users (
+-- 1. user (no FK deps)
+CREATE TABLE IF NOT EXISTS "user" (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   external_subject_id VARCHAR(255) NOT NULL UNIQUE,
   auth_provider VARCHAR(50),
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS race_event (
   UNIQUE(category_id, event_date, venue_code, round)
 );
 
--- 8. race (FK → race_event, users; no circular FKs on current_*_id)
+-- 8. race (FK → race_event, "user"; no circular FKs on current_*_id)
 CREATE TABLE IF NOT EXISTS race (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES race_event(id) ON DELETE CASCADE,
@@ -109,10 +109,10 @@ CREATE TABLE IF NOT EXISTS race (
   status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
   current_analysis_result_id UUID,
   current_correction_session_id UUID,
-  corrected_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  corrected_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
   corrected_at TIMESTAMPTZ,
   confirmed_at TIMESTAMPTZ,
-  confirmed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  confirmed_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(event_id, race_number)
@@ -208,13 +208,13 @@ CREATE TABLE IF NOT EXISTS race_linkage_result (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 15. correction_session (FK → race, users; no FK on analysis_result_id to avoid circular)
+-- 15. correction_session (FK → race, "user"; no FK on analysis_result_id to avoid circular)
 CREATE TABLE IF NOT EXISTS correction_session (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   race_id UUID NOT NULL REFERENCES race(id) ON DELETE CASCADE,
   analysis_result_id UUID,
   analysis_job_id UUID,
-  started_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  started_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at TIMESTAMPTZ,
   status VARCHAR(30) NOT NULL DEFAULT 'IN_PROGRESS',
@@ -222,21 +222,21 @@ CREATE TABLE IF NOT EXISTS correction_session (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 16. correction_result (FK → correction_session, users)
+-- 16. correction_result (FK → correction_session, "user")
 CREATE TABLE IF NOT EXISTS correction_result (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES correction_session(id) ON DELETE CASCADE,
   version INTEGER NOT NULL DEFAULT 1,
-  corrected_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  corrected_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
   corrected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   correction_data JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 17. audit_log (FK → users)
+-- 17. audit_log (FK → "user")
 CREATE TABLE IF NOT EXISTS audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  user_id UUID REFERENCES "user"(id) ON DELETE SET NULL,
   action VARCHAR(50) NOT NULL,
   target_table VARCHAR(100) NOT NULL,
   target_id VARCHAR(36) NOT NULL,
@@ -246,24 +246,24 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 18. race_status_history (FK → race, users)
+-- 18. race_status_history (FK → race, "user")
 CREATE TABLE IF NOT EXISTS race_status_history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   race_id UUID NOT NULL REFERENCES race(id) ON DELETE CASCADE,
   status VARCHAR(30) NOT NULL,
-  changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  changed_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
   changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   metadata JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 19. csv_export_job (FK → race_event, users)
+-- 19. csv_export_job (FK → race_event, "user")
 CREATE TABLE IF NOT EXISTS csv_export_job (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES race_event(id) ON DELETE CASCADE,
   status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
   storage_path VARCHAR(500),
-  requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  requested_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
   error_message TEXT,
   race_count INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

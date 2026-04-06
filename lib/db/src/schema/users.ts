@@ -2,7 +2,7 @@ import { pgTable, uuid, varchar, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
-export const usersTable = pgTable("users", {
+export const usersTable = pgTable("user", {
   id: uuid("id").primaryKey().defaultRandom(),
   externalSubjectId: varchar("external_subject_id", { length: 255 }).notNull().unique(),
   authProvider: varchar("auth_provider", { length: 50 }),
