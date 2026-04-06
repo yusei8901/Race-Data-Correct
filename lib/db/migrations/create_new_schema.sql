@@ -270,3 +270,25 @@ CREATE TABLE IF NOT EXISTS csv_export_job (
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ
 );
+
+-- 20. analysis_venue_config (analysis parameters per venue, no FK)
+CREATE TABLE IF NOT EXISTS analysis_venue_config (
+  venue_id   VARCHAR(20) PRIMARY KEY,
+  venue_name VARCHAR(100) NOT NULL,
+  race_type  VARCHAR(50)  NOT NULL,
+  params     JSONB        NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- 21. batch_job (processing management batch jobs, no FK)
+CREATE TABLE IF NOT EXISTS batch_job (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            VARCHAR(100) NOT NULL,
+  cron_expression VARCHAR(50)  NOT NULL,
+  status          VARCHAR(20)  NOT NULL DEFAULT '停止中',
+  is_enabled      BOOLEAN      NOT NULL DEFAULT false,
+  next_run_at     TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+

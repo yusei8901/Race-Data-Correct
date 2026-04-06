@@ -477,6 +477,29 @@ def seed():
     process_races(race_date_2, races_0405, inject_bad_data=True,
                   incomplete_video_idxs=incomplete_video_idxs_05)
 
+    # ── analysis_venue_config (per-venue analysis parameters) ─────────────────
+    import json as _json
+    _default_params = {
+        "brightness_threshold": 128,
+        "contrast_boost": 1.2,
+        "noise_reduction": 0.5,
+        "tracking_sensitivity": 0.8,
+    }
+    for _vid, _vname, _rtype in [
+        ("nakayama", "中山", "中央競馬"),
+        ("hanshin",  "阪神", "中央競馬"),
+        ("kyoto",    "京都", "中央競馬"),
+        ("tokyo",    "東京", "中央競馬"),
+        ("oi",       "大井", "地方競馬"),
+        ("kawasaki", "川崎", "地方競馬"),
+    ]:
+        cur.execute(
+            """INSERT INTO analysis_venue_config (venue_id, venue_name, race_type, params)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (venue_id) DO NOTHING""",
+            (_vid, _vname, _rtype, _json.dumps(_default_params)),
+        )
+
     conn.commit()
     conn.close()
     print("Seeding completed successfully!")
