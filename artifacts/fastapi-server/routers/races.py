@@ -178,6 +178,17 @@ def _write_history(cur, race_id: str, status: str, user_id: Optional[str], metad
     )
 
 
+def _write_audit(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
+                 old_value: Optional[dict] = None, new_value: Optional[dict] = None):
+    cur.execute(
+        """INSERT INTO audit_log (id, user_id, action, target_table, target_id, old_value, new_value, created_at)
+           VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, NOW())""",
+        (user_id, action, target_table, target_id,
+         json.dumps(old_value) if old_value else None,
+         json.dumps(new_value) if new_value else None),
+    )
+
+
 def _get_sys_user(cur) -> Optional[str]:
     cur.execute('SELECT id FROM "user" WHERE name = %s LIMIT 1', ("管理者",))
     row = cur.fetchone()
@@ -290,8 +301,15 @@ def batch_update_races(body: dict):
             f"UPDATE race SET {', '.join(set_parts)} WHERE id = ANY(%s::uuid[])",
             params,
         )
+        updated = cur.rowcount
+        if new_status:
+            user_id = _get_sys_user(cur)
+            for race_id in race_ids:
+                _write_history(cur, race_id, new_status, user_id, {"batch_update": True})
+                _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                             None, {"status": new_status, "batch": True})
         conn.commit()
-        return {"updated": cur.rowcount}
+        return {"updated": updated}
 
 
 @router.get("/races/{race_id}")
@@ -303,22 +321,6 @@ def get_race(race_id: str):
         if not row:
             raise HTTPException(status_code=404, detail="Race not found")
         return fmt_race(row)
-
-
-@router.get("/races/{race_id}/available-analysis")
-def get_available_analysis(race_id: str):
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT h.id, h.created_at::text, h.horse_count,
-                      j.status AS job_status, j.analysis_mode
-               FROM analysis_result_header h
-               JOIN analysis_job j ON h.job_id = j.id
-               WHERE h.race_id = %s
-               ORDER BY h.created_at DESC""",
-            (race_id,),
-        )
-        return cur.fetchall()
 
 
 @router.get("/races/{race_id}/history")
@@ -396,14 +398,18 @@ def update_race(race_id: str, body: dict):
 def complete_analysis(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZED", user_id)
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "ANALYZED"})
         conn.commit()
     return get_race(race_id)
 
@@ -412,14 +418,18 @@ def complete_analysis(race_id: str):
 def reanalyze_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'ANALYZING', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'REANALYZING', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZING", user_id)
+        _write_history(cur, race_id, "REANALYZING", user_id)
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "REANALYZING"})
         conn.commit()
     return get_race(race_id)
 
@@ -430,15 +440,19 @@ def reanalysis_request(race_id: str, body: dict):
     comment = body.get("comment")
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'REANALYZING', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'REANALYZING', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "REANALYZING", user_id,
                        {"reanalysis_reason": reason, "reanalysis_comment": comment})
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "REANALYZING", "reason": reason})
         conn.commit()
     return get_race(race_id)
 
@@ -447,14 +461,18 @@ def reanalysis_request(race_id: str, body: dict):
 def matching_failure(race_id: str, body: dict):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'MATCH_FAILED', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'MATCH_FAILED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "MATCH_FAILED", user_id)
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "MATCH_FAILED"})
         conn.commit()
     return get_race(race_id)
 
@@ -464,15 +482,19 @@ def correction_request(race_id: str, body: dict):
     comment = body.get("comment", "")
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'REVISION_REQUESTED', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'REVISION_REQUESTED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "REVISION_REQUESTED", user_id,
                        {"correction_request_comment": comment})
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "REVISION_REQUESTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -481,16 +503,20 @@ def correction_request(race_id: str, body: dict):
 def confirm_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         cur.execute(
             """UPDATE race
                SET status = 'CONFIRMED', confirmed_at = NOW(), confirmed_by = %s, updated_at = NOW()
-               WHERE id = %s RETURNING id""",
+               WHERE id = %s""",
             (user_id, race_id),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         _write_history(cur, race_id, "CONFIRMED", user_id)
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "CONFIRMED"})
         conn.commit()
     return get_race(race_id)
 
@@ -502,7 +528,17 @@ def start_correction(race_id: str, body: dict):
     user_name = body.get("user_name", "ユーザー1")
     with get_db() as conn:
         cur = dict_cursor(conn)
-        # Conflict check: reject if another session is already IN_PROGRESS
+
+        # Auto-expire stale IN_PROGRESS sessions (> 30 min) before conflict check
+        cur.execute(
+            """UPDATE correction_session
+               SET completed_at = NOW(), status = 'REVERTED'
+               WHERE race_id = %s AND status = 'IN_PROGRESS'
+                 AND started_at < NOW() - INTERVAL '30 minutes'""",
+            (race_id,),
+        )
+
+        # Conflict check: reject if another LIVE session is still IN_PROGRESS
         cur.execute(
             """SELECT cs.id, u.name AS locked_by_name
                FROM correction_session cs
@@ -526,13 +562,17 @@ def start_correction(race_id: str, body: dict):
         if not race_row:
             raise HTTPException(status_code=404, detail="Race not found")
 
+        old_status = race_row["status"]
+
         # Write CORRECTING history (prev status needed for 補正中 vs 再補正中)
         cur.execute(
             "UPDATE race SET status = 'CORRECTING', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
         _write_history(cur, race_id, "CORRECTING", user_id,
-                       {"prev_status": race_row["status"], "started_by": user_name})
+                       {"prev_status": old_status, "started_by": user_name})
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old_status}, {"status": "CORRECTING", "started_by": user_name})
 
         # Create correction session
         cur.execute(
@@ -549,18 +589,22 @@ def start_correction(race_id: str, body: dict):
 def complete_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
             "UPDATE correction_session SET completed_at = NOW(), status = 'COMPLETED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
         cur.execute(
-            "UPDATE race SET status = 'CORRECTED', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'CORRECTED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "CORRECTED", user_id)
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "CORRECTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -596,6 +640,8 @@ def temp_save_correction(race_id: str, body: dict):
             )
 
         if exit_editing:
+            cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+            race_now = cur.fetchone()
             cur.execute(
                 "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
                 (race_id,),
@@ -606,6 +652,9 @@ def temp_save_correction(race_id: str, body: dict):
             )
             user_id = _get_sys_user(cur)
             _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "temp-save exit"})
+            _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                         {"status": race_now["status"] if race_now else None},
+                         {"status": "ANALYZED", "reason": "temp-save exit"})
         else:
             cur.execute("UPDATE race SET updated_at = NOW() WHERE id = %s", (race_id,))
 
@@ -617,18 +666,22 @@ def temp_save_correction(race_id: str, body: dict):
 def cancel_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
             "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
         cur.execute(
-            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s RETURNING id",
+            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "correction cancelled"})
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"]}, {"status": "ANALYZED", "reason": "correction cancelled"})
         conn.commit()
     return get_race(race_id)
 
@@ -637,6 +690,8 @@ def cancel_correction(race_id: str):
 def force_unlock(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        old = cur.fetchone()
         cur.execute(
             "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
@@ -647,33 +702,114 @@ def force_unlock(race_id: str):
         )
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "force-unlock by admin"})
+        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
+                     {"status": old["status"] if old else None},
+                     {"status": "ANALYZED", "reason": "force-unlock by admin"})
         conn.commit()
     return get_race(race_id)
 
 
 # ── Bind analysis ────────────────────────────────────────────────────────────
 
-@router.post("/races/{race_id}/bind-analysis")
-def bind_analysis(race_id: str, body: dict):
-    header_id = body.get("header_id")
+@router.get("/races/{race_id}/available-analysis")
+def get_available_analysis(race_id: str):
+    """Return analysis result headers from OTHER races that are in ANALYZED status.
+    These can be selected and their data copied to this race via bind-analysis."""
     with get_db() as conn:
         cur = dict_cursor(conn)
-        if header_id:
-            cur.execute(
-                "UPDATE analysis_result_header SET is_current = FALSE WHERE race_id = %s",
-                (race_id,),
-            )
-            cur.execute(
-                "UPDATE analysis_result_header SET is_current = TRUE WHERE id = %s AND race_id = %s RETURNING id",
-                (header_id, race_id),
-            )
-            if not cur.fetchone():
-                raise HTTPException(status_code=404, detail="Analysis header not found for this race")
-            cur.execute(
-                "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
-                (race_id,),
-            )
-            user_id = _get_sys_user(cur)
-            _write_history(cur, race_id, "ANALYZED", user_id, {"bound_header_id": str(header_id)})
-            conn.commit()
+        cur.execute(
+            """SELECT
+                   h.id,
+                   h.created_at::text,
+                   h.horse_count,
+                   r.id AS source_race_id,
+                   re.venue_name AS venue,
+                   r.race_number,
+                   r.race_name,
+                   re.event_date::text AS race_date,
+                   j.status AS job_status,
+                   j.analysis_mode
+               FROM analysis_result_header h
+               JOIN race r ON h.race_id = r.id
+               JOIN race_event re ON r.event_id = re.id
+               JOIN analysis_job j ON h.job_id = j.id
+               WHERE r.status = 'ANALYZED'
+                 AND r.id != %s
+                 AND h.is_current = TRUE
+               ORDER BY h.created_at DESC""",
+            (race_id,),
+        )
+        return cur.fetchall()
+
+
+@router.post("/races/{race_id}/bind-analysis")
+def bind_analysis(race_id: str, body: dict):
+    """Copy analysis result header + details from a source header (another race) to this race."""
+    source_header_id = body.get("source_header_id") or body.get("header_id")
+    if not source_header_id:
+        raise HTTPException(status_code=400, detail="source_header_id is required")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+
+        # Fetch source header
+        cur.execute(
+            "SELECT id, job_id, horse_count FROM analysis_result_header WHERE id = %s",
+            (source_header_id,),
+        )
+        src_header = cur.fetchone()
+        if not src_header:
+            raise HTTPException(status_code=404, detail="Source analysis header not found")
+
+        # Mark all existing headers for this race as not current
+        cur.execute(
+            "UPDATE analysis_result_header SET is_current = FALSE WHERE race_id = %s",
+            (race_id,),
+        )
+
+        # Create new header for this race (cloned from source)
+        cur.execute(
+            """INSERT INTO analysis_result_header (id, job_id, race_id, is_current, horse_count, created_at, updated_at)
+               VALUES (gen_random_uuid(), %s, %s, TRUE, %s, NOW(), NOW())
+               RETURNING id""",
+            (src_header["job_id"], race_id, src_header["horse_count"]),
+        )
+        new_header = cur.fetchone()
+        new_header_id = new_header["id"]
+
+        # Copy all detail rows from source header to new header
+        cur.execute(
+            """INSERT INTO analysis_result_detail (
+                   id, header_id, time_sec, marker_type, class_name, course_position,
+                   rank, race_time, corrected_time, data_type, section_no, centerline_dy,
+                   corrected_speed, speed_kmh, horse_number, horse_name, gate_number, color,
+                   lane, accuracy, position, is_corrected, original_position, absolute_speed,
+                   speed_change, running_position, special_note, created_at
+               )
+               SELECT
+                   gen_random_uuid(), %s, time_sec, marker_type, class_name, course_position,
+                   rank, race_time, corrected_time, data_type, section_no, centerline_dy,
+                   corrected_speed, speed_kmh, horse_number, horse_name, gate_number, color,
+                   lane, accuracy, position, is_corrected, original_position, absolute_speed,
+                   speed_change, running_position, special_note, NOW()
+               FROM analysis_result_detail
+               WHERE header_id = %s""",
+            (new_header_id, source_header_id),
+        )
+
+        cur.execute(
+            "SELECT status FROM race WHERE id = %s", (race_id,)
+        )
+        old = cur.fetchone()
+        cur.execute(
+            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
+            (race_id,),
+        )
+        user_id = _get_sys_user(cur)
+        _write_history(cur, race_id, "ANALYZED", user_id,
+                       {"bound_from_header": str(source_header_id), "new_header_id": str(new_header_id)})
+        _write_audit(cur, user_id, "BIND_ANALYSIS", "race", race_id,
+                     {"status": old["status"] if old else None},
+                     {"status": "ANALYZED", "source_header_id": str(source_header_id),
+                      "new_header_id": str(new_header_id)})
+        conn.commit()
     return get_race(race_id)
