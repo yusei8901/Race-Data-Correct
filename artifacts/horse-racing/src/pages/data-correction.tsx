@@ -2458,7 +2458,7 @@ function RightTable({
                     value={hn ?? ""}
                     onChange={(e) => {
                       const v = e.target.value;
-                      if (v) onEdit(row.id, "horse_number", parseInt(v, 10));
+                      onEdit(row.id, "horse_number", v ? parseInt(v, 10) : null);
                     }}
                     className={`bg-zinc-800 border rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground w-10 ${isDuplicate ? "border-red-500 text-red-400" : hn == null ? "border-red-500" : "border-zinc-600"}`}
                   >
