@@ -140,6 +140,15 @@ def update_analysis_detail(race_id: str, detail_id: str, body: dict):
     params.append(detail_id)
     with get_db() as conn:
         cur = dict_cursor(conn)
+        # Verify detail belongs to this race (via header → race ownership)
+        cur.execute(
+            """SELECT ard.id FROM analysis_result_detail ard
+               JOIN analysis_result_header arh ON ard.header_id = arh.id
+               WHERE ard.id = %s AND arh.race_id = %s""",
+            (detail_id, race_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Detail row not found or does not belong to this race")
         cur.execute(
             f"UPDATE analysis_result_detail SET {', '.join(set_clauses)} WHERE id = %s RETURNING id",
             params,
