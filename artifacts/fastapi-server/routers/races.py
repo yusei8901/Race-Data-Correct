@@ -298,18 +298,18 @@ def batch_update_races(body: dict):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            f"UPDATE race SET {', '.join(set_parts)} WHERE id = ANY(%s::uuid[])",
+            f"UPDATE race SET {', '.join(set_parts)} WHERE id = ANY(%s::uuid[]) RETURNING id::text",
             params,
         )
-        updated = cur.rowcount
-        if new_status:
+        updated_rows = [r["id"] for r in cur.fetchall()]
+        if new_status and updated_rows:
             user_id = _get_sys_user(cur)
-            for race_id in race_ids:
+            for race_id in updated_rows:
                 _write_history(cur, race_id, new_status, user_id, {"batch_update": True})
                 _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
                              None, {"status": new_status, "batch": True})
         conn.commit()
-        return {"updated": updated}
+        return {"updated": len(updated_rows)}
 
 
 @router.get("/races/{race_id}")
@@ -740,6 +740,8 @@ def force_unlock(race_id: str):
         cur = dict_cursor(conn)
         cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
             "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
@@ -751,7 +753,7 @@ def force_unlock(race_id: str):
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "force-unlock by admin"})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"] if old else None},
+                     {"status": old["status"]},
                      {"status": "ANALYZED", "reason": "force-unlock by admin"})
         conn.commit()
     return get_race(race_id)
