@@ -45,6 +45,7 @@ type DerivedStatus =
   | "解析中"
   | "待機中"
   | "補正中"
+  | "再補正中"
   | "レビュー待ち"
   | "データ確定"
   | "修正要請"
@@ -52,29 +53,38 @@ type DerivedStatus =
   | "再解析要請"
   | "突合失敗";
 
+const KNOWN_STATUSES: ReadonlySet<DerivedStatus> = new Set<DerivedStatus>([
+  "未処理", "未解析", "解析中", "待機中", "補正中", "再補正中",
+  "レビュー待ち", "データ確定", "修正要請", "解析失敗", "再解析要請", "突合失敗",
+]);
+
 function getDerivedStatus(race: Race): DerivedStatus {
+  // Prefer the API's pre-computed display_status (backend handles all logic)
+  const ds = race.display_status ?? "";
+  if (ds && KNOWN_STATUSES.has(ds as DerivedStatus)) {
+    return ds as DerivedStatus;
+  }
+  // Fallback: compute from component fields for backward compatibility
   const vs = race.video_status ?? "";
   const as_ = race.analysis_status ?? "";
   const st = race.status ?? "";
 
   if (vs !== "完了") return "未処理";
   if (as_ === "未" || as_ === "") return "未解析";
-  if (as_ === "解析中") return "解析中";
-  if (as_ === "再解析中") return "解析中";
+  if (as_ === "解析中" || as_ === "再解析中") return "解析中";
   if (as_ === "解析失敗") {
-    if (st === "再解析要請") return "再解析要請";
+    if (st === "再解析要請" || st === "REANALYZING") return "再解析要請";
     return "解析失敗";
   }
   if (as_ === "突合失敗") return "突合失敗";
   if (as_ === "完了") {
-    if (st === "待機中" || st === "未補正") return "待機中";
-    if (st === "補正中") return "補正中";
-    if (st === "レビュー待ち") return "レビュー待ち";
-    if (st === "データ確定") return "データ確定";
-    if (st === "修正要請") return "修正要請";
+    if (st === "ANALYZED" || st === "待機中" || st === "未補正") return "待機中";
+    if (st === "CORRECTING" || st === "補正中") return "補正中";
+    if (st === "CORRECTED" || st === "レビュー待ち") return "レビュー待ち";
+    if (st === "CONFIRMED" || st === "データ確定") return "データ確定";
+    if (st === "REVISION_REQUESTED" || st === "修正要請" || st === "修正要求") return "修正要請";
     if (st === "補正完了" || st === "データ補正") return "待機中";
     if (st === "レビュー") return "レビュー待ち";
-    if (st === "修正要求") return "修正要請";
     return "待機中";
   }
   return "未処理";
@@ -87,6 +97,7 @@ function getStatusBadgeProps(status: DerivedStatus) {
     case "解析中":       return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
     case "待機中":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "待機中" };
     case "補正中":       return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
+    case "再補正中":     return { className: "bg-indigo-900/40 text-indigo-400 border-indigo-800", label: "再補正中" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
     case "データ確定":   return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
     case "修正要請":     return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };

@@ -32,8 +32,20 @@ export interface Race {
   condition?: string | null;
   /** @nullable */
   start_time?: string | null;
-  /** 未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー */
+  /**
+   * English status code: PENDING | ANALYZING | REANALYZING | ANALYSIS_FAILED | ANALYZED |
+   * MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED
+   */
   status: string;
+  /**
+   * Japanese display label computed by API:
+   * 未処理 | 未解析 | 解析中 | 再解析要請 | 解析失敗 | 待機中 | 突合失敗 |
+   * 補正中 | 再補正中 | レビュー待ち | 修正要請 | データ確定
+   * @nullable
+   */
+  display_status?: string | null;
+  /** @nullable */
+  venue_code?: string | null;
   /** @nullable */
   video_status?: string | null;
   /** @nullable */
@@ -42,6 +54,16 @@ export interface Race {
   analysis_status?: string | null;
   /** @nullable */
   assigned_user?: string | null;
+  /** @nullable */
+  correction_request_comment?: string | null;
+  /** @nullable */
+  reanalysis_reason?: string | null;
+  /** @nullable */
+  reanalysis_comment?: string | null;
+  /** @nullable */
+  locked_by?: string | null;
+  /** @nullable */
+  locked_at?: string | null;
   updated_at: string;
   created_at: string;
 }

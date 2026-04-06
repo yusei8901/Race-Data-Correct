@@ -828,7 +828,7 @@ function StatusDetailPopup({
 }: {
   race: any; onClose: () => void;
 }) {
-  const status = race?.status;
+  const status = race?.display_status ?? race?.status;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[440px] max-w-[95vw] p-6">
@@ -1041,11 +1041,11 @@ export default function DataCorrection() {
   const raceLockedBy = race?.locked_by;
   const isLockedByMe = raceLockedBy === currentUserName || !raceLockedBy;
   const isLockedByOther = !!raceLockedBy && raceLockedBy !== currentUserName;
-  const raceStatus = race?.status ?? "";
+  const raceStatus = race?.display_status ?? race?.status ?? "";
 
   // 補正開始 / 補正再開
   const handleStart = () => {
-    if (raceStatus === "補正中" && isLockedByMe) {
+    if ((raceStatus === "補正中" || raceStatus === "再補正中") && isLockedByMe) {
       setIsEditingMode(true);
       return;
     }
@@ -1057,7 +1057,7 @@ export default function DataCorrection() {
       .then((r) => { if (!r.ok) throw new Error("Lock failed"); return r.json(); })
       .then((updated) => {
         queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
-        const actionType = raceStatus === "修正要請" || raceStatus === "補正中" ? "補正再開" : "補正開始";
+        const actionType = raceStatus === "修正要請" || raceStatus === "補正中" || raceStatus === "再補正中" ? "補正再開" : "補正開始";
         fetch(`${API}/races/${raceId}/history`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1376,7 +1376,7 @@ export default function DataCorrection() {
       return;
     }
 
-    const byTime = [...passingOrders].filter((o) => o.time_seconds != null).sort((a, b) => a.time_seconds - b.time_seconds);
+    const byTime = [...passingOrders].filter((o) => o.time_seconds != null).sort((a, b) => (a.time_seconds ?? 0) - (b.time_seconds ?? 0));
     if (!byTime.length) { toast({ title: "通過タイムデータがありません" }); return; }
 
     const leaderOrder = byTime[0];
@@ -1417,7 +1417,8 @@ export default function DataCorrection() {
 
   const raceTimeFromVideo = videoTime - effectiveVideoOffset;
   const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
-  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || (raceStatus === "補正中" && isLockedByMe);
+  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち"
+    || (raceStatus === "補正中" && isLockedByMe) || (raceStatus === "再補正中" && isLockedByMe);
   const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
 
   // Duplicate horse number validation
@@ -1489,11 +1490,12 @@ export default function DataCorrection() {
 
         <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
           {/* Status badge */}
-          {(raceStatus === "補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析要請" || raceStatus === "突合失敗") && (
+          {(raceStatus === "補正中" || raceStatus === "再補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析要請" || raceStatus === "突合失敗") && (
             <Badge
               variant="outline"
               className={`text-[10px] cursor-pointer ${
                 raceStatus === "補正中" ? "border-blue-700 text-blue-400 bg-blue-900/20"
+                : raceStatus === "再補正中" ? "border-indigo-700 text-indigo-400 bg-indigo-900/20"
                 : raceStatus === "待機中" ? "border-yellow-700 text-yellow-400 bg-yellow-900/20"
                 : raceStatus === "レビュー待ち" ? "border-purple-700 text-purple-400 bg-purple-900/20"
                 : raceStatus === "修正要請" ? "border-orange-700 text-orange-400 bg-orange-900/20"
@@ -1512,7 +1514,7 @@ export default function DataCorrection() {
           )}
 
           {/* Lock indicator */}
-          {raceStatus === "補正中" && isLockedByOther && (
+          {(raceStatus === "補正中" || raceStatus === "再補正中") && isLockedByOther && (
             <Badge variant="outline" className="text-[10px] border-amber-700 text-amber-400 bg-amber-900/20">
               {raceLockedBy}が編集中
             </Badge>
@@ -1586,7 +1588,7 @@ export default function DataCorrection() {
               )}
 
               {/* Lock warning for non-owner */}
-              {raceStatus === "補正中" && isLockedByOther && (
+              {(raceStatus === "補正中" || raceStatus === "再補正中") && isLockedByOther && (
                 <span className="text-xs text-amber-400 px-2 py-1 bg-amber-900/20 border border-amber-800/50 rounded">
                   {raceLockedBy}が編集中
                 </span>
@@ -1625,8 +1627,8 @@ export default function DataCorrection() {
                 </Button>
               )}
 
-              {/* 強制ロック解除 — admin only, 補正中 */}
-              {isAdmin && raceStatus === "補正中" && (
+              {/* 強制ロック解除 — admin only, 補正中/再補正中 */}
+              {isAdmin && (raceStatus === "補正中" || raceStatus === "再補正中") && (
                 <Button
                   size="sm"
                   variant="outline"

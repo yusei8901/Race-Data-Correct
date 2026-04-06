@@ -12,7 +12,7 @@ ERROR_FILTER = """(
 )"""
 
 
-def fmt_order(row: dict, race_id: str) -> dict:
+def fmt_detail(row: dict, race_id: str) -> dict:
     return {
         "id": row["id"],
         "race_id": race_id,
@@ -34,22 +34,24 @@ def fmt_order(row: dict, race_id: str) -> dict:
     }
 
 
-@router.get("/races/{race_id}/passing-orders")
-def get_passing_orders(
+def _get_current_header(cur, race_id: str) -> Optional[dict]:
+    cur.execute(
+        "SELECT id, horse_count FROM analysis_result_header WHERE race_id = %s AND is_current = TRUE LIMIT 1",
+        (race_id,),
+    )
+    return cur.fetchone()
+
+
+@router.get("/races/{race_id}/analysis-result")
+def get_analysis_result(
     race_id: str,
     checkpoint: Optional[str] = Query(None),
 ):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT id FROM analysis_result_header
-               WHERE race_id = %s AND is_current = TRUE
-               LIMIT 1""",
-            (race_id,),
-        )
-        header = cur.fetchone()
+        header = _get_current_header(cur, race_id)
         if not header:
-            return []
+            return {"header": None, "details": []}
 
         header_id = header["id"]
         extra_where = "AND ard.marker_type = %s" if checkpoint else ""
@@ -62,26 +64,48 @@ def get_passing_orders(
                 ORDER BY ard.position, ard.rank""",
             params,
         )
-        return [fmt_order(r, race_id) for r in cur.fetchall()]
+        details = [fmt_detail(r, race_id) for r in cur.fetchall()]
+        return {
+            "header": {
+                "id": str(header["id"]),
+                "horse_count": header["horse_count"],
+            },
+            "details": details,
+        }
+
+
+# Legacy alias — keeps old passing-orders URLs working for the frontend
+@router.get("/races/{race_id}/passing-orders")
+def get_passing_orders(
+    race_id: str,
+    checkpoint: Optional[str] = Query(None),
+):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        header = _get_current_header(cur, race_id)
+        if not header:
+            return []
+        header_id = header["id"]
+        extra_where = "AND ard.marker_type = %s" if checkpoint else ""
+        params = [header_id] + ([checkpoint] if checkpoint else [])
+        cur.execute(
+            f"""SELECT ard.*
+                FROM analysis_result_detail ard
+                WHERE ard.header_id = %s {extra_where}
+                ORDER BY ard.position, ard.rank""",
+            params,
+        )
+        return [fmt_detail(r, race_id) for r in cur.fetchall()]
 
 
 @router.get("/races/{race_id}/checkpoint-errors")
 def get_checkpoint_errors(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT id, horse_count
-               FROM analysis_result_header
-               WHERE race_id = %s AND is_current = TRUE
-               LIMIT 1""",
-            (race_id,),
-        )
-        header = cur.fetchone()
+        header = _get_current_header(cur, race_id)
         if not header:
             return {}
-
         expected = header["horse_count"] or 14
-
         cur.execute(
             f"""SELECT
                     ard.marker_type          AS checkpoint,
@@ -96,47 +120,64 @@ def get_checkpoint_errors(race_id: str):
         for row in cur.fetchall():
             cp = row["checkpoint"]
             missing = max(0, expected - row["row_count"])
-            result[cp] = {
-                "errors": row["error_count"],
-                "missing": missing,
-            }
+            result[cp] = {"errors": row["error_count"], "missing": missing}
         return result
 
 
+@router.patch("/races/{race_id}/analysis-result/{detail_id}")
+def update_analysis_detail(race_id: str, detail_id: str, body: dict):
+    allowed = {"position", "lane", "time_seconds", "horse_number", "special_note",
+               "accuracy", "absolute_speed", "speed_change", "running_position", "is_corrected"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    field_map = {"time_seconds": "time_sec"}
+    set_clauses, params = [], []
+    for field, value in updates.items():
+        db_field = field_map.get(field, field)
+        set_clauses.append(f"{db_field} = %s")
+        params.append(value)
+    params.append(detail_id)
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            f"UPDATE analysis_result_detail SET {', '.join(set_clauses)} WHERE id = %s RETURNING id",
+            params,
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Detail row not found")
+        conn.commit()
+        cur.execute("SELECT * FROM analysis_result_detail WHERE id = %s", (detail_id,))
+        updated = cur.fetchone()
+        return fmt_detail(updated, race_id)
+
+
+# Legacy alias — keeps old /passing-orders/{id} PATCH working
 @router.patch("/passing-orders/{order_id}")
 def update_passing_order(order_id: str, body: dict):
     allowed = {"position", "lane", "time_seconds", "horse_number", "special_note"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
-
+    field_map = {"time_seconds": "time_sec"}
+    set_clauses, params = [], []
+    for field, value in updates.items():
+        db_field = field_map.get(field, field)
+        set_clauses.append(f"{db_field} = %s")
+        params.append(value)
+    params.append(order_id)
     with get_db() as conn:
         cur = dict_cursor(conn)
-        field_map = {"time_seconds": "time_sec"}
-        set_clauses, params = [], []
-        for field, value in updates.items():
-            db_field = field_map.get(field, field)
-            set_clauses.append(f"{db_field} = %s")
-            params.append(value)
-
-        params.append(order_id)
         cur.execute(
             f"UPDATE analysis_result_detail SET {', '.join(set_clauses)} WHERE id = %s RETURNING id",
             params,
         )
-        row = cur.fetchone()
-        if not row:
+        if not cur.fetchone():
             raise HTTPException(status_code=404, detail="PassingOrder not found")
         conn.commit()
-
         cur.execute("SELECT * FROM analysis_result_detail WHERE id = %s", (order_id,))
         updated = cur.fetchone()
-        if not updated:
-            raise HTTPException(status_code=404, detail="Not found after update")
-
-        cur.execute(
-            "SELECT race_id FROM analysis_result_header WHERE id = %s", (updated["header_id"],)
-        )
+        cur.execute("SELECT race_id FROM analysis_result_header WHERE id = %s", (updated["header_id"],))
         h = cur.fetchone()
         race_id = h["race_id"] if h else order_id
-        return fmt_order(updated, str(race_id))
+        return fmt_detail(updated, str(race_id))
