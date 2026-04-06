@@ -140,7 +140,10 @@ def get_race(race_id: str):
 def get_available_analysis(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT race_date, venue, distance, surface_type, race_number FROM races WHERE id = %s", (race_id,))
+        cur.execute(
+            "SELECT race_date, venue, distance, surface_type, race_number, race_name FROM races WHERE id = %s",
+            (race_id,),
+        )
         target = cur.fetchone()
         if not target:
             raise HTTPException(status_code=404, detail="Race not found")
@@ -150,13 +153,13 @@ def get_available_analysis(race_id: str):
                FROM races
                WHERE id != %s
                  AND race_date = %s
+                 AND venue = %s
                  AND analysis_status = '完了'
-               ORDER BY venue, race_number""",
-            (race_id, target["race_date"]),
+               ORDER BY race_number""",
+            (race_id, target["race_date"], target["venue"]),
         )
         rows = cur.fetchall()
-        target_surface = target["surface_type"]
-        target_distance = target["distance"]
+        target_race_name = target["race_name"]
         return [
             {
                 "id": r["id"],
@@ -164,10 +167,11 @@ def get_available_analysis(race_id: str):
                 "date": r["date"],
                 "venue": r["venue"],
                 "race_number": r["race_number"],
+                "race_name": r["race_name"],
                 "distance": r["distance"],
                 "surface_type": r["surface_type"],
-                "same_venue": r["venue"] == target["venue"],
-                "mismatch": (r["surface_type"] != target_surface) or (abs(r["distance"] - target_distance) > 400),
+                "same_venue": True,
+                "mismatch": r["race_name"] != target_race_name,
             }
             for r in rows
         ]

@@ -48,8 +48,35 @@ const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = 
 };
 
 const SPECIAL_NOTES = ["ー", "出遅れ", "大幅遅れ", "映像見切れ", "確認困難", "他馬と重複", "落馬", "失格"];
+const EXEMPT_SPECIAL_NOTES = new Set(["映像見切れ", "確認困難", "他馬と重複", "落馬", "失格"]);
 const LANES = ["内", "中", "外"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
+const ANALYSIS_PRESETS = ["標準", "逆光", "曇り", "雨天"] as const;
+const VENUE_ID_MAP: Record<string, string> = {
+  "中山": "nakayama", "阪神": "hanshin", "京都": "kyoto", "東京": "tokyo",
+  "大井": "oi", "川崎": "kawasaki",
+};
+
+function formatMargin(margin: number | null | undefined, finishPos: number | null | undefined): string {
+  if (finishPos === 1) return "-";
+  if (margin == null) return "-";
+  if (margin < 0.12) return "ハナ";
+  if (margin < 0.28) return "アタマ";
+  if (margin < 0.45) return "クビ";
+  if (margin < 0.65) return "½";
+  if (margin < 0.88) return "¾";
+  if (margin < 1.15) return "1";
+  if (margin < 1.35) return "1¼";
+  if (margin < 1.65) return "1½";
+  if (margin < 1.85) return "1¾";
+  if (margin < 2.25) return "2";
+  if (margin < 2.75) return "2½";
+  if (margin < 3.25) return "3";
+  if (margin < 3.75) return "3½";
+  if (margin < 4.5) return "4";
+  if (margin < 5.5) return "5";
+  return `${Math.round(margin)}`;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface BBox {
@@ -672,7 +699,8 @@ function CorrectionRequestDialog({
 // ── Bind Analysis Dialog (解析データ再紐付け) ─────────────────────────────────
 interface AnalysisDataItem {
   id: string; label: string; date: string; venue: string; race_number: number;
-  distance: number; surface_type: string; same_venue: boolean; mismatch: boolean;
+  race_name: string; distance: number; surface_type: string;
+  same_venue: boolean; mismatch: boolean;
 }
 
 function BindAnalysisDialog({
@@ -721,14 +749,14 @@ function BindAnalysisDialog({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {item.mismatch && (
-            <span className="text-[9px] bg-amber-800/50 text-amber-400 border border-amber-700/50 rounded px-1 py-0.5">対象不一致</span>
+            <span className="text-[9px] bg-amber-800/50 text-amber-400 border border-amber-700/50 rounded px-1 py-0.5">レース名不一致</span>
           )}
           <span className="text-xs font-semibold">{item.venue} {item.race_number}R</span>
           <span className="text-[10px] text-zinc-400">{item.surface_type} {item.distance}m</span>
         </div>
         <span className="text-[10px] text-zinc-500">{item.date}</span>
       </div>
-      <div className="text-[10px] text-zinc-400 mt-0.5">{item.label}</div>
+      <div className="text-[10px] text-zinc-400 mt-0.5">{item.race_name}</div>
     </button>
   );
 
@@ -744,7 +772,7 @@ function BindAnalysisDialog({
           <div className="flex items-start gap-2 mx-4 mt-3 bg-amber-950/40 border border-amber-800/50 rounded-md p-2.5">
             <AlertTriangle className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
             <p className="text-xs text-amber-300 leading-relaxed">
-              選択した解析データはレースの対象（コース種別・距離）が異なるため選択できません。
+              選択した解析データはレース名が異なるため紐付けできません。競馬場・日付・レース名が一致するデータのみ選択できます。
             </p>
             <button onClick={() => setMismatchAlert(false)} className="ml-auto text-zinc-500 hover:text-zinc-300 cursor-pointer">
               <X className="h-3 w-3" />
@@ -841,7 +869,11 @@ export default function DataCorrection() {
   // Edit mode: purely local; resets when leaving the page
   const [isEditingMode, setIsEditingMode] = useState(false);
   const [savingTemp, setSavingTemp] = useState(false);
-  const [cpErrors, setCpErrors] = useState<Record<string, number>>({});
+  const [cpErrors, setCpErrors] = useState<Record<string, { errors: number; missing: number }>>({});
+  const [entrySortBy, setEntrySortBy] = useState<"horse_number" | "finish_position">("horse_number");
+  const [analysisPreset, setAnalysisPreset] = useState<string>("標準");
+  const [analysisParamsData, setAnalysisParamsData] = useState<Record<string, any> | null>(null);
+  const [analysisParamsOpen, setAnalysisParamsOpen] = useState(false);
 
   // Video state
   const [videoTime, setVideoTime] = useState(0);
@@ -903,6 +935,16 @@ export default function DataCorrection() {
       .then((data) => setCpErrors(data))
       .catch(() => {});
   }, [raceId]);
+
+  useEffect(() => {
+    if (!race?.venue) return;
+    const venueId = VENUE_ID_MAP[race.venue];
+    if (!venueId) return;
+    fetch(`${API}/analysis-params/${venueId}`)
+      .then((r) => r.json())
+      .then((d) => setAnalysisParamsData(d.params ?? {}))
+      .catch(() => {});
+  }, [race?.venue]);
 
   // Video timer effect
   useEffect(() => {
@@ -1461,15 +1503,21 @@ export default function DataCorrection() {
                 <Save className="h-3 w-3" />一時保存
               </Button>
               {(() => {
-                const totalCpErrors = Object.values(cpErrors).reduce((s, n) => s + n, 0);
-                const hasErrors = totalCpErrors > 0;
+                const totalErrors = Object.values(cpErrors).reduce((s, v) => s + (v?.errors ?? 0), 0);
+                const totalMissing = Object.values(cpErrors).reduce((s, v) => s + (v?.missing ?? 0), 0);
+                const totalIssues = totalErrors + totalMissing;
+                const hasIssues = totalIssues > 0;
                 return (
                   <Button
                     size="sm"
-                    className={`h-7 text-xs gap-1.5 text-white border-0 cursor-pointer ${hasErrors ? "bg-zinc-600 opacity-50 cursor-not-allowed" : "bg-green-700 hover:bg-green-600"}`}
+                    className={`h-7 text-xs gap-1.5 text-white border-0 cursor-pointer ${hasIssues ? "bg-zinc-600 opacity-50 cursor-not-allowed" : "bg-green-700 hover:bg-green-600"}`}
                     onClick={() => {
-                      if (hasErrors) {
-                        toast({ title: `データエラーがあります（${totalCpErrors}件）`, description: "チェックポイントのエラーをすべて解消してから補正完了できます。", variant: "destructive" });
+                      if (hasIssues) {
+                        toast({
+                          title: "チェックポイントに問題があります",
+                          description: `エラー: ${totalErrors}件、欠損: ${totalMissing}件。修正してから補正完了にしてください。`,
+                          variant: "destructive",
+                        });
                         return;
                       }
                       if (hasDuplicateHorseNumbers) {
@@ -1481,9 +1529,9 @@ export default function DataCorrection() {
                     disabled={completeCorrectionMut.isPending}
                   >
                     <CheckCircle2 className="h-3 w-3" />補正完了
-                    {Object.values(cpErrors).reduce((s, n) => s + n, 0) > 0 && (
+                    {hasIssues && (
                       <span className="ml-1 bg-red-500 text-white rounded-full text-[9px] px-1 min-w-[16px] text-center">
-                        {Object.values(cpErrors).reduce((s, n) => s + n, 0)}
+                        {totalIssues}
                       </span>
                     )}
                   </Button>
@@ -1632,6 +1680,18 @@ export default function DataCorrection() {
 
             {(leftView === "entries" || leftView === "both") && (
               <div>
+                <div className="flex items-center gap-0.5 px-1.5 py-1 bg-muted/30 border-b border-border/50">
+                  <span className="text-[9px] text-zinc-500 mr-1">並替:</span>
+                  {([["horse_number", "馬番"], ["finish_position", "着順"]] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setEntrySortBy(key)}
+                      className={`px-1.5 py-0.5 text-[9px] rounded cursor-pointer transition-colors ${
+                        entrySortBy === key ? "bg-primary text-white" : "bg-zinc-700 text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >{label}</button>
+                  ))}
+                </div>
                 <table className="w-full text-[10px]">
                   <thead className="bg-muted/60 sticky top-0 z-10">
                     <tr>
@@ -1645,13 +1705,21 @@ export default function DataCorrection() {
                     </tr>
                   </thead>
                   <tbody>
-                    {entries?.sort((a, b) => a.horse_number - b.horse_number).map((e) => {
+                    {[...(entries ?? [])].sort((a, b) => {
+                      if (entrySortBy === "finish_position") {
+                        const ap = (a as any).finish_position ?? 999;
+                        const bp = (b as any).finish_position ?? 999;
+                        return ap - bp;
+                      }
+                      return a.horse_number - b.horse_number;
+                    }).map((e) => {
                       const gn = e.gate_number ?? 1;
                       const cap = CAP_COLORS[gn] ?? CAP_COLORS[1];
                       const ft = (e as any).finish_time;
                       const min = ft ? Math.floor(ft / 60) : null;
                       const sec = ft ? (ft % 60).toFixed(1) : null;
                       const timeStr = (min !== null && sec !== null) ? `${min}:${sec.padStart(4, "0")}` : "-";
+                      const marginStr = formatMargin((e as any).margin, (e as any).finish_position);
                       return (
                         <tr key={e.id} className="border-t border-border/30 hover:bg-muted/20">
                           <td className="p-1 text-center font-mono font-bold">{e.horse_number}</td>
@@ -1662,9 +1730,9 @@ export default function DataCorrection() {
                             >{gn}</span>
                           </td>
                           <td className="p-1 truncate max-w-[60px]" title={e.horse_name}>{e.horse_name}</td>
-                          <td className="p-1 text-right font-mono font-bold">{e.finish_position ?? "-"}</td>
+                          <td className="p-1 text-right font-mono font-bold">{(e as any).finish_position ?? "-"}</td>
                           <td className="p-1 text-right font-mono text-muted-foreground">{timeStr}</td>
-                          <td className="p-1 text-right font-mono text-muted-foreground">{(e as any).margin != null ? (e as any).margin.toFixed(1) : "-"}</td>
+                          <td className="p-1 text-right font-mono text-muted-foreground">{marginStr}</td>
                           <td className="p-1 text-right font-mono text-muted-foreground">{(e as any).last_3f != null ? (e as any).last_3f.toFixed(1) : "-"}</td>
                         </tr>
                       );
@@ -1673,6 +1741,53 @@ export default function DataCorrection() {
                 </table>
               </div>
             )}
+
+            {/* Analysis Params Panel */}
+            <div className="border-t border-border/50">
+              <button
+                onClick={() => setAnalysisParamsOpen((o) => !o)}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold text-muted-foreground hover:bg-muted/20 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1">⚙ 解析パラメータ</span>
+                <span className="text-zinc-600">{analysisParamsOpen ? "▲" : "▼"}</span>
+              </button>
+              {analysisParamsOpen && (
+                <div className="px-2.5 pb-2.5 space-y-2">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-[9px] text-zinc-500">プリセット:</span>
+                    {ANALYSIS_PRESETS.map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setAnalysisPreset(p)}
+                        className={`px-1.5 py-0.5 text-[9px] rounded cursor-pointer transition-colors border ${
+                          analysisPreset === p
+                            ? "bg-primary/20 border-primary text-primary"
+                            : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                        }`}
+                      >{p}</button>
+                    ))}
+                  </div>
+                  {(() => {
+                    const surfType = race?.surface_type ?? "芝";
+                    const preset = analysisParamsData?.[surfType]?.[analysisPreset];
+                    if (!preset) {
+                      return <p className="text-[9px] text-zinc-600">パラメータ未設定</p>;
+                    }
+                    const m200 = preset.m200 ?? {};
+                    return (
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+                        <div className="flex justify-between"><span className="text-zinc-500">検出頻度</span><span className="font-mono text-zinc-300">{m200.polyline_fps ?? "-"}fps</span></div>
+                        <div className="flex justify-between"><span className="text-zinc-500">解像度</span><span className="font-mono text-zinc-300">{m200.polyline_resolution ?? "-"}</span></div>
+                        <div className="flex justify-between"><span className="text-zinc-500">検出閾値</span><span className="font-mono text-zinc-300">{m200.detection_confidence ?? "-"}%</span></div>
+                        <div className="flex justify-between"><span className="text-zinc-500">WB調整</span><span className="font-mono text-zinc-300">{m200.white_balance ?? "-"}</span></div>
+                        <div className="flex justify-between"><span className="text-zinc-500">ガンマ</span><span className="font-mono text-zinc-300">{m200.gamma ?? "-"}</span></div>
+                        <div className="flex justify-between"><span className="text-zinc-500">彩度</span><span className="font-mono text-zinc-300">{m200.saturation ?? "-"}%</span></div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1935,7 +2050,10 @@ export default function DataCorrection() {
                     {pts200.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, baseSec);
                       const isSelected = selectedCp === pt.key;
-                      const errCount = cpErrors[pt.key] || 0;
+                      const cpData = cpErrors[pt.key];
+                      const errCount = cpData?.errors ?? 0;
+                      const missingCount = cpData?.missing ?? 0;
+                      const hasIssue = errCount > 0 || missingCount > 0;
                       return (
                         <button
                           key={pt.key}
@@ -1943,13 +2061,18 @@ export default function DataCorrection() {
                           className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-primary border-primary text-white"
-                              : errCount > 0
+                              : hasIssue
                                 ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
                                 : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
                           }`}
                         >
+                          {missingCount > 0 && (
+                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-amber-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
+                              {missingCount}
+                            </span>
+                          )}
                           {errCount > 0 && (
-                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5">
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
                               {errCount}
                             </span>
                           )}
@@ -1972,7 +2095,10 @@ export default function DataCorrection() {
                     {ptsStr.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, baseSec);
                       const isSelected = selectedCp === pt.key;
-                      const errCount = cpErrors[pt.key] || 0;
+                      const cpData = cpErrors[pt.key];
+                      const errCount = cpData?.errors ?? 0;
+                      const missingCount = cpData?.missing ?? 0;
+                      const hasIssue = errCount > 0 || missingCount > 0;
                       return (
                         <button
                           key={pt.key}
@@ -1980,13 +2106,18 @@ export default function DataCorrection() {
                           className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-orange-600 border-orange-500 text-white"
-                              : errCount > 0
+                              : hasIssue
                                 ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
                                 : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
                           }`}
                         >
+                          {missingCount > 0 && (
+                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-amber-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
+                              {missingCount}
+                            </span>
+                          )}
                           {errCount > 0 && (
-                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5">
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
                               {errCount}
                             </span>
                           )}
@@ -2184,10 +2315,11 @@ function RightTable({
 
   const hasRowError = (row: any) => {
     if ((row as any).is_phantom) return false;
-    if (row.time_seconds == null) return true;
-    if (row.time_seconds > 300 || row.time_seconds < 0.05) return true;
+    const isExempt = row.special_note != null && EXEMPT_SPECIAL_NOTES.has(row.special_note);
+    if (row.time_seconds == null && !isExempt) return true;
+    if (row.time_seconds != null && (row.time_seconds > 300 || row.time_seconds < 0.05)) return true;
     if (row.accuracy != null && row.accuracy < 30) return true;
-    if (row.lane == null) return true;
+    if (row.lane == null && !isExempt) return true;
     if (row.absolute_speed != null && row.absolute_speed > 80) return true;
     if (row.speed_change != null && Math.abs(row.speed_change) > 30) return true;
     return false;
@@ -2210,8 +2342,8 @@ function RightTable({
           {cpType === "200m" && <th className="p-1.5 text-center text-muted-foreground text-[10px]">レーン</th>}
           {cpType === "straight" && (
             <>
-              <th className="p-1.5 text-right text-muted-foreground text-[10px]">速度</th>
-              <th className="p-1.5 text-right text-muted-foreground text-[10px]">変化</th>
+              <th className="p-1.5 text-right text-muted-foreground text-[10px]">推定速度</th>
+              <th className="p-1.5 text-right text-muted-foreground text-[10px]">推定速度変化</th>
               <th className="p-1.5 text-center text-muted-foreground text-[10px]">走行位置</th>
             </>
           )}

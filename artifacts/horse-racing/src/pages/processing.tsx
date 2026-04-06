@@ -174,9 +174,9 @@ function getNestedParams(raw: Record<string, any>, surfaceType: string, preset: 
 
 // ── Slider Row Component ───────────────────────────────────────────────────────
 function SliderRow({
-  label, desc, value, min, max, step, unit, onChange
+  label, desc, value, min, max, step, unit, onChange, isTurf
 }: {
-  label: string; desc?: string; value: number; min: number; max: number; step: number; unit: string; onChange: (v: number) => void;
+  label: string; desc?: string; value: number; min: number; max: number; step: number; unit: string; onChange: (v: number) => void; isTurf?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -187,12 +187,14 @@ function SliderRow({
         </div>
         <span className="text-xs font-mono text-foreground min-w-[60px] text-right">{value}{unit}</span>
       </div>
-      <Slider
-        value={[value]}
-        min={min} max={max} step={step}
-        onValueChange={(v) => onChange(v[0])}
-        className="h-4"
-      />
+      <div style={isTurf ? { "--primary": "142 70% 45%", "--primary-foreground": "0 0% 100%" } as React.CSSProperties : {}}>
+        <Slider
+          value={[value]}
+          min={min} max={max} step={step}
+          onValueChange={(v) => onChange(v[0])}
+          className="h-4"
+        />
+      </div>
     </div>
   );
 }
@@ -807,7 +809,7 @@ function AnalysisParamsPanel() {
           {/* 200m params */}
           <div className="border border-border rounded-lg bg-card p-4 space-y-4">
             <div className="text-sm font-semibold text-foreground border-b border-border pb-2">200mごとの集計パラメータ</div>
-            <SliderRow label="ポリライン検出頻度" desc="白線のポリライン検出を実行するフレーム頻度" value={params.m200.polyline_fps} min={1} max={60} step={1} unit=" fps" onChange={(v) => updateM200("polyline_fps", v)} />
+            <SliderRow label="ポリライン検出頻度" desc="白線のポリライン検出を実行するフレーム頻度" value={params.m200.polyline_fps} min={1} max={60} step={1} unit=" fps" onChange={(v) => updateM200("polyline_fps", v)} isTurf={surfaceType === "芝"} />
             <div className="flex flex-col gap-1.5">
               <div className="text-xs font-medium text-foreground">ポリライン検出解像度</div>
               <div className="text-[10px] text-muted-foreground">ポリライン検出時の解像度。高いほど精度向上</div>
@@ -818,17 +820,17 @@ function AnalysisParamsPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <SliderRow label="物体検知モデル確証度閾値" desc="馬や騎手を検出する際の確証度の最低閾値" value={params.m200.detection_confidence} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("detection_confidence", v)} />
-            <SliderRow label="ホワイトバランス調整" desc="逆光や曇り時の色温度補正" value={params.m200.white_balance} min={-100} max={100} step={1} unit="" onChange={(v) => updateM200("white_balance", v)} />
-            <SliderRow label="ガンマ補正" desc="明暗コントラスト調整（1.0が標準）" value={params.m200.gamma} min={0.1} max={3.0} step={0.1} unit="" onChange={(v) => updateM200("gamma", parseFloat(v.toFixed(1)))} />
-            <SliderRow label="彩度調整" desc="帽色検出向上のための彩度調整" value={params.m200.saturation} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("saturation", v)} />
+            <SliderRow label="物体検知モデル確証度閾値" desc="馬や騎手を検出する際の確証度の最低閾値" value={params.m200.detection_confidence} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("detection_confidence", v)} isTurf={surfaceType === "芝"} />
+            <SliderRow label="ホワイトバランス調整" desc="逆光や曇り時の色温度補正" value={params.m200.white_balance} min={-100} max={100} step={1} unit="" onChange={(v) => updateM200("white_balance", v)} isTurf={surfaceType === "芝"} />
+            <SliderRow label="ガンマ補正" desc="明暗コントラスト調整（1.0が標準）" value={params.m200.gamma} min={0.1} max={3.0} step={0.1} unit="" onChange={(v) => updateM200("gamma", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
+            <SliderRow label="彩度調整" desc="帽色検出向上のための彩度調整" value={params.m200.saturation} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("saturation", v)} isTurf={surfaceType === "芝"} />
           </div>
 
           {/* Straight general */}
           <div className="border border-border rounded-lg bg-card p-4 space-y-4">
             <div className="text-sm font-semibold text-foreground border-b border-border pb-2">最後の直線パラメータ - 一般設定</div>
-            <SliderRow label="速度集計ウィンドウ（秒）" desc="速度を平均化する時間幅" value={params.straight_general.speed_window} min={0.1} max={2.0} step={0.1} unit="s" onChange={(v) => updateSG("speed_window", parseFloat(v.toFixed(1)))} />
-            <SliderRow label="サンプリングFPS" desc="解析時のサンプリングフレームレート" value={params.straight_general.sampling_fps} min={1} max={60} step={1} unit=" fps" onChange={(v) => updateSG("sampling_fps", v)} />
+            <SliderRow label="速度集計ウィンドウ（秒）" desc="速度を平均化する時間幅" value={params.straight_general.speed_window} min={0.1} max={2.0} step={0.1} unit="s" onChange={(v) => updateSG("speed_window", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
+            <SliderRow label="サンプリングFPS" desc="解析時のサンプリングフレームレート" value={params.straight_general.sampling_fps} min={1} max={60} step={1} unit=" fps" onChange={(v) => updateSG("sampling_fps", v)} isTurf={surfaceType === "芝"} />
             <div className="flex flex-col gap-1.5">
               <div className="text-xs font-medium text-foreground">ROIプリセット</div>
               <div className="text-[10px] text-muted-foreground">関心領域の自動検出プリセット</div>
@@ -839,8 +841,8 @@ function AnalysisParamsPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <SliderRow label="左ラチ帯の幅比率" desc="" value={params.straight_general.left_rail_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("left_rail_ratio", v)} />
-            <SliderRow label="下帯の高さ比率" desc="" value={params.straight_general.bottom_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("bottom_ratio", v)} />
+            <SliderRow label="左ラチ帯の幅比率" desc="" value={params.straight_general.left_rail_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("left_rail_ratio", v)} isTurf={surfaceType === "芝"} />
+            <SliderRow label="下帯の高さ比率" desc="" value={params.straight_general.bottom_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("bottom_ratio", v)} isTurf={surfaceType === "芝"} />
             <div className="flex flex-col gap-1.5">
               <div className="text-xs font-medium text-foreground">直線距離のコース種別</div>
               <Select value={params.straight_general.course_type} onValueChange={(v) => updateSG("course_type", v)}>
@@ -865,12 +867,12 @@ function AnalysisParamsPanel() {
             {advancedOpen && (
               <div className="px-4 pb-4 space-y-4 border-t border-border">
                 <div className="pt-4" />
-                <SliderRow label="前景マスク倍率" desc="" value={params.straight_advanced.front_mask_scale} min={0.5} max={3.0} step={0.1} unit="x" onChange={(v) => updateSA("front_mask_scale", parseFloat(v.toFixed(1)))} />
-                <SliderRow label="有効画素率" desc="" value={params.straight_advanced.valid_frame_rate} min={0} max={100} step={1} unit="%" onChange={(v) => updateSA("valid_frame_rate", v)} />
-                <SliderRow label="フローMAD" desc="" value={params.straight_advanced.flow_mad} min={0} max={10} step={0.1} unit="" onChange={(v) => updateSA("flow_mad", parseFloat(v.toFixed(1)))} />
-                <SliderRow label="加減速判定しきい値" desc="" value={params.straight_advanced.accel_threshold} min={0} max={2.0} step={0.1} unit="" onChange={(v) => updateSA("accel_threshold", parseFloat(v.toFixed(1)))} />
-                <SliderRow label="標検出更新間隔" desc="" value={params.straight_advanced.lane_update_interval} min={1} max={60} step={1} unit="f" onChange={(v) => updateSA("lane_update_interval", v)} />
-                <SliderRow label="信頼度閾値" desc="" value={params.straight_advanced.confidence_threshold} min={0} max={100} step={1} unit="%" onChange={(v) => updateSA("confidence_threshold", v)} />
+                <SliderRow label="前景マスク倍率" desc="" value={params.straight_advanced.front_mask_scale} min={0.5} max={3.0} step={0.1} unit="x" onChange={(v) => updateSA("front_mask_scale", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
+                <SliderRow label="有効画素率" desc="" value={params.straight_advanced.valid_frame_rate} min={0} max={100} step={1} unit="%" onChange={(v) => updateSA("valid_frame_rate", v)} isTurf={surfaceType === "芝"} />
+                <SliderRow label="フローMAD" desc="" value={params.straight_advanced.flow_mad} min={0} max={10} step={0.1} unit="" onChange={(v) => updateSA("flow_mad", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
+                <SliderRow label="加減速判定しきい値" desc="" value={params.straight_advanced.accel_threshold} min={0} max={2.0} step={0.1} unit="" onChange={(v) => updateSA("accel_threshold", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
+                <SliderRow label="標検出更新間隔" desc="" value={params.straight_advanced.lane_update_interval} min={1} max={60} step={1} unit="f" onChange={(v) => updateSA("lane_update_interval", v)} isTurf={surfaceType === "芝"} />
+                <SliderRow label="信頼度閾値" desc="" value={params.straight_advanced.confidence_threshold} min={0} max={100} step={1} unit="%" onChange={(v) => updateSA("confidence_threshold", v)} isTurf={surfaceType === "芝"} />
                 <div className="flex flex-col gap-1.5">
                   <div className="text-xs font-medium text-foreground">最大フレームサイズ</div>
                   <Select value={params.straight_advanced.max_frame_size} onValueChange={(v) => updateSA("max_frame_size", v)}>
@@ -902,7 +904,7 @@ function AnalysisParamsPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <SliderRow label="解析フレームレート" desc="解析時のフレームレート。高いほど精度が向上するが処理時間が増加。" value={params.other.analysis_fps} min={1} max={120} step={1} unit=" fps" onChange={(v) => updateOther("analysis_fps", v)} />
+            <SliderRow label="解析フレームレート" desc="解析時のフレームレート。高いほど精度が向上するが処理時間が増加。" value={params.other.analysis_fps} min={1} max={120} step={1} unit=" fps" onChange={(v) => updateOther("analysis_fps", v)} isTurf={surfaceType === "芝"} />
           </div>
 
           <div className="border border-border rounded-lg bg-card p-4 space-y-4">
@@ -917,7 +919,7 @@ function AnalysisParamsPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <SliderRow label="ノイズ除去レベル" desc="映像のノイズを除去するレベル。高すぎると細部が失われる可能性。" value={params.other.noise_reduction} min={0} max={100} step={1} unit="%" onChange={(v) => updateOther("noise_reduction", v)} />
+            <SliderRow label="ノイズ除去レベル" desc="映像のノイズを除去するレベル。高すぎると細部が失われる可能性。" value={params.other.noise_reduction} min={0} max={100} step={1} unit="%" onChange={(v) => updateOther("noise_reduction", v)} isTurf={surfaceType === "芝"} />
           </div>
 
           <div className="h-4" />

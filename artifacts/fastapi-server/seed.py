@@ -65,7 +65,7 @@ def seed():
         ("川崎", "地方競馬", 1, "3歳未勝利", "ダート", 1400, "左回り", "晴", "良", "15:30", "未処理", "未完了", "未", None),
     ]
 
-    # ── 4/5 races (new — 12 Tokyo + 12 Kyoto) ──
+    # ── 4/5 races (12 Tokyo + 12 Kyoto) ──
     race_date_2 = "2026-04-05"
     race_names_pool = [
         "3歳未勝利", "3歳1勝クラス", "4歳未勝利", "4歳1勝クラス",
@@ -133,6 +133,9 @@ def seed():
     colors = ["黒", "鹿", "青鹿", "芦", "栗", "白"]
     jockeys = ["川田将雅", "武豊", "戸崎圭太", "横山武史", "松山弘平", "福永祐一"]
 
+    # Realistic JRA margin values (in horse lengths)
+    MARGINS = [None, 0.1, 0.3, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 3.5, 5.0, 7.0]
+
     def upsert_races(race_date, races_list):
         race_ids = []
         race_is_new = []
@@ -170,67 +173,94 @@ def seed():
     race_ids_04, race_new_04 = upsert_races(race_date_1, races_0404)
     race_ids_05, race_new_05 = upsert_races(race_date_2, races_0405)
 
+    EXEMPT_NOTES = ["映像見切れ", "確認困難", "他馬と重複", "落馬", "失格"]
+
     def seed_entries_and_orders(race_ids, race_is_new, race_date, inject_bad_data=False):
-        analysis_complete_indices = []
         for i, (rid, is_new) in enumerate(zip(race_ids, race_is_new)):
             if not is_new:
-                analysis_complete_indices.append(i)
                 continue
+
+            # Track gate numbers per horse_number for this race
+            entry_gate_numbers = {}  # horse_number -> gate_number
 
             for hn in range(1, 15):
                 eid = str(uuid.uuid4())
                 gn = ((hn - 1) // 2) + 1
+                entry_gate_numbers[hn] = gn
                 name = horse_names[(hn - 1) % len(horse_names)]
                 last3f = round(33.5 + (hn * 0.15), 1)
                 ftime = round(88.0 + (hn * 0.3), 1)
+                margin_val = MARGINS[hn - 1] if hn <= len(MARGINS) else round((hn - 1) * 0.5, 1)
                 color = colors[hn % len(colors)]
                 jockey = jockeys[hn % len(jockeys)]
                 cur.execute(
                     """INSERT INTO race_entries (id, race_id, horse_number, gate_number, horse_name,
-                       jockey_name, last_3f, finish_time, finish_position, color, lane)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (eid, rid, hn, gn, name, jockey, last3f, ftime, hn, color, "中"),
+                       jockey_name, last_3f, finish_time, finish_position, margin, color, lane)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (eid, rid, hn, gn, name, jockey, last3f, ftime, hn, margin_val, color, "中"),
                 )
 
-            checkpoints = ["200m", "400m", "600m", "800m", "1000m", "1200m", "1400m", "ゴール"]
-            for cp_idx, cp in enumerate(checkpoints[:6]):
+            checkpoints = ["200m", "400m", "600m", "800m", "1000m", "1200m"]
+            for cp_idx, cp in enumerate(checkpoints):
+                # Pre-determine bad horses for this checkpoint
+                phantom_horses = set()      # horses that will be missing (no row)
+                error_horses = {}           # horse_number -> error_type
+
+                if inject_bad_data:
+                    rnd_local = random.Random(hash(f"bad{rid}{cp_idx}") & 0x7FFFFFFF)
+                    # ~65% of checkpoints get some issues, 1-4 total bad horses
+                    if rnd_local.random() < 0.65:
+                        total_bad = rnd_local.randint(1, 4)
+                        all_horse_nums = list(range(1, 15))
+                        rnd_local.shuffle(all_horse_nums)
+                        bad_horse_list = all_horse_nums[:total_bad]
+
+                        # Split: roughly half phantom (missing), half error data
+                        n_phantom = rnd_local.randint(0, min(2, len(bad_horse_list)))
+                        for j, bhn in enumerate(bad_horse_list):
+                            if j < n_phantom:
+                                phantom_horses.add(bhn)
+                            else:
+                                # Error type: 0=gate mismatch, 1=time >1min off, 2=speed<30, 3=speed>80
+                                error_horses[bhn] = rnd_local.randint(0, 3)
+
                 for pos in range(1, 15):
                     horse_idx = (pos + i) % 14
                     hn = horse_idx + 1
-                    gn = (horse_idx // 2) + 1
+
+                    # Skip phantom horses — they'll appear as missing rows in the UI
+                    if hn in phantom_horses:
+                        continue
+
+                    correct_gn = entry_gate_numbers[hn]
+                    gn = correct_gn
                     name = horse_names[horse_idx]
                     color = colors[horse_idx % len(colors)]
                     acc = max(60, 100 - (pos * 2) - (i * 3))
-
                     time_val = round(12.0 + (pos * 0.2), 2)
                     lane_val = "中"
                     speed_val = None
                     speed_change_val = None
                     special = None
 
-                    if inject_bad_data:
-                        if i in (0, 1, 6, 11) and cp_idx in (1, 3):
-                            if pos == 3:
-                                time_val = None
-                                acc = None
-                            if pos == 7:
-                                time_val = 999.99
-                                acc = 15
-                            if pos == 10:
-                                lane_val = None
-                                acc = 30
-                        if i in (2, 7) and cp_idx in (0, 2, 4):
-                            if pos == 5:
-                                time_val = None
-                                acc = None
-                                special = "確認困難"
-                            if pos == 8:
-                                time_val = 0.01
-                                acc = 10
-                            if pos == 12:
-                                speed_val = 99.9
-                                speed_change_val = 50.0
-                                acc = 20
+                    if hn in error_horses:
+                        err_type = error_horses[hn]
+                        if err_type == 0:
+                            # Gate number mismatch (帽色 differs from 枠)
+                            gn = (correct_gn % 8) + 1   # shift to different gate
+                            acc = max(40, acc - 20)
+                        elif err_type == 1:
+                            # Passing time > 1 minute off from peers
+                            time_val = round(time_val + 75.0, 2)
+                            acc = max(20, acc - 30)
+                        elif err_type == 2:
+                            # Speed too slow (< 30 km/h)
+                            speed_val = round(random.uniform(10.0, 27.0), 1)
+                            acc = max(25, acc - 35)
+                        else:
+                            # Speed too fast (> 80 km/h)
+                            speed_val = round(random.uniform(82.0, 96.0), 1)
+                            acc = max(25, acc - 35)
 
                     po_id = str(uuid.uuid4())
                     cur.execute(
@@ -241,7 +271,6 @@ def seed():
                         (po_id, rid, cp, hn, name, gn, color, lane_val, time_val, acc, pos, False,
                          speed_val, speed_change_val, special),
                     )
-            analysis_complete_indices.append(i)
 
     seed_entries_and_orders(race_ids_04, race_new_04, race_date_1, inject_bad_data=False)
     seed_entries_and_orders(race_ids_05, race_new_05, race_date_2, inject_bad_data=True)

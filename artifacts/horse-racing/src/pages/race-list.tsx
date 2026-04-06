@@ -512,20 +512,23 @@ export default function RaceList() {
                 {row.map((card) => {
                   const count = statusCounts[card.key] || 0;
                   const isActive = statusFilter === card.key;
-                  const isHighlight = HIGHLIGHT_STATUSES.has(card.key) && count > 0;
+                  const isAlert = ALERT_STATUSES.has(card.key) && count >= 1;
+                  const isHighlight = !isAlert && HIGHLIGHT_STATUSES.has(card.key) && count > 0;
                   return (
                     <button
                       key={card.key}
                       onClick={() => setStatusFilter(isActive ? null : card.key)}
-                      className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
+                      className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-all cursor-pointer ${
                         isActive
-                          ? "bg-primary/20 border-primary"
-                          : isHighlight
-                            ? "bg-red-950/60 border-red-700 hover:border-red-500 hover:bg-red-900/40 animate-pulse-subtle"
-                            : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
+                          ? "bg-primary/20 border-primary ring-1 ring-primary/40"
+                          : isAlert
+                            ? "bg-red-950/80 border-red-600 hover:border-red-400 hover:bg-red-900/60 shadow-[0_0_8px_rgba(239,68,68,0.35)] animate-pulse-subtle"
+                            : isHighlight
+                              ? "bg-zinc-800/60 border-zinc-600 hover:border-zinc-400"
+                              : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
                       }`}
                     >
-                      <span className={`text-[11px] whitespace-nowrap ${isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
+                      <span className={`text-[11px] whitespace-nowrap ${isAlert ? "text-red-200 font-semibold" : isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
                       <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
                     </button>
                   );

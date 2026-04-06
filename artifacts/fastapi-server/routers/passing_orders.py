@@ -9,6 +9,8 @@ RETURN_COLS = """id, race_id, checkpoint, horse_number, horse_name, gate_number,
                  is_corrected, original_position, special_note,
                  running_position, absolute_speed::float, speed_change::float"""
 
+EXEMPT_NOTES = ('映像見切れ', '確認困難', '他馬と重複', '落馬', '失格')
+
 
 @router.get("/races/{race_id}/passing-orders")
 def get_passing_orders(race_id: str, checkpoint: Optional[str] = Query(None)):
@@ -34,21 +36,46 @@ def get_passing_orders(race_id: str, checkpoint: Optional[str] = Query(None)):
 def get_checkpoint_errors(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
+
+        # Total entry count for this race
+        cur.execute("SELECT COUNT(*) AS total FROM race_entries WHERE race_id = %s", (race_id,))
+        total_entries = cur.fetchone()["total"]
+
+        # Error and present count per checkpoint
+        # Errors: exempt rows with special_note in exempt list from error conditions
         cur.execute(
-            """SELECT checkpoint, COUNT(*) FILTER (
-                WHERE time_seconds IS NULL
-                   OR time_seconds > 300
-                   OR time_seconds < 0.05
-                   OR accuracy IS NOT NULL AND accuracy < 30
-                   OR lane IS NULL
-                   OR (absolute_speed IS NOT NULL AND absolute_speed > 80)
-               ) AS error_count
-               FROM passing_orders
-               WHERE race_id = %s
-               GROUP BY checkpoint""",
-            (race_id,),
+            """SELECT
+                 po.checkpoint,
+                 COUNT(*) AS present_count,
+                 COUNT(*) FILTER (
+                   WHERE po.special_note NOT IN %s
+                     AND (
+                       po.time_seconds IS NULL
+                       OR po.time_seconds > 300
+                       OR po.time_seconds < 0.05
+                       OR (po.accuracy IS NOT NULL AND po.accuracy < 30)
+                       OR po.lane IS NULL
+                       OR (po.absolute_speed IS NOT NULL AND po.absolute_speed > 80)
+                       OR (po.absolute_speed IS NOT NULL AND po.absolute_speed < 30)
+                       OR (re.gate_number IS NOT NULL AND po.gate_number != re.gate_number)
+                     )
+                 ) AS error_count
+               FROM passing_orders po
+               LEFT JOIN race_entries re
+                 ON re.race_id = po.race_id AND re.horse_number = po.horse_number
+               WHERE po.race_id = %s
+               GROUP BY po.checkpoint""",
+            (EXEMPT_NOTES, race_id),
         )
-        return {r["checkpoint"]: r["error_count"] for r in cur.fetchall()}
+        rows = cur.fetchall()
+        result = {}
+        for r in rows:
+            missing = max(0, total_entries - r["present_count"])
+            result[r["checkpoint"]] = {
+                "errors": r["error_count"],
+                "missing": missing,
+            }
+        return result
 
 
 @router.patch("/passing-orders/{id}")
