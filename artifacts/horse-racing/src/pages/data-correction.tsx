@@ -2391,6 +2391,7 @@ function RightTable({
   const hasRowError = (row: any) => {
     if ((row as any).is_phantom) return false;
     const isExempt = row.special_note != null && EXEMPT_SPECIAL_NOTES.has(row.special_note);
+    if (row.horse_number == null) return true;
     if (row.time_seconds == null && !isExempt) return true;
     if (row.time_seconds != null && (row.time_seconds > 300 || row.time_seconds < 0.05)) return true;
     if (row.accuracy != null && row.accuracy < 30) return true;
@@ -2451,7 +2452,7 @@ function RightTable({
                 {row.position ?? <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className={`p-1.5 text-center ${isDuplicate ? "ring-1 ring-red-500 rounded" : ""}`}>
+              <td className={`p-1.5 text-center ${isDuplicate ? "ring-1 ring-red-500 rounded" : !isPhantom && hn == null ? "bg-red-900/30" : ""}`}>
                 {isCorrectionMode && !isPhantom ? (
                   <select
                     value={hn ?? ""}
@@ -2459,14 +2460,15 @@ function RightTable({
                       const v = e.target.value;
                       if (v) onEdit(row.id, "horse_number", parseInt(v, 10));
                     }}
-                    className={`bg-zinc-800 border rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground w-10 ${isDuplicate ? "border-red-500 text-red-400" : "border-zinc-600"}`}
+                    className={`bg-zinc-800 border rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground w-10 ${isDuplicate ? "border-red-500 text-red-400" : hn == null ? "border-red-500" : "border-zinc-600"}`}
                   >
+                    <option value="">-</option>
                     {Array.from({ length: numHorses }, (_, i) => (
                       <option key={i + 1} value={i + 1}>{i + 1}</option>
                     ))}
                   </select>
                 ) : (
-                  <span className={`font-mono font-bold ${isDuplicate ? "text-red-400" : ""}`}>{hn ?? "-"}</span>
+                  <span className={`font-mono font-bold ${isDuplicate ? "text-red-400" : !isPhantom && hn == null ? "text-red-400" : ""}`}>{hn ?? <span className="text-red-400 font-bold">欠損</span>}</span>
                 )}
                 {isDuplicate && <span className="text-[8px] text-red-400 block">重複</span>}
               </td>
