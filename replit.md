@@ -10,6 +10,7 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - **Frontend**: `artifacts/horse-racing` — React + Vite + Tailwind + shadcn/ui
 - **Backend**: `artifacts/fastapi-server` — Python FastAPI, psycopg2, PostgreSQL
 - **API Client**: `lib/api-client-react` — auto-generated from OpenAPI (Orval)
+- **DB Schema**: `lib/db/src/schema/` — 19 Drizzle ORM TypeScript files (UUID PKs)
 - **DB**: PostgreSQL via `DATABASE_URL`
 
 ## Key Files
@@ -21,56 +22,85 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - `artifacts/horse-racing/src/contexts/user-role.tsx` — 管理者/一般ユーザー role context
 - `artifacts/fastapi-server/main.py` — FastAPI app + router mounts
 - `artifacts/fastapi-server/routers/` — races, entries, passing_orders, history, batch_jobs, analysis
-- `artifacts/fastapi-server/seed.py` — DB seed (run with `python seed.py`)
+- `artifacts/fastapi-server/seed.py` — DB seed for new 19-table schema (run with `python seed.py`)
+- `lib/db/migrations/create_new_schema.sql` — Raw SQL used to create all 19 tables
 
-## DB Tables
+## DB Tables (19-table schema, all UUID PKs)
 
-- `races` — Race master (includes `locked_by`, `locked_at`, `reanalysis_reason`, `reanalysis_comment`, `correction_request_comment`)
-- `race_entries` — Horse entries per race (includes `furlong_splits float[]`, `horse_name`)
-- `passing_orders` — Per-checkpoint analysis results (includes `special_note`, `running_position`, `absolute_speed`, `speed_change`)
-- `correction_history` — Correction audit log
-- `batch_jobs`, `analysis_params`, `venues`
+### Core hierarchy
+- `race_category` — JRA / LOCAL
+- `race_event` — 開催 (date × venue × round). FK → race_category
+- `race` — Race. English status codes. FK → race_event, users. Soft FK to analysis_result_header & correction_session
+- `race_video` — GCS video metadata. FK → race
+- `race_status_history` — Status transition audit trail. FK → race, users
 
-## FastAPI Routes (all prefixed `/fastapi`)
+### Analysis pipeline
+- `analysis_job` — Analysis queue job. FK → race_video
+- `analysis_result_header` — Per-job result header. FK → analysis_job, race
+- `analysis_result_detail` — Per-checkpoint detail rows. FK → analysis_result_header
+  - Includes both spec fields (time_sec, marker_type, class_name, course_position, rank, race_time, corrected_time, data_type, speed_kmh) AND passing_orders compat fields (horse_number, horse_name, gate_number, color, lane, accuracy, position, is_corrected, original_position, absolute_speed, speed_change, running_position, special_note)
 
-- `GET /races` — list races (filter by date, venue, race_type); auto-releases locks >30min
+### Official data (JRA BigQuery stubs)
+- `jra_race_reference` — JRA official race reference
+- `official_horse_reference` — JRA official horse data
+- `official_horse_furlong_time` — Official 200m split times. FK → official_horse_reference
+
+### Matching & linkage
+- `race_linkage_result` — Analysis↔official linkage result (SUCCESS/FAILED). FK → race
+
+### Correction workflow
+- `correction_session` — Who is correcting which race/analysis. FK → race, users
+- `correction_result` — Versioned correction data snapshots. FK → correction_session, users
+
+### Presets & masters
+- `venue_weather_preset` — Analysis parameter presets by venue×weather×surface
+- `correction_memo_master` — Special note dropdown options (~10 items)
+
+### Infra
+- `users` — App users. external_subject_id (IdP sub). UUID PK
+- `audit_log` — Operation audit log. FK → users
+- `csv_export_job` — CSV export jobs. FK → race_event, users
+
+## English Status Codes (race.status)
+
+| Code | Display (JP) | Note |
+|---|---|---|
+| PENDING | 未処理/未解析 | 未処理=video INCOMPLETE; 未解析=video COMPLETED |
+| REANALYZING | 再解析要請 | Reanalysis requested/queued |
+| ANALYZING | 解析中 | Analysis job running |
+| ANALYSIS_FAILED | 解析失敗 | Analysis job failed |
+| ANALYZED | 待機中 | Analysis complete, not corrected |
+| MATCH_FAILED | 突合失敗 | Official data linkage failed |
+| CORRECTING | 補正中/再補正中 | 再補正中 if prev status was CONFIRMED |
+| CORRECTED | レビュー待ち | Correction complete, pending review |
+| REVISION_REQUESTED | 修正要請 | Admin rejected, needs correction |
+| CONFIRMED | データ確定 | Confirmed/finalized |
+
+## FastAPI Routes (all prefixed `/fastapi`) — PENDING migration to new schema (Task #5)
+
+- `GET /races` — list races (filter by date, venue, race_type)
 - `GET /races/latest-date` — latest race date
 - `GET /races/summary` — status summary counts
-- `GET /races/{id}` — single race; auto-releases locks >30min
-- `PATCH /races/{id}` — update race fields (status, assigned_user, video_status)
-- `GET /races/{id}/entries` — horse entries with furlong_splits
+- `GET /races/{id}` — single race
+- `PATCH /races/{id}` — update race fields
+- `GET /races/{id}/entries` — horse entries
 - `GET /races/{id}/passing-orders?checkpoint=` — analysis results
-- `GET /races/{id}/available-analysis` — available analysis data for bind (same date/venue, analysis_status=完了)
+- `GET /races/{id}/available-analysis` — available analysis for bind
 - `GET /races/{id}/history` — correction history
 - `POST /races/{id}/history` — add history entry
-- `PATCH /passing-orders/{id}` — update passing order (horse_number, lane, special_note, running_position)
-- `POST /races/{id}/corrections/start` — lock race, set status=補正中 (with user_name)
-- `POST /races/{id}/corrections/complete` — unlock, set status=レビュー待ち
-- `POST /races/{id}/corrections/temp-save` — temp save (optionally exit editing)
-- `POST /races/{id}/corrections/cancel` — unlock, set status=待機中
+- `PATCH /passing-orders/{id}` — update passing order
+- `POST /races/{id}/corrections/start` — start correction session
+- `POST /races/{id}/corrections/complete` — complete correction
+- `POST /races/{id}/corrections/temp-save` — temp save
+- `POST /races/{id}/corrections/cancel` — cancel correction
 - `POST /races/{id}/force-unlock` — admin force unlock
-- `POST /races/{id}/reanalysis-request` — set status=再解析要請 (with reason/comment)
-- `POST /races/{id}/matching-failure` — set status=突合失敗
-- `POST /races/{id}/correction-request` — admin set status=修正要請 (with comment)
-- `POST /races/{id}/confirm` — admin set status=データ確定
-- `POST /races/{id}/bind-analysis` — re-bind analysis data for 突合失敗 races
+- `POST /races/{id}/reanalysis-request` — request reanalysis
+- `POST /races/{id}/matching-failure` — flag match failure
+- `POST /races/{id}/correction-request` — admin correction request
+- `POST /races/{id}/confirm` — admin confirm race
+- `POST /races/{id}/bind-analysis` — re-bind analysis data
 - `POST /races/{id}/reanalyze` — trigger re-analysis
 - `PATCH /races/batch-status` — bulk status update
-
-## Status Workflow
-
-- 待機中 → 補正中(ロック) → レビュー待ち → データ確定
-- Special statuses: 再解析要請, 突合失敗, 修正要請
-- video_status≠完了 → 未処理
-- analysis_status drives: 未解析/解析中/再解析中/解析失敗/突合失敗
-- analysis_status=完了 uses status field for: 待機中/補正中/レビュー待ち/データ確定/修正要請/再解析要請
-
-## Locking
-
-- `locked_by` = user who started correction; `locked_at` = timestamp
-- Auto-unlock after 30 minutes (checked on GET /races and GET /races/{id})
-- Admin can force-unlock any race
-- Non-owner sees "○○が編集中" message
 
 ## Data Correction Page Dialogs
 
@@ -90,11 +120,6 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - 突合失敗: 解析データ再紐付け (admin only)
 - 修正要請: 補正再開 (corrector)
 
-## Validation
-
-- Duplicate horse numbers: red row highlighting in RightTable, blocks save
-- 馬名 column displayed in RightTable (between 帽色 and 通過タイム, from entries lookup)
-
 ## User Roles
 
 - 管理者: full access (all buttons, 処理管理, checkboxes, データ確定, 修正要請, 強制ロック解除)
@@ -105,8 +130,10 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 
 - `lib/api-client-react/dist/` is gitignored — rebuild with `cd lib/api-client-react && npx tsc -p tsconfig.json` after codegen
 - All FastAPI routes use `APIRouter(prefix="/fastapi")`
-- DB schema changes: use `psql "$DATABASE_URL" -c "ALTER TABLE..."` directly (drizzle-kit push hangs)
+- DB schema changes: use `psql "$DATABASE_URL" -f <sql_file>` directly (drizzle-kit push requires interactive input for new tables alongside old ones)
 - Dark theme: `class="dark"` on `<html>` in `index.html`
 - Orange primary: hsl(20 90% 56%)
 - Sidebar defaults collapsed; top header bar has role switcher (デモ用)
 - `handleRestore` is a stub (toast only) — backend restore endpoint not yet implemented
+- correction_request_comment / reanalysis_reason / reanalysis_comment → now stored in race_status_history.metadata
+- locked_by / locked_at / assigned_user → now modeled via correction_session + corrected_by on race
