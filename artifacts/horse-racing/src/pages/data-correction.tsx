@@ -6,7 +6,7 @@ import {
   ArrowLeft, Play, Pause, ChevronFirst, ChevronLast,
   History, CheckCircle2, Save, Clock, Minus, Plus, Ruler,
   ChevronLeft, ChevronRight, Trash2, RefreshCw, Square,
-  MousePointer2,
+  MousePointer2, AlertTriangle, X,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -672,7 +672,7 @@ function CorrectionRequestDialog({
 // ── Bind Analysis Dialog (解析データ再紐付け) ─────────────────────────────────
 interface AnalysisDataItem {
   id: string; label: string; date: string; venue: string; race_number: number;
-  distance: number; surface_type: string;
+  distance: number; surface_type: string; same_venue: boolean; mismatch: boolean;
 }
 
 function BindAnalysisDialog({
@@ -684,6 +684,7 @@ function BindAnalysisDialog({
   const [items, setItems] = useState<AnalysisDataItem[]>([]);
   const [fetching, setFetching] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [mismatchAlert, setMismatchAlert] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/races/${raceId}/available-analysis`)
@@ -692,42 +693,84 @@ function BindAnalysisDialog({
       .catch(() => setFetching(false));
   }, [raceId]);
 
+  // Group items by venue: same_venue first, then others
+  const sameVenueItems = items.filter((i) => i.same_venue);
+  const otherVenueItems = items.filter((i) => !i.same_venue);
+
+  const handleSelect = (item: AnalysisDataItem) => {
+    if (item.mismatch) {
+      setMismatchAlert(true);
+      return;
+    }
+    setMismatchAlert(false);
+    setSelectedId(item.id);
+  };
+
+  const renderItem = (item: AnalysisDataItem) => (
+    <button
+      key={item.id}
+      onClick={() => handleSelect(item)}
+      className={`w-full text-left px-3 py-2.5 rounded border transition-colors ${
+        item.mismatch
+          ? "bg-zinc-900/60 border-amber-800/60 text-zinc-500 cursor-not-allowed"
+          : selectedId === item.id
+            ? "bg-indigo-900/30 border-indigo-500 text-indigo-300 cursor-pointer"
+            : "bg-zinc-800/60 border-zinc-700 text-zinc-300 hover:border-zinc-500 cursor-pointer"
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {item.mismatch && (
+            <span className="text-[9px] bg-amber-800/50 text-amber-400 border border-amber-700/50 rounded px-1 py-0.5">対象不一致</span>
+          )}
+          <span className="text-xs font-semibold">{item.venue} {item.race_number}R</span>
+          <span className="text-[10px] text-zinc-400">{item.surface_type} {item.distance}m</span>
+        </div>
+        <span className="text-[10px] text-zinc-500">{item.date}</span>
+      </div>
+      <div className="text-[10px] text-zinc-400 mt-0.5">{item.label}</div>
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[560px] max-w-[95vw] flex flex-col max-h-[70vh]">
         <div className="p-4 border-b border-zinc-700">
           <h2 className="text-sm font-semibold mb-1">解析データ再紐付け</h2>
           <p className="text-xs text-muted-foreground">対象: {raceName}</p>
-          <p className="text-xs text-zinc-500 mt-1">正しい解析データ（動画＋解析情報セット）を選択してください</p>
+          <p className="text-xs text-zinc-500 mt-1">同日の解析済みデータから正しい解析データを選択してください</p>
         </div>
-        <div className="flex-1 overflow-auto p-2">
+        {mismatchAlert && (
+          <div className="flex items-start gap-2 mx-4 mt-3 bg-amber-950/40 border border-amber-800/50 rounded-md p-2.5">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
+            <p className="text-xs text-amber-300 leading-relaxed">
+              選択した解析データはレースの対象（コース種別・距離）が異なるため選択できません。
+            </p>
+            <button onClick={() => setMismatchAlert(false)} className="ml-auto text-zinc-500 hover:text-zinc-300 cursor-pointer">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+        <div className="flex-1 overflow-auto p-2 space-y-3">
           {fetching ? (
             <div className="p-4 space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
           ) : items.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">利用可能な解析データがありません</div>
           ) : (
-            <div className="space-y-1.5">
-              {items.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setSelectedId(item.id)}
-                  className={`w-full text-left px-3 py-2.5 rounded border transition-colors cursor-pointer ${
-                    selectedId === item.id
-                      ? "bg-indigo-900/30 border-indigo-500 text-indigo-300"
-                      : "bg-zinc-800/60 border-zinc-700 text-zinc-300 hover:border-zinc-500"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold">{item.venue} {item.race_number}R</span>
-                      <span className="text-[10px] text-zinc-400">{item.surface_type} {item.distance}m</span>
-                    </div>
-                    <span className="text-[10px] text-zinc-500">{item.date}</span>
-                  </div>
-                  <div className="text-[10px] text-zinc-400 mt-0.5">{item.label}</div>
-                </button>
-              ))}
-            </div>
+            <>
+              {sameVenueItems.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-medium text-muted-foreground px-1 pb-1.5">同一競馬場</div>
+                  <div className="space-y-1.5">{sameVenueItems.map(renderItem)}</div>
+                </div>
+              )}
+              {otherVenueItems.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-medium text-muted-foreground px-1 pb-1.5">他競馬場（同日）</div>
+                  <div className="space-y-1.5">{otherVenueItems.map(renderItem)}</div>
+                </div>
+              )}
+            </>
           )}
         </div>
         <div className="flex gap-2 justify-end p-4 border-t border-zinc-700">
@@ -1417,20 +1460,35 @@ export default function DataCorrection() {
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setConfirmDialog("save")}>
                 <Save className="h-3 w-3" />一時保存
               </Button>
-              <Button
-                size="sm"
-                className="h-7 text-xs gap-1.5 bg-green-700 hover:bg-green-600 text-white border-0 cursor-pointer"
-                onClick={() => {
-                  if (hasDuplicateHorseNumbers) {
-                    toast({ title: "馬番の重複があります", description: "同一地点に同じ馬番が存在します。解消してから完了してください。", variant: "destructive" });
-                    return;
-                  }
-                  setConfirmDialog("complete");
-                }}
-                disabled={completeCorrectionMut.isPending}
-              >
-                <CheckCircle2 className="h-3 w-3" />補正完了
-              </Button>
+              {(() => {
+                const totalCpErrors = Object.values(cpErrors).reduce((s, n) => s + n, 0);
+                const hasErrors = totalCpErrors > 0;
+                return (
+                  <Button
+                    size="sm"
+                    className={`h-7 text-xs gap-1.5 text-white border-0 cursor-pointer ${hasErrors ? "bg-zinc-600 opacity-50 cursor-not-allowed" : "bg-green-700 hover:bg-green-600"}`}
+                    onClick={() => {
+                      if (hasErrors) {
+                        toast({ title: `データエラーがあります（${totalCpErrors}件）`, description: "チェックポイントのエラーをすべて解消してから補正完了できます。", variant: "destructive" });
+                        return;
+                      }
+                      if (hasDuplicateHorseNumbers) {
+                        toast({ title: "馬番の重複があります", description: "同一地点に同じ馬番が存在します。解消してから完了してください。", variant: "destructive" });
+                        return;
+                      }
+                      setConfirmDialog("complete");
+                    }}
+                    disabled={completeCorrectionMut.isPending}
+                  >
+                    <CheckCircle2 className="h-3 w-3" />補正完了
+                    {Object.values(cpErrors).reduce((s, n) => s + n, 0) > 0 && (
+                      <span className="ml-1 bg-red-500 text-white rounded-full text-[9px] px-1 min-w-[16px] text-center">
+                        {Object.values(cpErrors).reduce((s, n) => s + n, 0)}
+                      </span>
+                    )}
+                  </Button>
+                );
+              })()}
               <Button
                 variant="ghost" size="sm"
                 className="h-7 text-xs cursor-pointer text-muted-foreground hover:text-foreground"
@@ -2215,7 +2273,31 @@ function RightTable({
                 ) : <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className="p-1.5 text-center"><CapCircle gate={gn} /></td>
+              <td className="p-1.5 text-center">
+                {isCorrectionMode && !isPhantom ? (
+                  <select
+                    value={gn ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v) onEdit(row.id, "gate_number", parseInt(v, 10));
+                    }}
+                    className="text-[10px] rounded border border-zinc-600 cursor-pointer px-0.5 py-0.5"
+                    style={{
+                      backgroundColor: gn != null ? CAP_COLORS[gn]?.bg : "#333",
+                      color: gn != null ? CAP_COLORS[gn]?.text : "#fff",
+                      minWidth: "36px",
+                    }}
+                  >
+                    {Object.entries(CAP_COLORS).map(([k, c]) => (
+                      <option key={k} value={k} style={{ backgroundColor: c.bg, color: c.text }}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <CapCircle gate={gn} />
+                )}
+              </td>
 
               <td className="p-1.5 text-left text-[10px] text-zinc-200 max-w-[80px] truncate" title={horseName ?? ""}>
                 {horseName ?? <span className="text-zinc-600">-</span>}

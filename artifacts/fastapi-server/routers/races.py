@@ -140,22 +140,23 @@ def get_race(race_id: str):
 def get_available_analysis(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT race_date, venue, distance, surface_type FROM races WHERE id = %s", (race_id,))
+        cur.execute("SELECT race_date, venue, distance, surface_type, race_number FROM races WHERE id = %s", (race_id,))
         target = cur.fetchone()
         if not target:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
             """SELECT id, race_date::text AS date, venue, race_number, race_name,
-                      distance, surface_type
+                      distance, surface_type, analysis_status
                FROM races
                WHERE id != %s
                  AND race_date = %s
-                 AND venue = %s
                  AND analysis_status = '完了'
-               ORDER BY race_number""",
-            (race_id, target["race_date"], target["venue"]),
+               ORDER BY venue, race_number""",
+            (race_id, target["race_date"]),
         )
         rows = cur.fetchall()
+        target_surface = target["surface_type"]
+        target_distance = target["distance"]
         return [
             {
                 "id": r["id"],
@@ -165,9 +166,30 @@ def get_available_analysis(race_id: str):
                 "race_number": r["race_number"],
                 "distance": r["distance"],
                 "surface_type": r["surface_type"],
+                "same_venue": r["venue"] == target["venue"],
+                "mismatch": (r["surface_type"] != target_surface) or (abs(r["distance"] - target_distance) > 400),
             }
             for r in rows
         ]
+
+
+@router.post("/races/{race_id}/complete-analysis")
+def complete_analysis(race_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT id, analysis_status FROM races WHERE id = %s", (race_id,))
+        race = cur.fetchone()
+        if not race:
+            raise HTTPException(status_code=404, detail="Race not found")
+        if race["analysis_status"] not in ("解析中", "再解析中"):
+            raise HTTPException(status_code=400, detail="Race is not in analyzing state")
+        cur.execute(
+            """UPDATE races SET analysis_status = '完了', status = '待機中', updated_at = NOW()
+               WHERE id = %s""",
+            (race_id,),
+        )
+        conn.commit()
+        return {"ok": True}
 
 
 @router.patch("/races/{race_id}")

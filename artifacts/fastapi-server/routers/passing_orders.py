@@ -64,7 +64,7 @@ def update_passing_order(id: str, body: dict):
             raise HTTPException(status_code=404, detail="Passing order not found")
 
         allowed = {"position", "lane", "time_seconds", "horse_number",
-                   "special_note", "running_position"}
+                   "special_note", "running_position", "gate_number", "color"}
         updates = {k: v for k, v in body.items() if k in allowed}
 
         if "position" in updates and updates["position"] != existing["position"]:

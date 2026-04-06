@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
-import { Calendar, RefreshCcw, AlertTriangle, X, RotateCcw } from "lucide-react";
+import { Calendar, RefreshCcw, AlertTriangle, X, RotateCcw, Download, RefreshCw } from "lucide-react";
 import {
   useGetRaces,
   getGetRacesQueryKey,
@@ -33,15 +33,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUserRole } from "@/contexts/user-role";
+import { useToast } from "@/hooks/use-toast";
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+const API = BASE_URL + "/fastapi";
 
 // ---- Status Matrix ----
 type DerivedStatus =
   | "未処理"
   | "未解析"
   | "解析中"
-  | "再解析中"
   | "待機中"
   | "補正中"
   | "レビュー待ち"
@@ -59,7 +60,7 @@ function getDerivedStatus(race: Race): DerivedStatus {
   if (vs !== "完了") return "未処理";
   if (as_ === "未" || as_ === "") return "未解析";
   if (as_ === "解析中") return "解析中";
-  if (as_ === "再解析中") return "再解析中";
+  if (as_ === "再解析中") return "解析中";
   if (as_ === "解析失敗") {
     if (st === "再解析要請") return "再解析要請";
     return "解析失敗";
@@ -84,7 +85,6 @@ function getStatusBadgeProps(status: DerivedStatus) {
     case "未処理":       return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700", label: "未処理" };
     case "未解析":       return { className: "bg-slate-800/60 text-slate-400 border-slate-700", label: "未解析" };
     case "解析中":       return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
-    case "再解析中":     return { className: "bg-teal-900/40 text-teal-400 border-teal-800", label: "再解析中" };
     case "待機中":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "待機中" };
     case "補正中":       return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
@@ -97,9 +97,8 @@ function getStatusBadgeProps(status: DerivedStatus) {
   }
 }
 
-// Statuses where the main operation button is disabled
 const CORRECTION_DISABLED_STATUSES: DerivedStatus[] = [
-  "未処理", "未解析", "解析中", "再解析中", "解析失敗",
+  "未処理", "未解析", "解析中", "解析失敗",
 ];
 
 const SELECTABLE_STATUSES: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
@@ -131,6 +130,7 @@ function formatDateTitle(dateStr: string): string {
 }
 
 const ALERT_STATUSES: Set<DerivedStatus> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
+const HIGHLIGHT_STATUSES: Set<DerivedStatus> = new Set([...ALERT_STATUSES, "未処理"]);
 
 const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] = [
   { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400" },
@@ -144,13 +144,12 @@ const STATUS_ROW2: { key: DerivedStatus; label: string; colorClass: string }[] =
   { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400" },
   { key: "再解析要請",   label: "再解析要請",   colorClass: "text-rose-400" },
   { key: "待機中",       label: "待機中",       colorClass: "text-yellow-400" },
-  { key: "再解析中",     label: "再解析中",     colorClass: "text-teal-400" },
+  { key: "未処理",       label: "未処理",       colorClass: "text-zinc-400" },
   { key: "突合失敗",     label: "突合失敗",     colorClass: "text-red-300" },
 ];
 
 const ALL_STATUS_CARDS = [...STATUS_ROW1, ...STATUS_ROW2];
 
-// Re-analysis dialog
 interface ReanalyzeDialogProps {
   race: Race;
   onClose: () => void;
@@ -226,8 +225,41 @@ function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialo
   );
 }
 
+function downloadCSV(races: Race[], venue: string) {
+  const filtered = venue !== "all" ? races.filter((r) => r.venue === venue) : races;
+  const header = ["競馬場", "R", "出走時刻", "レース名", "芝ダ", "距離", "動画", "ステータス", "担当者", "更新時間"].join(",");
+  const rows = filtered.map((r) => {
+    const st = getDerivedStatus(r);
+    const updatedTime = r.updated_at
+      ? (() => { try { const d = new Date(r.updated_at); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; } catch { return "-"; } })()
+      : "-";
+    return [
+      r.venue,
+      `${r.race_number}R`,
+      r.start_time?.substring(0,5) || "-",
+      `"${r.race_name}"`,
+      r.surface_type,
+      `${r.distance}m`,
+      r.video_status === "完了" ? "完了" : "未完了",
+      st,
+      r.assigned_user || "-",
+      updatedTime,
+    ].join(",");
+  });
+  const csv = [header, ...rows].join("\n");
+  const bom = "\uFEFF";
+  const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `races_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function RaceList() {
   const { isAdmin } = useUserRole();
+  const { toast } = useToast();
 
   const [date, setDate] = useState("");
   const [venue, setVenue] = useState<string>("all");
@@ -236,12 +268,12 @@ export default function RaceList() {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
   const [reanalyzeRace, setReanalyzeRace] = useState<Race | null>(null);
+  const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
 
   const queryClient = useQueryClient();
 
-  // Initialize date to the most recent race date in the DB
   useEffect(() => {
-    fetch(`${BASE_URL}/fastapi/races/latest-date`)
+    fetch(`${API}/races/latest-date`)
       .then((r) => r.json())
       .then((data) => {
         if (data.date) setDate(data.date);
@@ -251,29 +283,35 @@ export default function RaceList() {
       });
   }, []);
 
+  // Always fetch all races for date+type, filter by venue client-side
   const queryParams = {
     date,
-    venue: venue !== "all" ? venue : undefined,
     race_type: raceType,
   };
 
-  const { data: races, isLoading: isRacesLoading, refetch } = useGetRaces(
+  const { data: allRaces, isLoading: isRacesLoading, refetch } = useGetRaces(
     queryParams,
     { query: { queryKey: getGetRacesQueryKey(queryParams) } }
   );
 
-  // Derive venue options from fetched races (already filtered by date + race_type)
+  // Client-side venue filter
+  const races = useMemo(() => {
+    if (!allRaces) return [];
+    if (venue === "all") return allRaces;
+    return allRaces.filter((r) => r.venue === venue);
+  }, [allRaces, venue]);
+
   const venueOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [{ value: "all", label: "全会場" }];
+    const opts: { value: string; label: string }[] = [{ value: "all", label: "すべて" }];
     const seen = new Set<string>();
-    (races || []).forEach((r) => {
+    (allRaces || []).forEach((r) => {
       if (!seen.has(r.venue)) {
         seen.add(r.venue);
         opts.push({ value: r.venue, label: r.venue });
       }
     });
     return opts;
-  }, [races]);
+  }, [allRaces]);
 
   const handleRaceTypeChange = (val: string) => {
     setRaceType(val);
@@ -288,11 +326,10 @@ export default function RaceList() {
     setStatusFilter(null);
   };
 
-  // Status counts for filter cards
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { total: 0 };
     ALL_STATUS_CARDS.forEach((c) => { counts[c.key] = 0; });
-    (races || []).forEach((race) => {
+    races.forEach((race) => {
       const ds = getDerivedStatus(race);
       counts[ds] = (counts[ds] || 0) + 1;
       counts["total"] = (counts["total"] || 0) + 1;
@@ -301,7 +338,6 @@ export default function RaceList() {
   }, [races]);
 
   const filteredRaces = useMemo(() => {
-    if (!races) return [];
     if (!statusFilter || statusFilter === "total") return races;
     return races.filter((r) => getDerivedStatus(r) === statusFilter);
   }, [races, statusFilter]);
@@ -372,6 +408,23 @@ export default function RaceList() {
     );
   };
 
+  const handleCompleteAnalysis = async (raceId: string) => {
+    setCompletingIds((prev) => new Set(prev).add(raceId));
+    try {
+      const res = await fetch(`${API}/races/${raceId}/complete-analysis`, { method: "POST" });
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
+        toast({ title: "解析完了。待機中に変更されました。" });
+      } else {
+        toast({ title: "完了処理に失敗しました", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "通信エラーが発生しました", variant: "destructive" });
+    } finally {
+      setCompletingIds((prev) => { const s = new Set(prev); s.delete(raceId); return s; });
+    }
+  };
+
   const totalCount = statusCounts["total"] || 0;
 
   return (
@@ -420,8 +473,19 @@ export default function RaceList() {
               size="icon"
               className="h-8 w-8 cursor-pointer"
               onClick={() => refetch()}
+              title="更新"
             >
               <RefreshCcw className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 cursor-pointer"
+              onClick={() => allRaces && downloadCSV(venue === "all" ? allRaces : races, venue)}
+              title="CSV出力"
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV出力
             </Button>
           </div>
         </div>
@@ -430,7 +494,6 @@ export default function RaceList() {
       {/* Status filter — 2-row grid */}
       <div className="px-6 py-3">
         <div className="flex gap-2 items-stretch">
-          {/* Total card */}
           <button
             onClick={() => setStatusFilter(statusFilter === "total" ? null : "total")}
             className={`flex flex-col items-center justify-center px-5 py-2 rounded-md border text-center transition-colors min-w-[80px] cursor-pointer ${
@@ -443,14 +506,13 @@ export default function RaceList() {
             <span className="text-2xl font-bold text-foreground mt-0.5">{totalCount}</span>
           </button>
 
-          {/* Right side: 2 rows × 5 status cards */}
           <div className="flex-1 flex flex-col gap-1.5">
             {[STATUS_ROW1, STATUS_ROW2].map((row, ri) => (
               <div key={ri} className="grid grid-cols-5 gap-1.5">
                 {row.map((card) => {
                   const count = statusCounts[card.key] || 0;
                   const isActive = statusFilter === card.key;
-                  const isAlert = ALERT_STATUSES.has(card.key) && count > 0;
+                  const isHighlight = HIGHLIGHT_STATUSES.has(card.key) && count > 0;
                   return (
                     <button
                       key={card.key}
@@ -458,12 +520,12 @@ export default function RaceList() {
                       className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
                         isActive
                           ? "bg-primary/20 border-primary"
-                          : isAlert
+                          : isHighlight
                             ? "bg-red-950/60 border-red-700 hover:border-red-500 hover:bg-red-900/40 animate-pulse-subtle"
                             : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
                       }`}
                     >
-                      <span className={`text-[11px] whitespace-nowrap ${isAlert ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
+                      <span className={`text-[11px] whitespace-nowrap ${isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
                       <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
                     </button>
                   );
@@ -520,7 +582,6 @@ export default function RaceList() {
                 <TableHead style={{ width: "4%" }} className="text-center text-xs">芝ダ</TableHead>
                 <TableHead style={{ width: "6%" }} className="text-center text-xs">距離</TableHead>
                 <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
-                {/* Checkbox column — admin only */}
                 {isAdmin && (
                   <TableHead style={{ width: "4%" }} className="text-center">
                     <Checkbox
@@ -561,11 +622,11 @@ export default function RaceList() {
                   const canSelect = isSelectable(derivedStatus);
                   const isChecked = checkedIds.has(race.id);
                   const canReanalyze = derivedStatus === "解析失敗" || derivedStatus === "再解析要請";
+                  const isAnalyzing = derivedStatus === "解析中";
+                  const isCompleting = completingIds.has(race.id);
 
-                  // Correction button disabled for non-correctable statuses
                   const correctionDisabled = CORRECTION_DISABLED_STATUSES.includes(derivedStatus);
 
-                  // Operation button label and color
                   let opLabel = "データ補正";
                   let opColorClass = "bg-red-700 hover:bg-red-600 text-white border-0";
                   if (derivedStatus === "レビュー待ち") {
@@ -576,7 +637,6 @@ export default function RaceList() {
                     opColorClass = "bg-blue-700 hover:bg-blue-600 text-white border-0";
                   }
 
-                  // Role-based: 一般ユーザー cannot use レビュー, 再補正, 再解析
                   const opActionBlocked = !isAdmin && (derivedStatus === "レビュー待ち" || derivedStatus === "データ確定");
                   const reanalyzeBlocked = !isAdmin;
 
@@ -612,7 +672,6 @@ export default function RaceList() {
                           {videoComplete ? "完了" : "未完了"}
                         </Badge>
                       </TableCell>
-                      {/* Checkbox — admin only */}
                       {isAdmin && (
                         <TableCell className="text-center">
                           {canSelect ? (
@@ -636,7 +695,6 @@ export default function RaceList() {
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
-                          {/* Main operation button */}
                           {correctionDisabled || opActionBlocked ? (
                             <Button
                               size="sm"
@@ -655,21 +713,34 @@ export default function RaceList() {
                               </Button>
                             </Link>
                           )}
-                          {/* Re-analysis button */}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className={`h-6 text-[11px] px-2 flex items-center gap-0.5 ${
-                              canReanalyze && !reanalyzeBlocked
-                                ? "border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
-                                : "opacity-30 cursor-not-allowed"
-                            }`}
-                            disabled={!canReanalyze || reanalyzeBlocked}
-                            onClick={() => canReanalyze && !reanalyzeBlocked && setReanalyzeRace(race)}
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            再解析
-                          </Button>
+                          {isAnalyzing ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 text-[11px] px-2 flex items-center gap-0.5 border-cyan-700 text-cyan-400 hover:bg-cyan-900/20 cursor-pointer"
+                              disabled={isCompleting}
+                              onClick={() => handleCompleteAnalysis(race.id)}
+                              title="解析完了にする"
+                            >
+                              <RefreshCw className={`h-3 w-3 ${isCompleting ? "animate-spin" : ""}`} />
+                              完了
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className={`h-6 text-[11px] px-2 flex items-center gap-0.5 ${
+                                canReanalyze && !reanalyzeBlocked
+                                  ? "border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
+                                  : "opacity-30 cursor-not-allowed"
+                              }`}
+                              disabled={!canReanalyze || reanalyzeBlocked}
+                              onClick={() => canReanalyze && !reanalyzeBlocked && setReanalyzeRace(race)}
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              再解析
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -681,7 +752,6 @@ export default function RaceList() {
         </div>
       </div>
 
-      {/* Re-analysis dialog */}
       {reanalyzeRace && (
         <ReanalyzeDialog
           race={reanalyzeRace}
