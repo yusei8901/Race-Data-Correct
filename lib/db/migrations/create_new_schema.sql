@@ -1,4 +1,9 @@
--- 19-table schema migration for Furlong CUBE
+-- Furlong CUBE normalized schema migration
+-- Core design: 19 tables (race_category through csv_export_job)
+-- Extended with 2 operational support tables (tables 20-21):
+--   analysis_venue_config: per-venue analysis parameters (intentional extension)
+--   batch_job: processing management batch jobs (intentional extension)
+-- Total: 21 tables
 
 -- 1. user (no FK deps)
 CREATE TABLE IF NOT EXISTS "user" (
