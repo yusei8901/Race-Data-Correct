@@ -7,7 +7,9 @@ from routers.races import get_race
 router = APIRouter(prefix="/fastapi")
 
 ERROR_FILTER = """(
-    (ard.time_sec IS NOT NULL AND (ard.time_sec > 300 OR ard.time_sec < 0.05))
+    ard.time_sec IS NULL
+    OR ard.horse_number IS NULL
+    OR (ard.time_sec IS NOT NULL AND (ard.time_sec > 300 OR ard.time_sec < 0.05))
     OR (ard.absolute_speed IS NOT NULL AND ard.absolute_speed > 80)
     OR (ard.speed_change IS NOT NULL AND ABS(ard.speed_change) > 30)
     OR (ard.accuracy IS NOT NULL AND ard.accuracy < 30)
@@ -194,15 +196,15 @@ def update_passing_order(order_id: str, body: dict):
         return fmt_detail(updated, str(race_id))
 
 
-# ── Helpers (duplicated from races.py to avoid circular import) ──────────────
+# ── Local helpers for bind-analysis (share patterns with races.py) ───────────
 
-def _get_sys_user(cur) -> Optional[str]:
+def _get_sys_user_ar(cur) -> Optional[str]:
     cur.execute('SELECT id FROM "user" WHERE name = %s LIMIT 1', ("管理者",))
     row = cur.fetchone()
     return row["id"] if row else None
 
 
-def _write_history(cur, race_id: str, status: str, user_id: Optional[str], metadata: Optional[dict] = None):
+def _write_history_ar(cur, race_id: str, status: str, user_id: Optional[str], metadata: Optional[dict] = None):
     cur.execute(
         """INSERT INTO race_status_history (id, race_id, status, changed_by, changed_at, metadata)
            VALUES (gen_random_uuid(), %s, %s, %s, NOW(), %s)""",
@@ -210,8 +212,8 @@ def _write_history(cur, race_id: str, status: str, user_id: Optional[str], metad
     )
 
 
-def _write_audit(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
-                 old_value: Optional[dict] = None, new_value: Optional[dict] = None):
+def _write_audit_ar(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
+                    old_value: Optional[dict] = None, new_value: Optional[dict] = None):
     cur.execute(
         """INSERT INTO audit_log (id, user_id, action, target_table, target_id, old_value, new_value, created_at)
            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, NOW())""",
@@ -305,13 +307,13 @@ def bind_analysis(race_id: str, body: dict):
         old = cur.fetchone()
         cur.execute("UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s", (race_id,))
 
-        user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZED", user_id,
-                       {"bound_from_header": str(source_header_id), "new_header_id": str(new_header_id)})
-        _write_audit(cur, user_id, "BIND_ANALYSIS", "race", race_id,
-                     {"status": old["status"] if old else None},
-                     {"status": "ANALYZED", "source_header_id": str(source_header_id),
-                      "new_header_id": str(new_header_id)})
+        user_id = _get_sys_user_ar(cur)
+        _write_history_ar(cur, race_id, "ANALYZED", user_id,
+                          {"bound_from_header": str(source_header_id), "new_header_id": str(new_header_id)})
+        _write_audit_ar(cur, user_id, "BIND_ANALYSIS", "race", race_id,
+                        {"status": old["status"] if old else None},
+                        {"status": "ANALYZED", "source_header_id": str(source_header_id),
+                         "new_header_id": str(new_header_id)})
         conn.commit()
 
     return get_race(race_id)
