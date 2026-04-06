@@ -209,11 +209,20 @@ def batch_update_races(body: dict):
     race_ids = body.get("race_ids", [])
     if not race_ids:
         return {"updated": 0}
+    allowed = {"status", "event_id", "race_number"}
+    updates = {k: v for k, v in body.items() if k in allowed and v is not None}
+    set_parts = ["updated_at = NOW()"]
+    params: list = []
+    for col, val in updates.items():
+        set_parts.append(f"{col} = %s")
+        params.append(val)
+    params.append(race_ids)
+    set_clause = ", ".join(set_parts)
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            "UPDATE race SET updated_at = NOW() WHERE id = ANY(%s::uuid[])",
-            (race_ids,),
+            f"UPDATE race SET {set_clause} WHERE id = ANY(%s::uuid[])",
+            params,
         )
         conn.commit()
         return {"updated": cur.rowcount}
@@ -262,9 +271,20 @@ def complete_analysis(race_id: str):
 
 @router.patch("/races/{race_id}")
 def update_race(race_id: str, body: dict):
+    allowed = {"status", "race_number", "event_id", "corrected_by", "confirmed_by", "confirmed_at"}
+    updates = {k: v for k, v in body.items() if k in allowed and v is not None}
+    set_parts = ["updated_at = NOW()"]
+    params: list = []
+    for col, val in updates.items():
+        set_parts.append(f"{col} = %s")
+        params.append(val)
+    params.append(race_id)
+    set_clause = ", ".join(set_parts)
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("UPDATE race SET updated_at = NOW() WHERE id = %s", (race_id,))
+        cur.execute(f"UPDATE race SET {set_clause} WHERE id = %s RETURNING id", params)
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Race not found")
         conn.commit()
     return get_race(race_id)
 
@@ -286,21 +306,38 @@ def start_correction(race_id: str, body: dict):
     user_name = body.get("user_name", "ユーザー1")
     with get_db() as conn:
         cur = dict_cursor(conn)
+        # Conflict check: reject if another session is already IN_PROGRESS
+        cur.execute(
+            """SELECT cs.id, u.name AS locked_by_name
+               FROM correction_session cs
+               LEFT JOIN "user" u ON u.id = cs.started_by
+               WHERE cs.race_id = %s AND cs.status = 'IN_PROGRESS'
+               LIMIT 1""",
+            (race_id,),
+        )
+        active = cur.fetchone()
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Race is already being corrected by {active['locked_by_name'] or '別のユーザー'}",
+            )
+
         cur.execute('SELECT id FROM "user" WHERE name = %s LIMIT 1', (user_name,))
         user_row = cur.fetchone()
         user_id = user_row["id"] if user_row else None
 
         cur.execute(
-            "UPDATE race SET status = 'CORRECTING', updated_at = NOW() WHERE id = %s",
+            "UPDATE race SET status = 'CORRECTING', updated_at = NOW() WHERE id = %s RETURNING id",
             (race_id,),
         )
-        if user_id:
-            cur.execute(
-                """INSERT INTO correction_session
-                   (id, race_id, started_by, started_at)
-                   VALUES (gen_random_uuid(), %s, %s, NOW())""",
-                (race_id, user_id),
-            )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Race not found")
+
+        cur.execute(
+            """INSERT INTO correction_session (id, race_id, started_by, started_at, status)
+               VALUES (gen_random_uuid(), %s, %s, NOW(), 'IN_PROGRESS')""",
+            (race_id, user_id),
+        )
         conn.commit()
     return get_race(race_id)
 

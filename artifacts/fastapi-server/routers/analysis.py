@@ -4,14 +4,6 @@ from database import get_db, dict_cursor
 
 router = APIRouter(prefix="/fastapi")
 
-DEFAULT_PARAMS = {
-    "brightness_threshold": 128,
-    "contrast_boost": 1.2,
-    "noise_reduction": 0.5,
-    "tracking_sensitivity": 0.8,
-}
-
-
 @router.get("/venues")
 def get_venues():
     with get_db() as conn:
