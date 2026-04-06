@@ -269,11 +269,11 @@ def seed():
                     """INSERT INTO analysis_result_detail
                        (id, header_id, time_sec, marker_type, class_name, course_position,
                         rank, race_time, data_type, horse_number, horse_name, gate_number,
-                        color, lane, accuracy, position, is_corrected,
+                        color, lane, accuracy, position, running_position, is_corrected,
                         absolute_speed, speed_change, special_note)
-                       VALUES (%s,%s,%s,%s,%s,'中',%s,%s,'200m',%s,%s,%s,%s,'中',%s,%s,FALSE,%s,%s,NULL)""",
+                       VALUES (%s,%s,%s,%s,%s,'中',%s,%s,'200m',%s,%s,%s,%s,'中',%s,%s,%s,FALSE,%s,%s,NULL)""",
                     (str(uuid.uuid4()), header_id, time_val, cp, f"cap_{color_val}_{hn}",
-                     pos, time_val, hn, name, gn, color_val, acc, pos, speed_val, speed_change_val),
+                     pos, time_val, hn, name, gn, color_val, acc, pos, pos, speed_val, speed_change_val),
                 )
         return job_id, header_id
 
