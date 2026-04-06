@@ -168,7 +168,12 @@ def get_race_summary(date: Optional[str] = Query(None)):
         where_sql = "WHERE re.event_date = %s" if date else ""
         params = [date] if date else []
         cur.execute(
-            f"""SELECT COUNT(*) AS total
+            f"""SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE r.status = 'CONFIRMED')           AS completed,
+                    COUNT(*) FILTER (WHERE r.status = 'CORRECTING')          AS in_progress,
+                    COUNT(*) FILTER (WHERE r.status = 'REVISION_REQUESTED')  AS needs_correction,
+                    COUNT(*) FILTER (WHERE r.status = 'CORRECTED')           AS review
                 FROM race r
                 JOIN race_event re ON r.event_id = re.id
                 JOIN race_category rc ON re.category_id = rc.id
@@ -176,10 +181,26 @@ def get_race_summary(date: Optional[str] = Query(None)):
             params,
         )
         row = cur.fetchone()
+
+        cur.execute(
+            f"""SELECT re.venue_name AS venue, COUNT(*) AS count
+                FROM race r
+                JOIN race_event re ON r.event_id = re.id
+                JOIN race_category rc ON re.category_id = rc.id
+                {where_sql}
+                GROUP BY re.venue_name
+                ORDER BY re.venue_name""",
+            params,
+        )
+        by_venue = cur.fetchall()
+
         return {
             "total": row["total"] if row else 0,
-            "completed": 0, "in_progress": 0,
-            "needs_correction": 0, "review": 0, "by_venue": [],
+            "completed": row["completed"] if row else 0,
+            "in_progress": row["in_progress"] if row else 0,
+            "needs_correction": row["needs_correction"] if row else 0,
+            "review": row["review"] if row else 0,
+            "by_venue": by_venue,
         }
 
 
@@ -320,7 +341,7 @@ def cancel_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            "UPDATE correction_session SET ended_at = NOW() WHERE race_id = %s AND ended_at IS NULL",
+            "UPDATE correction_session SET completed_at = NOW(), status = 'COMPLETED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
         cur.execute("UPDATE race SET updated_at = NOW() WHERE id = %s", (race_id,))
@@ -333,7 +354,7 @@ def force_unlock(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            "UPDATE correction_session SET ended_at = NOW() WHERE race_id = %s AND ended_at IS NULL",
+            "UPDATE correction_session SET completed_at = NOW(), status = 'COMPLETED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
         conn.commit()
@@ -403,4 +424,21 @@ def confirm_race(race_id: str):
 
 @router.post("/races/{race_id}/bind-analysis")
 def bind_analysis(race_id: str, body: dict):
+    header_id = body.get("header_id")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        if header_id:
+            cur.execute(
+                "UPDATE analysis_result_header SET is_current = FALSE WHERE race_id = %s",
+                (race_id,),
+            )
+            cur.execute(
+                "UPDATE analysis_result_header SET is_current = TRUE WHERE id = %s AND race_id = %s",
+                (header_id, race_id),
+            )
+            cur.execute(
+                "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
+                (race_id,),
+            )
+            conn.commit()
     return get_race(race_id)
