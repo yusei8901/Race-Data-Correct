@@ -107,6 +107,16 @@ function fmtVideoTime(sec: number): string {
   return `${m}:${s}`;
 }
 
+function parseTimeInput(s: string): number | null {
+  const m1 = s.match(/^(\d+):(\d{2})\.(\d+)$/);
+  if (m1) return parseInt(m1[1]) * 60 + parseInt(m1[2]) + parseFloat(`0.${m1[3]}`);
+  const m2 = s.match(/^(\d+):(\d{2})$/);
+  if (m2) return parseInt(m2[1]) * 60 + parseInt(m2[2]);
+  const m3 = s.match(/^(\d+\.?\d*)$/);
+  if (m3) return parseFloat(m3[1]);
+  return null;
+}
+
 function computeCheckpoints(distance: number, straight: number) {
   const straightStart = distance - straight;
   const pts200: { label: string; key: string; meter: number }[] = [
@@ -124,10 +134,10 @@ function computeCheckpoints(distance: number, straight: number) {
   return { pts200, ptsStr };
 }
 
-function cpVideoTime(meter: number, distance: number, baseSec: number): number {
-  if (meter <= 5) return VIDEO_OFFSET;
-  if (meter >= distance) return VIDEO_OFFSET + baseSec;
-  return VIDEO_OFFSET + baseSec * (meter / distance);
+function cpVideoTime(meter: number, distance: number, baseSec: number, videoOffset: number = VIDEO_OFFSET): number {
+  if (meter <= 5) return videoOffset;
+  if (meter >= distance) return videoOffset + baseSec;
+  return videoOffset + baseSec * (meter / distance);
 }
 
 function interpolateBboxes(keyframes: Record<number, BBox[]>, frame: number): BBox[] {
@@ -873,7 +883,12 @@ export default function DataCorrection() {
   const [entrySortBy, setEntrySortBy] = useState<"horse_number" | "finish_position">("horse_number");
   const [analysisPreset, setAnalysisPreset] = useState<string>("標準");
   const [analysisParamsData, setAnalysisParamsData] = useState<Record<string, any> | null>(null);
-  const [analysisParamsOpen, setAnalysisParamsOpen] = useState(false);
+
+  // Editable start/goal times (video offset + race duration in seconds)
+  const [customVideoOffset, setCustomVideoOffset] = useState<number | null>(null);
+  const [customRaceDuration, setCustomRaceDuration] = useState<number | null>(null);
+  const [startTimeInput, setStartTimeInput] = useState<string>("");
+  const [goalTimeInput, setGoalTimeInput] = useState<string>("");
 
   // Video state
   const [videoTime, setVideoTime] = useState(0);
@@ -925,7 +940,19 @@ export default function DataCorrection() {
     [race?.distance, straight],
   );
   const baseSec = race ? (race.distance / 1000) * 60 + 27 : 90;
-  const totalVideoSec = VIDEO_OFFSET + baseSec;
+  const effectiveVideoOffset = customVideoOffset ?? VIDEO_OFFSET;
+  const effectiveBaseSec = customRaceDuration ?? baseSec;
+  const totalVideoSec = effectiveVideoOffset + effectiveBaseSec;
+
+  // Initialize start/goal inputs when race loads (only if not yet set)
+  useEffect(() => {
+    if (!race) return;
+    const computed = (race.distance / 1000) * 60 + 27;
+    setStartTimeInput(fmtTime(VIDEO_OFFSET));
+    setGoalTimeInput(fmtTime(computed));
+    setCustomVideoOffset(null);
+    setCustomRaceDuration(null);
+  }, [race?.id]);
   const currentFrame = Math.floor(videoTime * FPS);
 
   useEffect(() => {
@@ -1273,7 +1300,7 @@ export default function DataCorrection() {
   const handleCpClick = (key: string, meter: number) => {
     setSelectedCp(key);
     setSelectedBboxId(null);
-    const vt = cpVideoTime(meter, race?.distance ?? 2000, baseSec) - VIDEO_OFFSET;
+    const vt = cpVideoTime(meter, race?.distance ?? 2000, effectiveBaseSec, effectiveVideoOffset) - effectiveVideoOffset;
     setVideoTime(Math.max(0, vt));
   };
 
@@ -1388,7 +1415,7 @@ export default function DataCorrection() {
     toast({ title: "再計算完了", description: `${updates.length}頭の通過タイムを更新しました` });
   }, [selectedCp, currentBboxes, passingOrders, raceId, updatePassingOrderMut, queryClient, toast]);
 
-  const raceTimeFromVideo = videoTime - VIDEO_OFFSET;
+  const raceTimeFromVideo = videoTime - effectiveVideoOffset;
   const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
   const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || (raceStatus === "補正中" && isLockedByMe);
   const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
@@ -1419,7 +1446,7 @@ export default function DataCorrection() {
       <div className="border-b border-border bg-card px-4 py-2 flex items-center justify-between gap-4 flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button
-            onClick={() => navigate("/")}
+            onClick={() => { if (window.history.length > 1) { window.history.back(); } else { navigate("/"); } }}
             className="h-7 w-7 flex items-center justify-center rounded hover:bg-muted cursor-pointer flex-shrink-0"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -1587,6 +1614,17 @@ export default function DataCorrection() {
                 </Button>
               )}
 
+              {/* 修正要請 — admin only, データ確定 */}
+              {isAdmin && raceStatus === "データ確定" && (
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1.5 bg-yellow-700 hover:bg-yellow-600 text-white border-0 cursor-pointer"
+                  onClick={() => setConfirmDialog("correctionRequest")}
+                >
+                  修正要請
+                </Button>
+              )}
+
               {/* 強制ロック解除 — admin only, 補正中 */}
               {isAdmin && raceStatus === "補正中" && (
                 <Button
@@ -1643,6 +1681,28 @@ export default function DataCorrection() {
 
         {/* LEFT: JRA公式データ (22%) */}
         <div className="w-[22%] min-w-[200px] border-r border-border flex flex-col bg-card/40">
+
+          {/* Analysis params strip */}
+          <div className="px-2.5 py-1.5 border-b border-border/60 bg-zinc-900/60 flex-shrink-0 flex items-center gap-2 flex-wrap">
+            <span className="text-[9px] text-zinc-500 font-medium whitespace-nowrap">解析パラメータ</span>
+            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${race?.surface_type === "芝" ? "bg-green-900/60 text-green-400" : "bg-amber-900/60 text-amber-400"}`}>
+              {race?.surface_type ?? "-"}
+            </span>
+            <div className="flex items-center gap-0.5 flex-wrap">
+              {ANALYSIS_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setAnalysisPreset(p)}
+                  className={`px-1.5 py-0.5 text-[9px] rounded cursor-pointer transition-colors border ${
+                    analysisPreset === p
+                      ? "bg-primary/20 border-primary text-primary"
+                      : "bg-zinc-800 border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
+                  }`}
+                >{p}</button>
+              ))}
+            </div>
+          </div>
+
           <div className="px-3 py-1.5 border-b border-border bg-card flex items-center justify-between flex-shrink-0">
             <span className="text-[11px] font-semibold text-muted-foreground">JRA公式データ</span>
             <div className="flex items-center gap-0.5">
@@ -1742,52 +1802,6 @@ export default function DataCorrection() {
               </div>
             )}
 
-            {/* Analysis Params Panel */}
-            <div className="border-t border-border/50">
-              <button
-                onClick={() => setAnalysisParamsOpen((o) => !o)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold text-muted-foreground hover:bg-muted/20 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-1">⚙ 解析パラメータ</span>
-                <span className="text-zinc-600">{analysisParamsOpen ? "▲" : "▼"}</span>
-              </button>
-              {analysisParamsOpen && (
-                <div className="px-2.5 pb-2.5 space-y-2">
-                  <div className="flex items-center gap-1 flex-wrap">
-                    <span className="text-[9px] text-zinc-500">プリセット:</span>
-                    {ANALYSIS_PRESETS.map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => setAnalysisPreset(p)}
-                        className={`px-1.5 py-0.5 text-[9px] rounded cursor-pointer transition-colors border ${
-                          analysisPreset === p
-                            ? "bg-primary/20 border-primary text-primary"
-                            : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500"
-                        }`}
-                      >{p}</button>
-                    ))}
-                  </div>
-                  {(() => {
-                    const surfType = race?.surface_type ?? "芝";
-                    const preset = analysisParamsData?.[surfType]?.[analysisPreset];
-                    if (!preset) {
-                      return <p className="text-[9px] text-zinc-600">パラメータ未設定</p>;
-                    }
-                    const m200 = preset.m200 ?? {};
-                    return (
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
-                        <div className="flex justify-between"><span className="text-zinc-500">検出頻度</span><span className="font-mono text-zinc-300">{m200.polyline_fps ?? "-"}fps</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">解像度</span><span className="font-mono text-zinc-300">{m200.polyline_resolution ?? "-"}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">検出閾値</span><span className="font-mono text-zinc-300">{m200.detection_confidence ?? "-"}%</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">WB調整</span><span className="font-mono text-zinc-300">{m200.white_balance ?? "-"}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">ガンマ</span><span className="font-mono text-zinc-300">{m200.gamma ?? "-"}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">彩度</span><span className="font-mono text-zinc-300">{m200.saturation ?? "-"}%</span></div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
@@ -1926,6 +1940,65 @@ export default function DataCorrection() {
                 <span className="text-[9px] text-zinc-500 font-mono w-8">{fmtVideoTime(totalVideoSec)}</span>
               </div>
 
+              {/* Start / Goal time row */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] text-zinc-500">スタート</span>
+                  <input
+                    type="text"
+                    value={startTimeInput}
+                    onChange={(e) => setStartTimeInput(e.target.value)}
+                    onBlur={(e) => {
+                      const v = parseTimeInput(e.target.value);
+                      if (v !== null && v >= 0) {
+                        setCustomVideoOffset(v);
+                        setStartTimeInput(fmtTime(v));
+                      } else {
+                        setStartTimeInput(fmtTime(effectiveVideoOffset));
+                      }
+                    }}
+                    className="w-[70px] bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                    placeholder="0:07.30"
+                    title="動画内のレーススタート時刻"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] text-zinc-500">ゴール</span>
+                  <input
+                    type="text"
+                    value={goalTimeInput}
+                    onChange={(e) => setGoalTimeInput(e.target.value)}
+                    onBlur={(e) => {
+                      const v = parseTimeInput(e.target.value);
+                      if (v !== null && v > 0) {
+                        setCustomRaceDuration(v);
+                        setGoalTimeInput(fmtTime(v));
+                      } else {
+                        setGoalTimeInput(fmtTime(effectiveBaseSec));
+                      }
+                    }}
+                    className="w-[70px] bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                    placeholder="1:34.20"
+                    title="レースのゴールタイム（スタートからの経過時間）"
+                  />
+                </div>
+                {(customVideoOffset !== null || customRaceDuration !== null) && (
+                  <button
+                    onClick={() => {
+                      const computed = race ? (race.distance / 1000) * 60 + 27 : 90;
+                      setCustomVideoOffset(null);
+                      setCustomRaceDuration(null);
+                      setStartTimeInput(fmtTime(VIDEO_OFFSET));
+                      setGoalTimeInput(fmtTime(computed));
+                    }}
+                    className="text-[9px] text-zinc-500 hover:text-zinc-300 cursor-pointer underline"
+                    title="デフォルトに戻す"
+                  >
+                    リセット
+                  </button>
+                )}
+              </div>
+
               {/* Ruler + BBOX toolbar row */}
               <div className="flex items-center gap-2 flex-wrap">
                 <label className="flex items-center gap-1.5 cursor-pointer">
@@ -2048,7 +2121,7 @@ export default function DataCorrection() {
                   <div className="text-[10px] text-muted-foreground font-medium mb-1.5">200m毎の地点</div>
                   <div className="flex flex-wrap gap-1.5">
                     {pts200.map((pt) => {
-                      const vt = cpVideoTime(pt.meter, race.distance, baseSec);
+                      const vt = cpVideoTime(pt.meter, race.distance, effectiveBaseSec, effectiveVideoOffset);
                       const isSelected = selectedCp === pt.key;
                       const cpData = cpErrors[pt.key];
                       const errCount = cpData?.errors ?? 0;
@@ -2093,7 +2166,7 @@ export default function DataCorrection() {
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {ptsStr.map((pt) => {
-                      const vt = cpVideoTime(pt.meter, race.distance, baseSec);
+                      const vt = cpVideoTime(pt.meter, race.distance, effectiveBaseSec, effectiveVideoOffset);
                       const isSelected = selectedCp === pt.key;
                       const cpData = cpErrors[pt.key];
                       const errCount = cpData?.errors ?? 0;

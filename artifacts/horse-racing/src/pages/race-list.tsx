@@ -257,14 +257,25 @@ function downloadCSV(races: Race[], venue: string) {
   URL.revokeObjectURL(url);
 }
 
+const RACE_LIST_STATE_KEY = "raceListState";
+
+function getSavedState() {
+  try {
+    const raw = sessionStorage.getItem(RACE_LIST_STATE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as { date?: string; venue?: string; raceType?: string; statusFilter?: DerivedStatus | "total" | null };
+  } catch { return null; }
+}
+
 export default function RaceList() {
   const { isAdmin } = useUserRole();
   const { toast } = useToast();
 
-  const [date, setDate] = useState("");
-  const [venue, setVenue] = useState<string>("all");
-  const [raceType, setRaceType] = useState<string>("中央競馬");
-  const [statusFilter, setStatusFilter] = useState<DerivedStatus | "total" | null>(null);
+  const saved = getSavedState();
+  const [date, setDate] = useState(saved?.date ?? "");
+  const [venue, setVenue] = useState<string>(saved?.venue ?? "all");
+  const [raceType, setRaceType] = useState<string>(saved?.raceType ?? "中央競馬");
+  const [statusFilter, setStatusFilter] = useState<DerivedStatus | "total" | null>(saved?.statusFilter ?? null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
   const [reanalyzeRace, setReanalyzeRace] = useState<Race | null>(null);
@@ -273,6 +284,7 @@ export default function RaceList() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    if (date) return;
     fetch(`${API}/races/latest-date`)
       .then((r) => r.json())
       .then((data) => {
@@ -282,6 +294,11 @@ export default function RaceList() {
         setDate(format(new Date(), "yyyy-MM-dd"));
       });
   }, []);
+
+  useEffect(() => {
+    if (!date) return;
+    sessionStorage.setItem(RACE_LIST_STATE_KEY, JSON.stringify({ date, venue, raceType, statusFilter }));
+  }, [date, venue, raceType, statusFilter]);
 
   // Always fetch all races for date+type, filter by venue client-side
   const queryParams = {
@@ -437,6 +454,25 @@ export default function RaceList() {
             <h1 className="text-base font-semibold text-foreground">
               {formatDateTitle(date)}
             </h1>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7 cursor-pointer"
+              onClick={() => refetch()}
+              title="更新"
+            >
+              <RefreshCcw className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1.5 cursor-pointer"
+              onClick={() => allRaces && downloadCSV(venue === "all" ? allRaces : races, venue)}
+              title="CSV出力"
+            >
+              <Download className="h-3 w-3" />
+              CSV出力
+            </Button>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Input
@@ -468,25 +504,6 @@ export default function RaceList() {
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8 cursor-pointer"
-              onClick={() => refetch()}
-              title="更新"
-            >
-              <RefreshCcw className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1.5 cursor-pointer"
-              onClick={() => allRaces && downloadCSV(venue === "all" ? allRaces : races, venue)}
-              title="CSV出力"
-            >
-              <Download className="h-3.5 w-3.5" />
-              CSV出力
-            </Button>
           </div>
         </div>
       </div>
