@@ -40,13 +40,11 @@ def create_batch_job(body: dict):
                RETURNING *""",
             (name, cron_expression, is_enabled, "有効" if is_enabled else "停止中"),
         )
-        row = cur.fetchone()
-        conn.commit()
-        return _fmt_job(row)
+        return _fmt_job(cur.fetchone())
 
 
-@router.patch("/batch-jobs/{job_id}")
-def update_batch_job(job_id: str, body: dict):
+@router.patch("/batch-jobs/{id}")
+def update_batch_job(id: str, body: dict):
     set_parts = ["updated_at = NOW()"]
     params: list = []
     if "name" in body and body["name"] is not None:
@@ -60,7 +58,7 @@ def update_batch_job(job_id: str, body: dict):
         params.append(body["is_enabled"])
         set_parts.append("status = %s")
         params.append("有効" if body["is_enabled"] else "停止中")
-    params.append(job_id)
+    params.append(id)
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
@@ -70,27 +68,25 @@ def update_batch_job(job_id: str, body: dict):
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Batch job not found")
-        conn.commit()
         return _fmt_job(row)
 
 
-@router.delete("/batch-jobs/{job_id}")
-def delete_batch_job(job_id: str):
+@router.delete("/batch-jobs/{id}")
+def delete_batch_job(id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("DELETE FROM batch_job WHERE id = %s RETURNING id", (job_id,))
+        cur.execute("DELETE FROM batch_job WHERE id = %s RETURNING id", (id,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Batch job not found")
-        conn.commit()
         return {"message": "Deleted"}
 
 
-@router.patch("/batch-jobs/{job_id}/toggle")
-def toggle_batch_job(job_id: str):
+@router.patch("/batch-jobs/{id}/toggle")
+def toggle_batch_job(id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT * FROM batch_job WHERE id = %s", (job_id,))
+        cur.execute("SELECT * FROM batch_job WHERE id = %s", (id,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Batch job not found")
@@ -98,8 +94,6 @@ def toggle_batch_job(job_id: str):
         new_status = "有効" if new_enabled else "停止中"
         cur.execute(
             "UPDATE batch_job SET is_enabled = %s, status = %s, updated_at = NOW() WHERE id = %s RETURNING *",
-            (new_enabled, new_status, job_id),
+            (new_enabled, new_status, id),
         )
-        updated = cur.fetchone()
-        conn.commit()
-        return _fmt_job(updated)
+        return _fmt_job(cur.fetchone())
