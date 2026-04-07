@@ -118,6 +118,8 @@ Cloud Run の URL（`https://....run.app`）で次を確認できます。
 | `/docs` | FastAPI Swagger |
 | `/fastapi/healthz` | ヘルスチェック |
 
+同一オリジンでは Nginx が **`/docs`・`/redoc`・`/openapi.json`** を FastAPI に転送し、それ以外のパスは SPA に渡します。
+
 API のみのイメージに戻す場合は `cloudbuild.yaml` の `-f docker/Dockerfile.fullstack` を `docker/Dockerfile.cloudrun` に変更してください。
 
 ## 関連ファイル
