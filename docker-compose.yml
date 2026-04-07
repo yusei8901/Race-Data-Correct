@@ -1,0 +1,43 @@
+# 起動手順:
+#   docker-compose up -d --build
+# build だけ（イメージ作成だけ）ではポートは開きません。必ず up でコンテナを起動してください。
+# フロント（React）: http://localhost:8080/
+# API（Swagger）: http://localhost:8000/docs  ※8000 の / は API 用。画面は 8080 を開くこと。
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: race
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d race"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://app:app@db:5432/race
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

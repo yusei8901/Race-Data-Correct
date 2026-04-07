@@ -62,6 +62,13 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    // ローカル開発: 同一オリジンの `/fastapi` を FastAPI（既定 8000）へ転送
+    proxy: {
+      "/fastapi": {
+        target: process.env.VITE_FASTAPI_PROXY ?? "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],

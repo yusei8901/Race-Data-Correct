@@ -1,8 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from routers import races, analysis_results, masters, batch_jobs
 
 app = FastAPI(title="Horse Racing Data Correction API")
+
+
+@app.get("/")
+def root():
+    """ブラウザで API ポートの / を開いたときに Swagger へ誘導（未設定だと 404 JSON になる）"""
+    return RedirectResponse(url="/docs")
 
 app.add_middleware(
     CORSMiddleware,
