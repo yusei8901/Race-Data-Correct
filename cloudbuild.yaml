@@ -24,7 +24,7 @@
 # Cloud SQL 接続や DATABASE_URL は Cloud Run コンソール / Secret Manager で設定してください。
 # （注: 現行 Terraform は MySQL、本アプリ FastAPI は PostgreSQL 前提のため、DB 接続方式は別途整合が必要です。）
 #
-# フロント（Nginx）は別ホスティング想定。このパイプラインは API イメージのみをデプロイします。
+# イメージは docker/Dockerfile.fullstack（Nginx + 静的フロント + FastAPI 同一コンテナ）。
 # =============================================================================
 
 substitutions:
@@ -35,18 +35,21 @@ substitutions:
   # Terraform: google_cloud_run_v2_service.app.name（dev）
   _SERVICE_NAME: horse-dev-an1-run-app
 
+# フルスタックイメージは pnpm ビルドを含むため、デフォルトより長めにする
+timeout: 1800s
+
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: E2_HIGHCPU_8
 
 steps:
-  # 1. Docker イメージのビルド（Cloud Run 向け Dockerfile）
+  # 1. Docker イメージのビルド（フルスタック: Nginx + フロント静的 + FastAPI）
   - id: build-image
     name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
-      - docker/Dockerfile.cloudrun
+      - docker/Dockerfile.fullstack
       - -t
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE_NAME}:$COMMIT_SHA
       - -t
