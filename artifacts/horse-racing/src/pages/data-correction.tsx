@@ -14,7 +14,6 @@ import {
   useGetRaceEntries, getGetRaceEntriesQueryKey,
   useGetPassingOrders, getGetPassingOrdersQueryKey,
   useStartCorrection, useCompleteCorrection,
-  useUpdatePassingOrder,
 } from "@workspace/api-client-react";
 import type { Race } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -936,7 +935,6 @@ export default function DataCorrection() {
 
   const startCorrectionMut = useStartCorrection();
   const completeCorrectionMut = useCompleteCorrection();
-  const updatePassingOrderMut = useUpdatePassingOrder();
 
   // Race metadata
   const straight = race ? getStraight(race) : 300;
@@ -1034,13 +1032,18 @@ export default function DataCorrection() {
     setLocalEdits((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), [field]: value } }));
   };
 
-  // Save all edits
+  // Save all edits — uses the full analysis-result endpoint that accepts all fields
   const saveAllEdits = useCallback(async () => {
     for (const [id, changes] of Object.entries(localEdits)) {
-      await updatePassingOrderMut.mutateAsync({ id, data: changes as never });
+      if (!Object.keys(changes).length) continue;
+      await fetch(`${API}/races/${raceId}/analysis-result/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(changes),
+      });
     }
     setLocalEdits({});
-  }, [localEdits, updatePassingOrderMut]);
+  }, [localEdits, raceId]);
 
   const currentUserName = isAdmin ? "管理者" : "ユーザー";
   const raceLockedBy = race?.locked_by;
@@ -1448,13 +1451,17 @@ export default function DataCorrection() {
     }
 
     for (const { id, data } of updates) {
-      await updatePassingOrderMut.mutateAsync({ id, data: data as never });
+      await fetch(`${API}/races/${raceId}/analysis-result/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
     }
     queryClient.invalidateQueries({
       queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp }),
     });
     toast({ title: "欠損データを補完しました", description: `${updates.length}件を更新しました` });
-  }, [selectedCp, cpType, passingOrders, raceId, updatePassingOrderMut, queryClient, toast]);
+  }, [selectedCp, cpType, passingOrders, raceId, queryClient, toast]);
 
   // Filter bboxes: hide horses whose time_seconds is null at current checkpoint
   const bboxesForCanvas = useMemo(() => {
