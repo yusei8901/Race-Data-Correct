@@ -897,6 +897,9 @@ export default function DataCorrection() {
   const [rulerEnabled, setRulerEnabled] = useState(false);
   const [rulerY, setRulerY] = useState(50);
   const [rulerAngle, setRulerAngle] = useState(0);
+  const [vrulerEnabled, setVrulerEnabled] = useState(false);
+  const [vrulerX, setVrulerX] = useState(50);
+  const [vrulerAngle, setVrulerAngle] = useState(0);
 
   // BBOX state
   const [keyframes, setKeyframes] = useState<Keyframes>({});
@@ -1323,6 +1326,10 @@ export default function DataCorrection() {
   // BBOX operations
   const handleAddBbox = useCallback((b: Omit<BBox, "id">) => {
     if (!selectedCp) return;
+    if (currentBboxes.length >= numHorses) {
+      toast({ title: `BBOX追加上限`, description: `最大${numHorses}個まで追加できます`, variant: "destructive" });
+      return;
+    }
     const id = `bbox-${Date.now()}`;
     const newBbox: BBox = { id, ...b };
     setKeyframes((prev) => {
@@ -1358,6 +1365,10 @@ export default function DataCorrection() {
 
   const handleBboxHorseNumber = useCallback((id: string, num: number | null) => {
     if (!selectedCp) return;
+    if (num != null && currentBboxes.some((b) => b.id !== id && b.horseNumber === num)) {
+      toast({ title: `馬番${num}は既に割り当て済みです`, variant: "destructive" });
+      return;
+    }
     setKeyframes((prev) => {
       const cpKf = { ...(prev[selectedCp] ?? {}) };
       const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
@@ -1368,7 +1379,7 @@ export default function DataCorrection() {
       });
       return { ...prev, [selectedCp]: cpKf };
     });
-  }, [selectedCp, currentFrame, entries]);
+  }, [selectedCp, currentFrame, currentBboxes, entries, toast]);
 
   const handleSaveKeyframe = useCallback(() => {
     if (!selectedCp) return;
@@ -1380,56 +1391,79 @@ export default function DataCorrection() {
     toast({ title: `フレーム ${currentFrame} をキーフレームとして保存しました` });
   }, [selectedCp, currentFrame, currentBboxes, toast]);
 
-  // Recalculation
+  // Recalculation — fills missing fields with random valid values
   const handleRecalculate = useCallback(async () => {
     if (!selectedCp || !passingOrders?.length) return;
 
-    const assigned = currentBboxes.filter((b) => b.horseNumber != null);
-    const nums = assigned.map((b) => b.horseNumber!);
-    const dupes = nums.filter((n, i) => nums.indexOf(n) !== i);
-    if (dupes.length > 0) {
-      toast({ title: "検証エラー", description: `馬番${dupes[0]}が重複しています`, variant: "destructive" });
+    const is200m = cpType === "start" || cpType === "200m";
+    const CAP_COLOR_MAP_FE: Record<number, string> = {
+      1: "白", 2: "黒", 3: "赤", 4: "青", 5: "黄", 6: "緑", 7: "橙", 8: "桃",
+    };
+    const LANE_OPTIONS = ["内", "中", "外"];
+
+    const validTimes = passingOrders.filter((o) => o.time_seconds != null).map((o) => o.time_seconds!);
+    const baseTime = validTimes.length > 0
+      ? validTimes.reduce((a, b) => a + b, 0) / validTimes.length
+      : 90;
+
+    const updates: { id: string; data: Record<string, unknown> }[] = [];
+    let missingTimeOffset = 0;
+
+    for (const order of passingOrders) {
+      const data: Record<string, unknown> = {};
+
+      if (order.time_seconds == null) {
+        data.time_seconds = parseFloat(
+          (baseTime + missingTimeOffset * 0.3 + Math.random() * 0.15).toFixed(2)
+        );
+        missingTimeOffset++;
+      }
+      if (order.color == null && order.gate_number != null) {
+        data.color = CAP_COLOR_MAP_FE[order.gate_number] ?? "白";
+      }
+      if (is200m && order.lane == null) {
+        data.lane = LANE_OPTIONS[Math.floor(Math.random() * 3)];
+      }
+      if (!is200m) {
+        const o = order as any;
+        if (o.absolute_speed == null) {
+          data.absolute_speed = parseFloat((55 + Math.random() * 15).toFixed(1));
+        }
+        if (o.speed_change == null) {
+          data.speed_change = parseFloat((-3 + Math.random() * 6).toFixed(1));
+        }
+        if (o.running_position == null) {
+          data.running_position = passingOrders.indexOf(order) + 1;
+        }
+      }
+
+      if (Object.keys(data).length > 0) {
+        updates.push({ id: order.id, data });
+      }
+    }
+
+    if (!updates.length) {
+      toast({ title: "補完する欠損データがありません" });
       return;
     }
 
-    const byTime = [...passingOrders].filter((o) => o.time_seconds != null).sort((a, b) => (a.time_seconds ?? 0) - (b.time_seconds ?? 0));
-    if (!byTime.length) { toast({ title: "通過タイムデータがありません" }); return; }
-
-    const leaderOrder = byTime[0];
-    const leaderBbox = assigned.find((b) => b.horseNumber === leaderOrder.horse_number);
-    if (!leaderBbox) { toast({ title: "先頭馬のBBOXが未割当です" }); return; }
-
-    const leaderCx = leaderBbox.x + leaderBbox.w / 2;
-    const leaderCy = leaderBbox.y + leaderBbox.h / 2;
-    const anchor = leaderOrder.time_seconds!;
-    const SCALE = 8.0;
-    const SPEED = 14.0;
-
-    let hasInversion = false;
-    const updates: { id: string; time_seconds: number }[] = [];
-
-    for (const bbox of assigned) {
-      if (bbox.horseNumber === leaderOrder.horse_number) continue;
-      const bx = bbox.x + bbox.w / 2, by = bbox.y + bbox.h / 2;
-      const persp = 1 + (leaderCy - by) * 0.25;
-      const distM = (bx - leaderCx) * persp * SCALE;
-      const dt = distM / SPEED;
-      const est = anchor + dt;
-      if (est <= 0) { hasInversion = true; continue; }
-      const order = passingOrders.find((o) => o.horse_number === bbox.horseNumber);
-      if (order) updates.push({ id: order.id, time_seconds: est });
+    for (const { id, data } of updates) {
+      await updatePassingOrderMut.mutateAsync({ id, data: data as never });
     }
+    queryClient.invalidateQueries({
+      queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp }),
+    });
+    toast({ title: "欠損データを補完しました", description: `${updates.length}件を更新しました` });
+  }, [selectedCp, cpType, passingOrders, raceId, updatePassingOrderMut, queryClient, toast]);
 
-    if (hasInversion) {
-      toast({ title: "時刻の矛盾を検出", description: "BBOXの位置を確認してください", variant: "destructive" });
-      return;
-    }
-    for (const { id, time_seconds } of updates) {
-      await updatePassingOrderMut.mutateAsync({ id, data: { time_seconds } as never });
-    }
-    queryClient.invalidateQueries({ queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp }) });
-    toast({ title: "再計算完了", description: `${updates.length}頭の通過タイムを更新しました` });
-  }, [selectedCp, currentBboxes, passingOrders, raceId, updatePassingOrderMut, queryClient, toast]);
+  // Filter bboxes: hide horses whose time_seconds is null at current checkpoint
+  const bboxesForCanvas = useMemo(() => {
+    if (!passingOrders) return currentBboxes;
+    const withTime = new Set(
+      passingOrders.filter((o) => o.time_seconds != null).map((o) => o.horse_number)
+    );
+    return currentBboxes.filter((b) => b.horseNumber == null || withTime.has(b.horseNumber));
+  }, [currentBboxes, passingOrders]);
 
   const raceTimeFromVideo = videoTime - effectiveVideoOffset;
   const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
@@ -1848,7 +1882,7 @@ export default function DataCorrection() {
                 {/* BBOX Canvas */}
                 {isEditingMode && (
                   <BboxCanvas
-                    bboxes={currentBboxes}
+                    bboxes={bboxesForCanvas}
                     addPreview={addPreview}
                     selectedId={selectedBboxId}
                     addMode={addMode}
@@ -1870,7 +1904,7 @@ export default function DataCorrection() {
                 )}
               </div>
 
-              {/* Ruler — outside overflow:hidden, spans full width */}
+              {/* Horizontal ruler (横棒) */}
               {rulerEnabled && (
                 <div
                   className="absolute left-0 right-0 pointer-events-none z-10"
@@ -1884,6 +1918,25 @@ export default function DataCorrection() {
                       borderTop: "2px solid rgba(249, 115, 22, 0.85)",
                       transform: `rotate(${rulerAngle}deg)`,
                       transformOrigin: "center 0",
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Vertical ruler (縦棒) */}
+              {vrulerEnabled && (
+                <div
+                  className="absolute top-0 bottom-0 pointer-events-none z-10"
+                  style={{ left: `${vrulerX}%`, overflow: "visible" }}
+                >
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "-200%",
+                      bottom: "-200%",
+                      borderLeft: "2px solid rgba(59, 130, 246, 0.85)",
+                      transform: `rotate(${vrulerAngle}deg)`,
+                      transformOrigin: "center center",
                     }}
                   />
                 </div>
@@ -2018,6 +2071,7 @@ export default function DataCorrection() {
 
               {/* Ruler + BBOX toolbar row */}
               <div className="flex items-center gap-2 flex-wrap">
+                {/* Horizontal ruler (横棒) */}
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input
                     type="checkbox"
@@ -2026,7 +2080,7 @@ export default function DataCorrection() {
                     className="cursor-pointer accent-orange-500"
                   />
                   <Ruler className="h-3 w-3 text-zinc-400" />
-                  <span className="text-[10px] text-zinc-400">罫線</span>
+                  <span className="text-[10px] text-zinc-400">横棒</span>
                 </label>
                 {rulerEnabled && (
                   <>
@@ -2046,6 +2100,38 @@ export default function DataCorrection() {
                         className="w-16 h-1 accent-orange-500 cursor-pointer"
                       />
                       <span className="text-[9px] text-zinc-500 w-6">{rulerAngle}°</span>
+                    </div>
+                  </>
+                )}
+
+                {/* Vertical ruler (縦棒) */}
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={vrulerEnabled}
+                    onChange={(e) => setVrulerEnabled(e.target.checked)}
+                    className="cursor-pointer accent-blue-500"
+                  />
+                  <span className="text-[10px] text-zinc-400">縦棒</span>
+                </label>
+                {vrulerEnabled && (
+                  <>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] text-zinc-500">位置</span>
+                      <input
+                        type="range" min={0} max={100} value={vrulerX}
+                        onChange={(e) => setVrulerX(parseInt(e.target.value))}
+                        className="w-16 h-1 accent-blue-500 cursor-pointer"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] text-zinc-500">角度</span>
+                      <input
+                        type="range" min={-45} max={45} value={vrulerAngle}
+                        onChange={(e) => setVrulerAngle(parseInt(e.target.value))}
+                        className="w-16 h-1 accent-blue-500 cursor-pointer"
+                      />
+                      <span className="text-[9px] text-zinc-500 w-6">{vrulerAngle}°</span>
                     </div>
                   </>
                 )}
@@ -2408,7 +2494,14 @@ function RightTable({
     };
   });
 
-  const allRows = [...orders, ...phantomRows];
+  // Sort real rows by time_seconds ASC (null → bottom), then phantoms at end
+  const sortedOrders = [...orders].sort((a, b) => {
+    if (a.time_seconds == null && b.time_seconds == null) return 0;
+    if (a.time_seconds == null) return 1;
+    if (b.time_seconds == null) return -1;
+    return a.time_seconds - b.time_seconds;
+  });
+  const allRows = [...sortedOrders, ...phantomRows];
 
   // Dense rank by time_seconds (1/100s precision, null → no rank, ties share rank)
   const timeRankMap = useMemo(() => {
@@ -2481,11 +2574,19 @@ function RightTable({
             : isDuplicate
               ? "bg-red-900/20 hover:bg-red-900/30"
               : rowError
-                ? "bg-amber-900/15 hover:bg-amber-900/25"
+                ? "bg-amber-900/20 hover:bg-amber-900/30"
                 : "hover:bg-muted/20";
 
+          const rowLeftBorder = isPhantom
+            ? ""
+            : isDuplicate
+              ? "border-l-2 border-l-red-500"
+              : rowError
+                ? "border-l-2 border-l-amber-500"
+                : "";
+
           return (
-            <tr key={row.id ?? idx} className={`border-t border-border/30 ${rowBg}`}>
+            <tr key={row.id ?? idx} className={`border-t border-border/30 ${rowBg} ${rowLeftBorder}`}>
               <td className="p-1.5 text-center font-mono font-bold text-sm">
                 {!isPhantom && timeRankMap[row.id] != null
                   ? timeRankMap[row.id]
@@ -2554,14 +2655,26 @@ function RightTable({
                 {horseName ?? <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className={`p-1.5 text-right font-mono text-[10px] ${row.time_seconds == null ? "bg-red-900/30" : isTimeAnomaly(row.time_seconds) ? "bg-amber-900/40" : ""}`}>
-                {row.time_seconds != null ? (
+              <td className={`p-1.5 text-right font-mono text-[10px] ${!isPhantom && row.time_seconds == null ? "bg-red-900/30" : isTimeAnomaly(row.time_seconds) ? "bg-amber-900/40" : ""}`}>
+                {isCorrectionMode && !isPhantom ? (
+                  <input
+                    type="text"
+                    defaultValue={row.time_seconds != null ? row.time_seconds.toFixed(2) : ""}
+                    onBlur={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v > 0) onEdit(row.id, "time_seconds", v);
+                      else if (e.target.value === "") onEdit(row.id, "time_seconds", null);
+                    }}
+                    placeholder="欠損"
+                    className={`w-16 bg-zinc-800 border rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground ${row.time_seconds == null ? "border-red-500 placeholder-red-500" : "border-zinc-600"}`}
+                  />
+                ) : row.time_seconds != null ? (
                   <span className={isTimeAnomaly(row.time_seconds) ? "text-amber-400 font-bold" : ""}>
                     {row.time_seconds.toFixed(2)}s
                   </span>
-                ) : (
+                ) : !isPhantom ? (
                   <span className="text-red-400 font-bold">欠損</span>
-                )}
+                ) : <span className="text-zinc-600">-</span>}
               </td>
 
               {cpType === "200m" && (
@@ -2585,7 +2698,16 @@ function RightTable({
               {cpType === "straight" && (
                 <>
                   <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedAnomaly(row.absolute_speed) ? "bg-amber-900/40" : !isPhantom && row.absolute_speed == null ? "bg-red-900/30" : ""}`}>
-                    {row.absolute_speed != null ? (
+                    {isCorrectionMode && !isPhantom ? (
+                      <input
+                        type="number"
+                        step="0.1"
+                        defaultValue={row.absolute_speed ?? ""}
+                        onBlur={(e) => onEdit(row.id, "absolute_speed", e.target.value === "" ? null : parseFloat(e.target.value))}
+                        placeholder="欠損"
+                        className={`w-14 bg-zinc-800 border rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground ${row.absolute_speed == null ? "border-red-500 placeholder-red-500" : "border-zinc-600"}`}
+                      />
+                    ) : row.absolute_speed != null ? (
                       <span className={isSpeedAnomaly(row.absolute_speed) ? "text-amber-400 font-bold" : "text-cyan-400"}>
                         {row.absolute_speed.toFixed(1)}
                       </span>
@@ -2594,7 +2716,16 @@ function RightTable({
                     ) : <span className="text-zinc-600">-</span>}
                   </td>
                   <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedChangeAnomaly(row.speed_change) ? "bg-amber-900/40" : !isPhantom && row.speed_change == null ? "bg-red-900/30" : ""}`}>
-                    {row.speed_change != null ? (
+                    {isCorrectionMode && !isPhantom ? (
+                      <input
+                        type="number"
+                        step="0.1"
+                        defaultValue={row.speed_change ?? ""}
+                        onBlur={(e) => onEdit(row.id, "speed_change", e.target.value === "" ? null : parseFloat(e.target.value))}
+                        placeholder="欠損"
+                        className={`w-14 bg-zinc-800 border rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground ${row.speed_change == null ? "border-red-500 placeholder-red-500" : "border-zinc-600"}`}
+                      />
+                    ) : row.speed_change != null ? (
                       <span className={isSpeedChangeAnomaly(row.speed_change) ? "text-amber-400 font-bold" : row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
                         {row.speed_change >= 0 ? "+" : ""}{row.speed_change.toFixed(1)}
                       </span>

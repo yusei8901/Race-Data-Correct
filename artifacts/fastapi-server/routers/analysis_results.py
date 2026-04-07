@@ -117,7 +117,7 @@ def get_checkpoint_errors(race_id: str):
             return {}
         expected = header["horse_count"] or 14
         cur.execute(
-            """SELECT marker_type, gate_number, color, time_sec, lane,
+            """SELECT marker_type, horse_number, gate_number, color, time_sec, lane,
                       absolute_speed, speed_change, running_position
                FROM analysis_result_detail
                WHERE header_id = %s""",
@@ -133,7 +133,16 @@ def get_checkpoint_errors(race_id: str):
         for cp, cp_row_list in cp_rows.items():
             row_count = len(cp_row_list)
             absent = max(0, expected - row_count)
-            is_200m = _is_pts200_type(cp)
+            # Data-driven type detection: straight type if any row has speed/running_position
+            has_speed = any(r["absolute_speed"] is not None or r["running_position"] is not None
+                            for r in cp_row_list)
+            has_lane = any(r["lane"] is not None for r in cp_row_list)
+            if has_speed and not has_lane:
+                is_200m = False
+            elif has_lane and not has_speed:
+                is_200m = True
+            else:
+                is_200m = _is_pts200_type(cp)
 
             times = [r["time_sec"] for r in cp_row_list if r["time_sec"] is not None]
             if times:
@@ -147,7 +156,8 @@ def get_checkpoint_errors(race_id: str):
             anomaly_count = 0
             for row in cp_row_list:
                 is_missing = (
-                    row["color"] is None
+                    row["horse_number"] is None
+                    or row["color"] is None
                     or row["time_sec"] is None
                     or (is_200m and row["lane"] is None)
                     or (not is_200m and (

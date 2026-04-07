@@ -564,7 +564,10 @@ export default function RaceList() {
                               : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
                       }`}
                     >
-                      <span className={`text-[11px] whitespace-nowrap ${alertStyle ? `${alertStyle.textColor} font-semibold` : isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
+                      <span className={`flex items-center gap-1 text-[11px] whitespace-nowrap ${alertStyle ? `${alertStyle.textColor} font-semibold` : isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                        {isAlert && <AlertTriangle className="h-3 w-3 flex-shrink-0" />}
+                        {card.label}
+                      </span>
                       <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
                     </button>
                   );
