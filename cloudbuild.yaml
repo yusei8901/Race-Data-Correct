@@ -2,27 +2,38 @@
 # Google Cloud Build — Artifact Registry へプッシュ → Cloud Run デプロイ
 # =============================================================================
 #
-# 事前準備:
-#   - Artifact Registry にリポジトリを作成（例: race-data-repo、形式 docker）
-#   - Cloud Run API / Artifact Registry API を有効化
-#   - Cloud Build のサービスアカウントに roles/run.admin, roles/artifactregistry.writer 等を付与
-#   - GitHub 連携トリガーでは $COMMIT_SHA / $SHORT_SHA が利用可能
+# Terraform（horse-infrastructure）と揃えた既定値:
+#   - Artifact Registry: shared/modules/delivery の horse-${env}-app-repo
+#   - Cloud Run: shared/modules/compute の horse-${env}-${region_short}-run-app
+#   - region_short（asia-northeast1）= an1
 #
-# 手動実行で COMMIT_SHA が空の場合は、トリガーで「置換変数」に COMMIT_SHA を渡すか、
-# 下記 substitutions の _IMAGE_TAG を BUILD_ID 等に変更してください。
+# 開発（env=dev）の例:
+#   リポジトリ ID: horse-dev-app-repo
+#   イメージ URL:  asia-northeast1-docker.pkg.dev/$PROJECT_ID/horse-dev-app-repo/${_IMAGE_NAME}:$COMMIT_SHA
+#   Cloud Run 名:  horse-dev-an1-run-app
 #
-# Cloud Run 側で必須:
-#   - シークレットまたは環境変数で DATABASE_URL（Cloud SQL 等）
-#   - Cloud SQL 利用時はデプロイに --add-cloudsql-instances=PROJECT:REGION:INSTANCE を追加
+# 本番など別環境では Cloud Build トリガーの「置換変数」で _AR_REPOSITORY / _SERVICE_NAME を上書きしてください。
+# 例（prd）: horse-prd-app-repo, horse-prd-an1-run-app
 #
-# フロント（Nginx）は別ホスティング想定。このパイプラインは API のみをデプロイします。
+# 前提:
+#   - Artifact Registry は Terraform で作成済み（コンソールの手動作成でも同じ repository_id に合わせる）
+#   - Cloud Build SA に artifactregistry.writer / run.admin 等
+#   - GitHub トリガーで $COMMIT_SHA が入ること
+#
+# Terraform の Cloud Run は IAP 有効のため、公開匿名アクセス (--allow-unauthenticated) は付けていません。
+# Cloud SQL 接続や DATABASE_URL は Cloud Run コンソール / Secret Manager で設定してください。
+# （注: 現行 Terraform は MySQL、本アプリ FastAPI は PostgreSQL 前提のため、DB 接続方式は別途整合が必要です。）
+#
+# フロント（Nginx）は別ホスティング想定。このパイプラインは API イメージのみをデプロイします。
 # =============================================================================
 
 substitutions:
   _REGION: asia-northeast1
-  _AR_REPOSITORY: race-data-repo
+  # Terraform: google_artifact_registry_repository.app_repo.repository_id（dev）
+  _AR_REPOSITORY: horse-dev-app-repo
   _IMAGE_NAME: app-image
-  _SERVICE_NAME: race-data-service
+  # Terraform: google_cloud_run_v2_service.app.name（dev）
+  _SERVICE_NAME: horse-dev-an1-run-app
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -60,7 +71,7 @@ steps:
     waitFor:
       - build-image
 
-  # 4. Cloud Run へデプロイ
+  # 4. Cloud Run へデプロイ（Terraform で作成済みサービスへ新イメージを反映）
   - id: deploy-cloud-run
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -76,7 +87,7 @@ steps:
       - managed
       - --port
       - "8080"
-      - --allow-unauthenticated
+      - --no-allow-unauthenticated
       - --quiet
     waitFor:
       - push-commit
