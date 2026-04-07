@@ -163,7 +163,7 @@ def get_checkpoint_errors(race_id: str):
                 if row["time_sec"] is not None:
                     if row["time_sec"] > 300 or row["time_sec"] < 0.05:
                         is_anomaly = True
-                    elif median_time is not None and abs(row["time_sec"] - median_time) > 60:
+                    elif median_time is not None and abs(row["time_sec"] - median_time) >= 60:
                         is_anomaly = True
                 if row["absolute_speed"] is not None:
                     if row["absolute_speed"] <= 30 or row["absolute_speed"] >= 80:
