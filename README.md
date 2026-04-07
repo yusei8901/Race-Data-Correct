@@ -104,6 +104,8 @@ asia-northeast1-docker.pkg.dev/<PROJECT_ID>/horse-<env>-app-repo
 
 Cloud Build をコンソールで接続した場合、トリガーの「置換変数」で `_AR_REPOSITORY` / `_SERVICE_NAME` を環境に合わせて上書きできます。Cloud Run は Terraform 側で **IAP 有効**のため、`cloudbuild.yaml` のデプロイは **`--no-allow-unauthenticated`** です（匿名公開しません）。
 
+Cloud Run のサービスに **`DATABASE_URL`（PostgreSQL）** を設定してください。未設定でもプロセスは起動しますが、DB を使う API は接続時にエラーになります（import 時に落ちないよう `database.py` を調整済み）。
+
 ## 関連ファイル
 
 | パス | 説明 |
