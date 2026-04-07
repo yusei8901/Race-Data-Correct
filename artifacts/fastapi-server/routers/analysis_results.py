@@ -6,14 +6,19 @@ from routers.races import get_race
 
 router = APIRouter(prefix="/fastapi")
 
-ERROR_FILTER = """(
-    ard.time_sec IS NULL
-    OR ard.horse_number IS NULL
-    OR (ard.time_sec IS NOT NULL AND (ard.time_sec > 300 OR ard.time_sec < 0.05))
-    OR (ard.absolute_speed IS NOT NULL AND ard.absolute_speed > 80)
-    OR (ard.speed_change IS NOT NULL AND ABS(ard.speed_change) > 30)
-    OR (ard.accuracy IS NOT NULL AND ard.accuracy < 30)
-)"""
+CAP_COLOR_MAP = {1: '白', 2: '黒', 3: '赤', 4: '青', 5: '黄', 6: '緑', 7: '橙', 8: '桃'}
+
+
+def _is_pts200_type(marker_type: str) -> bool:
+    if marker_type == '5m':
+        return True
+    if not marker_type.endswith('m'):
+        return False
+    try:
+        val = int(marker_type[:-1])
+        return val > 0 and val % 200 == 0
+    except ValueError:
+        return False
 
 
 def fmt_detail(row: dict, race_id: str) -> dict:
@@ -23,7 +28,7 @@ def fmt_detail(row: dict, race_id: str) -> dict:
         "checkpoint": row["marker_type"],
         "horse_number": row["horse_number"],
         "horse_name": row["horse_name"] or "",
-        "gate_number": row["gate_number"] or 1,
+        "gate_number": row.get("gate_number"),
         "color": row.get("color"),
         "lane": row.get("lane"),
         "time_seconds": row.get("time_sec"),
@@ -104,6 +109,7 @@ def get_passing_orders(
 
 @router.get("/races/{race_id}/checkpoint-errors")
 def get_checkpoint_errors(race_id: str):
+    from collections import defaultdict
     with get_db() as conn:
         cur = dict_cursor(conn)
         header = _get_current_header(cur, race_id)
@@ -111,20 +117,66 @@ def get_checkpoint_errors(race_id: str):
             return {}
         expected = header["horse_count"] or 14
         cur.execute(
-            f"""SELECT
-                    ard.marker_type          AS checkpoint,
-                    COUNT(*)                 AS row_count,
-                    COUNT(*) FILTER (WHERE {ERROR_FILTER}) AS error_count
-                FROM analysis_result_detail ard
-                WHERE ard.header_id = %s
-                GROUP BY ard.marker_type""",
+            """SELECT marker_type, gate_number, color, time_sec, lane,
+                      absolute_speed, speed_change, running_position
+               FROM analysis_result_detail
+               WHERE header_id = %s""",
             (header["id"],),
         )
+        rows = cur.fetchall()
+
+        cp_rows: dict = defaultdict(list)
+        for row in rows:
+            cp_rows[row["marker_type"]].append(row)
+
         result = {}
-        for row in cur.fetchall():
-            cp = row["checkpoint"]
-            missing = max(0, expected - row["row_count"])
-            result[cp] = {"errors": row["error_count"], "missing": missing}
+        for cp, cp_row_list in cp_rows.items():
+            row_count = len(cp_row_list)
+            absent = max(0, expected - row_count)
+            is_200m = _is_pts200_type(cp)
+
+            times = [r["time_sec"] for r in cp_row_list if r["time_sec"] is not None]
+            if times:
+                s = sorted(times)
+                n = len(s)
+                median_time = (s[n // 2] + s[(n - 1) // 2]) / 2
+            else:
+                median_time = None
+
+            missing_count = 0
+            anomaly_count = 0
+            for row in cp_row_list:
+                is_missing = (
+                    row["color"] is None
+                    or row["time_sec"] is None
+                    or (is_200m and row["lane"] is None)
+                    or (not is_200m and (
+                        row["absolute_speed"] is None
+                        or row["speed_change"] is None
+                        or row["running_position"] is None
+                    ))
+                )
+                is_anomaly = False
+                if row["gate_number"] is not None and row["color"] is not None:
+                    if CAP_COLOR_MAP.get(row["gate_number"]) != row["color"]:
+                        is_anomaly = True
+                if row["time_sec"] is not None:
+                    if row["time_sec"] > 300 or row["time_sec"] < 0.05:
+                        is_anomaly = True
+                    elif median_time is not None and abs(row["time_sec"] - median_time) > 60:
+                        is_anomaly = True
+                if row["absolute_speed"] is not None:
+                    if row["absolute_speed"] <= 30 or row["absolute_speed"] >= 80:
+                        is_anomaly = True
+                if row["running_position"] is not None:
+                    if row["running_position"] <= 0 or row["running_position"] >= 16:
+                        is_anomaly = True
+                if is_missing:
+                    missing_count += 1
+                if is_anomaly:
+                    anomaly_count += 1
+
+            result[cp] = {"missing": missing_count + absent, "anomalies": anomaly_count}
         return result
 
 

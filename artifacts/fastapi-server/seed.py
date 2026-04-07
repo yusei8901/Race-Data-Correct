@@ -105,6 +105,9 @@ def seed():
         "タイトルホルダー", "ジャックドール",
     ]
     colors = ["黒", "鹿", "青鹿", "芦", "栗", "白"]
+    CAP_COLOR_EXPECTED = {1: '白', 2: '黒', 3: '赤', 4: '青', 5: '黄', 6: '緑', 7: '橙', 8: '桃'}
+    ALL_CAP_COLORS = ['白', '黒', '赤', '青', '黄', '緑', '橙', '桃']
+    LANE_OPTIONS = ['内', '中', '外']
     jockeys = ["川田将雅", "武豊", "戸崎圭太", "横山武史", "松山弘平", "福永祐一"]
     MARGINS = [None, 0.1, 0.3, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 3.5, 5.0, 7.0]
 
@@ -223,57 +226,84 @@ def seed():
         entry_gate_numbers = {hn: ((hn - 1) // 2) + 1 for hn in range(1, 15)}
         checkpoints = ["200m", "400m", "600m", "800m", "1000m", "1200m"]
         for cp_idx, cp in enumerate(checkpoints):
+            # Phantom horses (occasionally absent for variety)
             phantom_horses = set()
-            error_horses = {}
-            if inject_bad_data:
-                rnd_local = random.Random(hash(f"bad{race_id}{cp_idx}") & 0x7FFFFFFF)
-                if rnd_local.random() < 0.65:
-                    total_bad = rnd_local.randint(1, 4)
-                    all_horse_nums = list(range(1, 15))
-                    rnd_local.shuffle(all_horse_nums)
-                    bad_horse_list = all_horse_nums[:total_bad]
-                    n_phantom = rnd_local.randint(0, min(2, len(bad_horse_list)))
-                    for j, bhn in enumerate(bad_horse_list):
-                        if j < n_phantom:
-                            phantom_horses.add(bhn)
-                        else:
-                            error_horses[bhn] = rnd_local.randint(0, 3)
-            for pos in range(1, 15):
-                horse_idx = (pos + race_idx) % 14
-                hn = horse_idx + 1
+            rnd_cp = random.Random(hash(f"cp{race_id}{cp_idx}") & 0x7FFFFFFF)
+            if inject_bad_data and rnd_cp.random() < 0.15:
+                n_phantom = rnd_cp.randint(1, 2)
+                all_hn = list(range(1, 15))
+                rnd_cp.shuffle(all_hn)
+                phantom_horses = set(all_hn[:n_phantom])
+
+            position = 0
+            for hn in range(1, 15):
                 if hn in phantom_horses:
                     continue
+                position += 1
+                horse_idx = (hn + race_idx) % 14
                 correct_gn = entry_gate_numbers[hn]
-                gn = correct_gn
                 name = horse_names[horse_idx]
-                color_val = colors[horse_idx % len(colors)]
-                acc = max(60, 100 - (pos * 2) - (race_idx * 3))
-                time_val = round(12.0 + (pos * 0.2), 2)
-                speed_val = None
-                speed_change_val = None
-                if hn in error_horses:
-                    err_type = error_horses[hn]
-                    if err_type == 0:
-                        gn = (correct_gn % 8) + 1
-                        acc = max(40, acc - 20)
-                    elif err_type == 1:
-                        time_val = 9999.0
-                        acc = max(20, acc - 30)
-                    elif err_type == 2:
-                        speed_change_val = round(random.uniform(35.0, 55.0), 1)
-                        acc = max(25, acc - 35)
+                base_time = round(12.0 + position * 0.2, 2)
+
+                if inject_bad_data:
+                    rnd_row = random.Random(hash(f"row{race_id}{cp_idx}{hn}") & 0x7FFFFFFF)
+                    row_type_val = rnd_row.random()
+
+                    if row_type_val < 0.88:
+                        # Missing data: high probability of null per field
+                        color_val = None if rnd_row.random() < 0.93 else CAP_COLOR_EXPECTED.get(correct_gn)
+                        time_val = None if rnd_row.random() < 0.94 else base_time
+                        lane_val = None if rnd_row.random() < 0.95 else rnd_row.choice(LANE_OPTIONS)
+                        running_pos_val = None if rnd_row.random() < 0.92 else position
+                        speed_val = None
+                        speed_change_val = None
+                        acc = max(15, 80 - position * 4)
+                        gn = correct_gn
+                    elif row_type_val < 0.95:
+                        # Anomaly data: non-null but wrong/anomalous values
+                        wrong_colors = [c for c in ALL_CAP_COLORS if c != CAP_COLOR_EXPECTED.get(correct_gn)]
+                        color_val = rnd_row.choice(wrong_colors)
+                        time_val = base_time
+                        lane_val = rnd_row.choice(LANE_OPTIONS)
+                        running_pos_val = position
+                        if rnd_row.random() < 0.5:
+                            speed_val = round(rnd_row.uniform(82.0, 100.0), 1)
+                        else:
+                            speed_val = round(rnd_row.uniform(3.0, 28.0), 1)
+                        speed_change_val = round(rnd_row.uniform(-5.0, 5.0), 1)
+                        acc = max(35, 80 - position * 2)
+                        gn = correct_gn
                     else:
-                        speed_val = round(random.uniform(82.0, 96.0), 1)
-                        acc = max(25, acc - 35)
+                        # Good data: all correct
+                        color_val = CAP_COLOR_EXPECTED.get(correct_gn)
+                        time_val = base_time
+                        lane_val = rnd_row.choice(LANE_OPTIONS)
+                        running_pos_val = position
+                        speed_val = None
+                        speed_change_val = None
+                        acc = max(70, 100 - position)
+                        gn = correct_gn
+                else:
+                    # 4/4 data: coat colors, fully populated
+                    color_val = colors[horse_idx % len(colors)]
+                    time_val = base_time
+                    lane_val = '中'
+                    running_pos_val = position
+                    speed_val = None
+                    speed_change_val = None
+                    acc = max(60, 100 - position * 2 - race_idx * 3)
+                    gn = correct_gn
+
                 cur.execute(
                     """INSERT INTO analysis_result_detail
                        (id, header_id, time_sec, marker_type, class_name, course_position,
                         rank, race_time, data_type, horse_number, horse_name, gate_number,
                         color, lane, accuracy, position, running_position, is_corrected,
                         absolute_speed, speed_change, special_note)
-                       VALUES (%s,%s,%s,%s,%s,'中',%s,%s,'200m',%s,%s,%s,%s,'中',%s,%s,%s,FALSE,%s,%s,NULL)""",
-                    (str(uuid.uuid4()), header_id, time_val, cp, f"cap_{color_val}_{hn}",
-                     pos, time_val, hn, name, gn, color_val, acc, pos, pos, speed_val, speed_change_val),
+                       VALUES (%s,%s,%s,%s,%s,'中',%s,%s,'200m',%s,%s,%s,%s,%s,%s,%s,%s,FALSE,%s,%s,NULL)""",
+                    (str(uuid.uuid4()), header_id, time_val, cp, f"det_{hn}",
+                     position, base_time, hn, name, gn, color_val, lane_val, acc,
+                     position, running_pos_val, speed_val, speed_change_val),
                 )
         return job_id, header_id
 

@@ -879,7 +879,7 @@ export default function DataCorrection() {
   // Edit mode: purely local; resets when leaving the page
   const [isEditingMode, setIsEditingMode] = useState(false);
   const [savingTemp, setSavingTemp] = useState(false);
-  const [cpErrors, setCpErrors] = useState<Record<string, { errors: number; missing: number }>>({});
+  const [cpErrors, setCpErrors] = useState<Record<string, { missing: number; anomalies: number }>>({});
   const [entrySortBy, setEntrySortBy] = useState<"horse_number" | "finish_position">("horse_number");
   const [analysisPreset, setAnalysisPreset] = useState<string>("標準");
   const [analysisParamsData, setAnalysisParamsData] = useState<Record<string, any> | null>(null);
@@ -915,6 +915,8 @@ export default function DataCorrection() {
 
   // Video timer
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks which race IDs have already triggered auto-edit-mode (prevents re-trigger after cancel)
+  const autoEditRef = useRef<Set<string>>(new Set());
 
   // API hooks
   const { data: race, isLoading: isRaceLoading } = useGetRace(raceId, {
@@ -1042,6 +1044,20 @@ export default function DataCorrection() {
   const isLockedByMe = raceLockedBy === currentUserName || !raceLockedBy;
   const isLockedByOther = !!raceLockedBy && raceLockedBy !== currentUserName;
   const raceStatus = race?.display_status ?? race?.status ?? "";
+
+  // Auto-enter editing mode when navigating to a 補正中/再補正中 race that the current user locked.
+  // Only fires once per race to avoid overriding an intentional cancel.
+  useEffect(() => {
+    if (!race?.id) return;
+    if (autoEditRef.current.has(race.id)) return;
+    if (
+      (raceStatus === "補正中" || raceStatus === "再補正中") &&
+      raceLockedBy === currentUserName
+    ) {
+      autoEditRef.current.add(race.id);
+      setIsEditingMode(true);
+    }
+  }, [race?.id, raceStatus, raceLockedBy, currentUserName]);
 
   // 補正開始 / 補正再開
   const handleStart = () => {
@@ -1417,8 +1433,7 @@ export default function DataCorrection() {
 
   const raceTimeFromVideo = videoTime - effectiveVideoOffset;
   const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
-  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち"
-    || (raceStatus === "補正中" && isLockedByMe) || (raceStatus === "再補正中" && isLockedByMe);
+  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち";
   const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
 
   // Duplicate horse number validation
@@ -1532,9 +1547,9 @@ export default function DataCorrection() {
                 <Save className="h-3 w-3" />一時保存
               </Button>
               {(() => {
-                const totalErrors = Object.values(cpErrors).reduce((s, v) => s + (v?.errors ?? 0), 0);
                 const totalMissing = Object.values(cpErrors).reduce((s, v) => s + (v?.missing ?? 0), 0);
-                const totalIssues = totalErrors + totalMissing;
+                const totalAnomalies = Object.values(cpErrors).reduce((s, v) => s + (v?.anomalies ?? 0), 0);
+                const totalIssues = totalMissing + totalAnomalies;
                 const hasIssues = totalIssues > 0;
                 return (
                   <Button
@@ -1544,7 +1559,7 @@ export default function DataCorrection() {
                       if (hasIssues) {
                         toast({
                           title: "チェックポイントに問題があります",
-                          description: `エラー: ${totalErrors}件、欠損: ${totalMissing}件。修正してから補正完了にしてください。`,
+                          description: `欠損: ${totalMissing}件、異常値: ${totalAnomalies}件。修正してから補正完了にしてください。`,
                           variant: "destructive",
                         });
                         return;
@@ -2126,9 +2141,11 @@ export default function DataCorrection() {
                       const vt = cpVideoTime(pt.meter, race.distance, effectiveBaseSec, effectiveVideoOffset);
                       const isSelected = selectedCp === pt.key;
                       const cpData = cpErrors[pt.key];
-                      const errCount = cpData?.errors ?? 0;
                       const missingCount = cpData?.missing ?? 0;
-                      const hasIssue = errCount > 0 || missingCount > 0;
+                      const anomalyCount = cpData?.anomalies ?? 0;
+                      const hasMissing = missingCount > 0;
+                      const hasAnomaly = anomalyCount > 0;
+                      const hasIssue = hasMissing || hasAnomaly;
                       return (
                         <button
                           key={pt.key}
@@ -2136,19 +2153,21 @@ export default function DataCorrection() {
                           className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-primary border-primary text-white"
-                              : hasIssue
+                              : hasMissing
                                 ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
-                                : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
+                                : hasAnomaly
+                                  ? "bg-yellow-950/30 border-yellow-700/60 text-foreground hover:border-yellow-500"
+                                  : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
                           }`}
                         >
-                          {missingCount > 0 && (
-                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-amber-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {missingCount}
+                          {anomalyCount > 0 && (
+                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-yellow-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
+                              {anomalyCount}
                             </span>
                           )}
-                          {errCount > 0 && (
+                          {missingCount > 0 && (
                             <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {errCount}
+                              {missingCount}
                             </span>
                           )}
                           <span className="font-medium leading-tight whitespace-pre-line text-center text-[9px]">{pt.label}</span>
@@ -2171,9 +2190,10 @@ export default function DataCorrection() {
                       const vt = cpVideoTime(pt.meter, race.distance, effectiveBaseSec, effectiveVideoOffset);
                       const isSelected = selectedCp === pt.key;
                       const cpData = cpErrors[pt.key];
-                      const errCount = cpData?.errors ?? 0;
                       const missingCount = cpData?.missing ?? 0;
-                      const hasIssue = errCount > 0 || missingCount > 0;
+                      const anomalyCount = cpData?.anomalies ?? 0;
+                      const hasMissing = missingCount > 0;
+                      const hasAnomaly = anomalyCount > 0;
                       return (
                         <button
                           key={pt.key}
@@ -2181,19 +2201,21 @@ export default function DataCorrection() {
                           className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-orange-600 border-orange-500 text-white"
-                              : hasIssue
+                              : hasMissing
                                 ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
-                                : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
+                                : hasAnomaly
+                                  ? "bg-yellow-950/30 border-yellow-700/60 text-foreground hover:border-yellow-500"
+                                  : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
                           }`}
                         >
-                          {missingCount > 0 && (
-                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-amber-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {missingCount}
+                          {anomalyCount > 0 && (
+                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-yellow-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
+                              {anomalyCount}
                             </span>
                           )}
-                          {errCount > 0 && (
+                          {missingCount > 0 && (
                             <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {errCount}
+                              {missingCount}
                             </span>
                           )}
                           <span className="font-medium text-[9px]">{pt.label}</span>
@@ -2388,14 +2410,30 @@ function RightTable({
 
   const allRows = [...orders, ...phantomRows];
 
+  // Dense rank by time_seconds (1/100s precision, null → no rank, ties share rank)
+  const timeRankMap = useMemo(() => {
+    const withTime = allRows
+      .filter((r) => !(r as any).is_phantom && r.time_seconds != null)
+      .map((r) => ({ id: r.id, t: Math.round(r.time_seconds * 100) }))
+      .sort((a, b) => a.t - b.t);
+    const map: Record<string, number> = {};
+    let rank = 1;
+    for (let i = 0; i < withTime.length; i++) {
+      if (i > 0 && withTime[i].t !== withTime[i - 1].t) rank = i + 1;
+      map[withTime[i].id] = rank;
+    }
+    return map;
+  }, [allRows]);
+
   const hasRowError = (row: any) => {
     if ((row as any).is_phantom) return false;
     const isExempt = row.special_note != null && EXEMPT_SPECIAL_NOTES.has(row.special_note);
     if (row.horse_number == null) return true;
+    if (row.gate_number == null) return true;
     if (row.time_seconds == null && !isExempt) return true;
     if (row.time_seconds != null && (row.time_seconds > 300 || row.time_seconds < 0.05)) return true;
     if (row.accuracy != null && row.accuracy < 30) return true;
-    if (row.lane == null && !isExempt) return true;
+    if (row.lane == null && !isExempt && cpType === "200m") return true;
     if (row.absolute_speed != null && row.absolute_speed > 80) return true;
     if (row.speed_change != null && Math.abs(row.speed_change) > 30) return true;
     return false;
@@ -2449,7 +2487,9 @@ function RightTable({
           return (
             <tr key={row.id ?? idx} className={`border-t border-border/30 ${rowBg}`}>
               <td className="p-1.5 text-center font-mono font-bold text-sm">
-                {row.position ?? <span className="text-zinc-600">-</span>}
+                {!isPhantom && timeRankMap[row.id] != null
+                  ? timeRankMap[row.id]
+                  : <span className="text-zinc-600">-</span>}
               </td>
 
               <td className={`p-1.5 text-center ${isDuplicate ? "ring-1 ring-red-500 rounded" : !isPhantom && hn == null ? "bg-red-900/30" : ""}`}>
@@ -2482,7 +2522,7 @@ function RightTable({
                 ) : <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className="p-1.5 text-center">
+              <td className={`p-1.5 text-center ${!isCorrectionMode && !isPhantom && gn == null ? "bg-red-900/30" : ""}`}>
                 {isCorrectionMode && !isPhantom ? (
                   <select
                     value={gn ?? ""}
@@ -2503,6 +2543,8 @@ function RightTable({
                       </option>
                     ))}
                   </select>
+                ) : !isPhantom && gn == null ? (
+                  <span className="text-red-400 font-bold">欠損</span>
                 ) : (
                   <CapCircle gate={gn} />
                 )}
@@ -2542,21 +2584,25 @@ function RightTable({
 
               {cpType === "straight" && (
                 <>
-                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedAnomaly(row.absolute_speed) ? "bg-amber-900/40" : ""}`}>
+                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedAnomaly(row.absolute_speed) ? "bg-amber-900/40" : !isPhantom && row.absolute_speed == null ? "bg-red-900/30" : ""}`}>
                     {row.absolute_speed != null ? (
                       <span className={isSpeedAnomaly(row.absolute_speed) ? "text-amber-400 font-bold" : "text-cyan-400"}>
                         {row.absolute_speed.toFixed(1)}
                       </span>
+                    ) : !isPhantom ? (
+                      <span className="text-red-400 font-bold">欠損</span>
                     ) : <span className="text-zinc-600">-</span>}
                   </td>
-                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedChangeAnomaly(row.speed_change) ? "bg-amber-900/40" : ""}`}>
+                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedChangeAnomaly(row.speed_change) ? "bg-amber-900/40" : !isPhantom && row.speed_change == null ? "bg-red-900/30" : ""}`}>
                     {row.speed_change != null ? (
                       <span className={isSpeedChangeAnomaly(row.speed_change) ? "text-amber-400 font-bold" : row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
                         {row.speed_change >= 0 ? "+" : ""}{row.speed_change.toFixed(1)}
                       </span>
+                    ) : !isPhantom ? (
+                      <span className="text-red-400 font-bold">欠損</span>
                     ) : <span className="text-zinc-600">-</span>}
                   </td>
-                  <td className="p-1.5 text-center">
+                  <td className={`p-1.5 text-center ${!isPhantom && row.running_position == null ? "bg-red-900/30" : ""}`}>
                     {isCorrectionMode && !isPhantom ? (
                       <div className="flex items-center justify-center gap-0.5">
                         <button
@@ -2569,6 +2615,8 @@ function RightTable({
                           className="w-4 h-4 flex items-center justify-center bg-zinc-700 rounded text-zinc-300 hover:bg-zinc-600 cursor-pointer text-[10px]"
                         ><Plus className="h-2.5 w-2.5" /></button>
                       </div>
+                    ) : !isPhantom && row.running_position == null ? (
+                      <span className="text-red-400 font-bold">欠損</span>
                     ) : (
                       <span className="text-muted-foreground text-[10px]">
                         {row.running_position != null ? `${row.running_position}頭目` : "-"}
