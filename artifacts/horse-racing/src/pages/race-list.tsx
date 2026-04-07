@@ -143,6 +143,13 @@ function formatDateTitle(dateStr: string): string {
 const ALERT_STATUSES: Set<DerivedStatus> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
 const HIGHLIGHT_STATUSES: Set<DerivedStatus> = new Set([...ALERT_STATUSES, "未処理"]);
 
+const ALERT_STYLE_MAP: Record<string, { bg: string; border: string; hoverBorder: string; hoverBg: string; shadow: string; textColor: string }> = {
+  "修正要請":   { bg: "bg-orange-950/80", border: "border-orange-500", hoverBorder: "hover:border-orange-300", hoverBg: "hover:bg-orange-900/60", shadow: "shadow-[0_0_10px_rgba(249,115,22,0.45)]", textColor: "text-orange-200" },
+  "解析失敗":   { bg: "bg-red-950/80",    border: "border-red-500",    hoverBorder: "hover:border-red-300",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
+  "再解析要請": { bg: "bg-rose-950/80",   border: "border-rose-500",   hoverBorder: "hover:border-rose-300",   hoverBg: "hover:bg-rose-900/60",   shadow: "shadow-[0_0_10px_rgba(244,63,94,0.45)]",  textColor: "text-rose-200" },
+  "突合失敗":   { bg: "bg-red-950/80",    border: "border-red-600",    hoverBorder: "hover:border-red-400",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
+};
+
 const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] = [
   { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400" },
   { key: "修正要請",     label: "修正要請",     colorClass: "text-orange-400" },
@@ -542,6 +549,7 @@ export default function RaceList() {
                   const isActive = statusFilter === card.key;
                   const isAlert = ALERT_STATUSES.has(card.key) && count >= 1;
                   const isHighlight = !isAlert && HIGHLIGHT_STATUSES.has(card.key) && count > 0;
+                  const alertStyle = isAlert ? ALERT_STYLE_MAP[card.key] : null;
                   return (
                     <button
                       key={card.key}
@@ -549,14 +557,14 @@ export default function RaceList() {
                       className={`flex items-center justify-between px-3 py-1.5 rounded-md border text-left transition-all cursor-pointer ${
                         isActive
                           ? "bg-primary/20 border-primary ring-1 ring-primary/40"
-                          : isAlert
-                            ? "bg-red-950/80 border-red-600 hover:border-red-400 hover:bg-red-900/60 shadow-[0_0_8px_rgba(239,68,68,0.35)] animate-pulse-subtle"
+                          : alertStyle
+                            ? `${alertStyle.bg} ${alertStyle.border} ${alertStyle.hoverBorder} ${alertStyle.hoverBg} ${alertStyle.shadow} animate-pulse-subtle`
                             : isHighlight
                               ? "bg-zinc-800/60 border-zinc-600 hover:border-zinc-400"
                               : "bg-card border-border hover:border-primary/50 hover:bg-muted/30"
                       }`}
                     >
-                      <span className={`text-[11px] whitespace-nowrap ${isAlert ? "text-red-200 font-semibold" : isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
+                      <span className={`text-[11px] whitespace-nowrap ${alertStyle ? `${alertStyle.textColor} font-semibold` : isHighlight ? "text-foreground font-medium" : "text-muted-foreground"}`}>{card.label}</span>
                       <span className={`text-base font-bold ml-2 ${card.colorClass}`}>{count}</span>
                     </button>
                   );
