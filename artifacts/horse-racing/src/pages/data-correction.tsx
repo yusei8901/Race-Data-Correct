@@ -47,7 +47,6 @@ const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = 
 };
 
 const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "その他"];
-const EXEMPT_SPECIAL_NOTES = new Set(["映像見切れ", "確認困難（ブレが大きい）", "その他"]);
 const LANES = ["内", "中", "外"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
 
@@ -673,10 +672,10 @@ const REANALYSIS_REASONS_DIALOG = ["逆光", "曇り", "雨天", "その他"];
 const GOAL_TIME_STEPS = [1, 0.1, 0.01];
 
 function AnalysisOptionDialog({
-  raceId, raceName, venue, onCancel, onSaved, isAdmin, onReanalyze, onReanalysisRequest,
+  raceId, raceName, venue, onCancel, onSaved, isAdmin, raceStatus, onReanalyze, onReanalysisRequest,
 }: {
   raceId: string; raceName: string; venue?: string; onCancel: () => void;
-  onSaved: () => void; isAdmin: boolean;
+  onSaved: () => void; isAdmin: boolean; raceStatus: string;
   onReanalyze: () => void; onReanalysisRequest: (reason: string, comment: string) => void;
   loading?: boolean;
 }) {
@@ -829,23 +828,25 @@ function AnalysisOptionDialog({
 
         <div className="flex gap-2 justify-between">
           <div className="flex gap-2">
-            {isAdmin && (
+            {isAdmin && raceStatus !== "未処理" && (
               <Button size="sm" onClick={onReanalyze} disabled={saving || fetching}
                 className="h-8 text-xs cursor-pointer gap-1.5 bg-red-800 hover:bg-red-700 text-white border-0">
                 <RefreshCw className="h-3 w-3" />再解析
               </Button>
             )}
-            {showReanalysisForm ? (
-              <Button size="sm" onClick={handleReanalysisRequest}
-                disabled={saving || fetching || (reanalysisReason === "その他" && !comment.trim())}
-                className="h-8 text-xs cursor-pointer gap-1.5 bg-red-700 hover:bg-red-600 text-white border-0">
-                <AlertTriangle className="h-3 w-3" />再解析要請を送信
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => setShowReanalysisForm(true)} disabled={saving || fetching}
-                className="h-8 text-xs cursor-pointer gap-1.5 bg-red-900/80 hover:bg-red-800 text-red-300 border border-red-800">
-                <AlertTriangle className="h-3 w-3" />再解析要請
-              </Button>
+            {!isAdmin && raceStatus !== "未処理" && (
+              showReanalysisForm ? (
+                <Button size="sm" onClick={handleReanalysisRequest}
+                  disabled={saving || fetching || (reanalysisReason === "その他" && !comment.trim())}
+                  className="h-8 text-xs cursor-pointer gap-1.5 bg-red-700 hover:bg-red-600 text-white border-0">
+                  <AlertTriangle className="h-3 w-3" />再解析要請を送信
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => setShowReanalysisForm(true)} disabled={saving || fetching}
+                  className="h-8 text-xs cursor-pointer gap-1.5 bg-red-900/80 hover:bg-red-800 text-red-300 border border-red-800">
+                  <AlertTriangle className="h-3 w-3" />再解析要請
+                </Button>
+              )
             )}
           </div>
           <div className="flex gap-2">
@@ -1039,7 +1040,6 @@ export default function DataCorrection() {
   // Edit mode: purely local; resets when leaving the page
   const [isEditingMode, setIsEditingMode] = useState(false);
   const [savingTemp, setSavingTemp] = useState(false);
-  const [cpErrors, setCpErrors] = useState<Record<string, { missing: number; anomalies: number }>>({});
   const [entrySortBy, setEntrySortBy] = useState<"horse_number" | "finish_position">("horse_number");
 
   // Editable start/goal times (video offset + race duration in seconds)
@@ -1117,13 +1117,6 @@ export default function DataCorrection() {
   }, [race?.id]);
   const currentFrame = Math.floor(videoTime * FPS);
 
-  useEffect(() => {
-    if (!raceId) return;
-    fetch(`${API}/races/${raceId}/checkpoint-errors`)
-      .then((r) => r.json())
-      .then((data) => setCpErrors(data))
-      .catch(() => {});
-  }, [raceId]);
 
 
   // Video timer effect
@@ -1718,41 +1711,20 @@ export default function DataCorrection() {
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setConfirmDialog("save")}>
                 <Save className="h-3 w-3" />一時保存
               </Button>
-              {(() => {
-                const totalMissing = Object.values(cpErrors).reduce((s, v) => s + (v?.missing ?? 0), 0);
-                const totalAnomalies = Object.values(cpErrors).reduce((s, v) => s + (v?.anomalies ?? 0), 0);
-                const totalIssues = totalMissing + totalAnomalies;
-                const hasIssues = totalIssues > 0;
-                return (
-                  <Button
-                    size="sm"
-                    className={`h-7 text-xs gap-1.5 text-white border-0 cursor-pointer ${hasIssues ? "bg-zinc-600 opacity-50 cursor-not-allowed" : "bg-green-700 hover:bg-green-600"}`}
-                    onClick={() => {
-                      if (hasIssues) {
-                        toast({
-                          title: "チェックポイントに問題があります",
-                          description: `欠損: ${totalMissing}件、異常値: ${totalAnomalies}件。修正してから補正完了にしてください。`,
-                          variant: "destructive",
-                        });
-                        return;
-                      }
-                      if (hasDuplicateHorseNumbers) {
-                        toast({ title: "馬番の重複があります", description: "同一地点に同じ馬番が存在します。解消してから完了してください。", variant: "destructive" });
-                        return;
-                      }
-                      setConfirmDialog("complete");
-                    }}
-                    disabled={completeCorrectionMut.isPending}
-                  >
-                    <CheckCircle2 className="h-3 w-3" />補正完了
-                    {hasIssues && (
-                      <span className="ml-1 bg-red-500 text-white rounded-full text-[9px] px-1 min-w-[16px] text-center">
-                        {totalIssues}
-                      </span>
-                    )}
-                  </Button>
-                );
-              })()}
+              <Button
+                size="sm"
+                className="h-7 text-xs gap-1.5 text-white border-0 cursor-pointer bg-green-700 hover:bg-green-600"
+                onClick={() => {
+                  if (hasDuplicateHorseNumbers) {
+                    toast({ title: "馬番の重複があります", description: "同一地点に同じ馬番が存在します。解消してから完了してください。", variant: "destructive" });
+                    return;
+                  }
+                  setConfirmDialog("complete");
+                }}
+                disabled={completeCorrectionMut.isPending}
+              >
+                <CheckCircle2 className="h-3 w-3" />補正完了
+              </Button>
               <Button
                 variant="ghost" size="sm"
                 className="h-7 text-xs cursor-pointer text-muted-foreground hover:text-foreground"
@@ -2354,36 +2326,16 @@ export default function DataCorrection() {
                     {pts200.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, effectiveBaseSec, effectiveVideoOffset);
                       const isSelected = selectedCp === pt.key;
-                      const cpData = cpErrors[pt.key];
-                      const missingCount = cpData?.missing ?? 0;
-                      const anomalyCount = cpData?.anomalies ?? 0;
-                      const hasMissing = missingCount > 0;
-                      const hasAnomaly = anomalyCount > 0;
-                      const hasIssue = hasMissing || hasAnomaly;
                       return (
                         <button
                           key={pt.key}
                           onClick={() => handleCpClick(pt.key, pt.meter)}
-                          className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
+                          className={`flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-primary border-primary text-white"
-                              : hasMissing
-                                ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
-                                : hasAnomaly
-                                  ? "bg-yellow-950/30 border-yellow-700/60 text-foreground hover:border-yellow-500"
-                                  : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
+                              : "bg-card border-border text-foreground hover:border-primary/50 hover:bg-muted/40"
                           }`}
                         >
-                          {anomalyCount > 0 && (
-                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-yellow-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {anomalyCount}
-                            </span>
-                          )}
-                          {missingCount > 0 && (
-                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {missingCount}
-                            </span>
-                          )}
                           <span className="font-medium leading-tight whitespace-pre-line text-center text-[9px]">{pt.label}</span>
                           <span className={`mt-0.5 font-mono text-[9px] ${isSelected ? "text-white/70" : "text-muted-foreground"}`}>
                             {fmtVideoTime(vt)}
@@ -2403,35 +2355,16 @@ export default function DataCorrection() {
                     {ptsStr.map((pt) => {
                       const vt = cpVideoTime(pt.meter, race.distance, effectiveBaseSec, effectiveVideoOffset);
                       const isSelected = selectedCp === pt.key;
-                      const cpData = cpErrors[pt.key];
-                      const missingCount = cpData?.missing ?? 0;
-                      const anomalyCount = cpData?.anomalies ?? 0;
-                      const hasMissing = missingCount > 0;
-                      const hasAnomaly = anomalyCount > 0;
                       return (
                         <button
                           key={pt.key}
                           onClick={() => handleCpClick(pt.key, pt.meter)}
-                          className={`relative flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
+                          className={`flex flex-col items-center px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors min-w-[48px] ${
                             isSelected
                               ? "bg-orange-600 border-orange-500 text-white"
-                              : hasMissing
-                                ? "bg-red-950/40 border-red-700/70 text-foreground hover:border-red-500"
-                                : hasAnomaly
-                                  ? "bg-yellow-950/30 border-yellow-700/60 text-foreground hover:border-yellow-500"
-                                  : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
+                              : "bg-card border-border text-foreground hover:border-orange-500/50 hover:bg-muted/40"
                           }`}
                         >
-                          {anomalyCount > 0 && (
-                            <span className="absolute -top-1.5 -left-1.5 min-w-[14px] h-[14px] bg-yellow-500 text-black text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {anomalyCount}
-                            </span>
-                          )}
-                          {missingCount > 0 && (
-                            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-red-600 text-white text-[8px] font-bold rounded-full flex items-center justify-center px-0.5 z-10">
-                              {missingCount}
-                            </span>
-                          )}
                           <span className="font-medium text-[9px]">{pt.label}</span>
                           <span className={`mt-0.5 font-mono text-[9px] ${isSelected ? "text-white/70" : "text-muted-foreground"}`}>
                             {fmtVideoTime(vt)}
@@ -2592,6 +2525,7 @@ export default function DataCorrection() {
           raceName={raceName}
           venue={race?.venue}
           isAdmin={isAdmin}
+          raceStatus={raceStatus}
           onCancel={() => setConfirmDialog(null)}
           onSaved={() => {
             setConfirmDialog(null);
@@ -2667,23 +2601,6 @@ function RightTable({
     return map;
   }, [allRows]);
 
-  const hasRowError = (row: any) => {
-    if ((row as any).is_phantom) return false;
-    const isExempt = row.special_note != null && EXEMPT_SPECIAL_NOTES.has(row.special_note);
-    if (row.horse_number == null) return true;
-    if (row.gate_number == null) return true;
-    if (row.time_seconds == null && !isExempt) return true;
-    if (row.time_seconds != null && (row.time_seconds > 300 || row.time_seconds < 0.05)) return true;
-    if (row.accuracy != null && row.accuracy < 30) return true;
-    if (row.lane == null && !isExempt && cpType === "200m") return true;
-    if (row.absolute_speed != null && row.absolute_speed > 80) return true;
-    if (row.speed_change != null && Math.abs(row.speed_change) > 30) return true;
-    return false;
-  };
-
-  const isTimeAnomaly = (t: number | null) => t != null && (t > 300 || t < 0.05);
-  const isSpeedAnomaly = (s: number | null) => s != null && s > 80;
-  const isSpeedChangeAnomaly = (sc: number | null) => sc != null && Math.abs(sc) > 30;
 
   return (
     <table className="w-full text-xs">
@@ -2716,23 +2633,18 @@ function RightTable({
           const isDuplicate = hn != null && duplicateHorseNumbers?.has(hn);
           const entryForRow = hn != null ? entries.find((e) => e.horse_number === hn) : null;
           const horseName = entryForRow?.horse_name ?? null;
-          const rowError = hasRowError(row);
 
           const rowBg = isPhantom
             ? "opacity-50"
             : isDuplicate
               ? "bg-red-900/20 hover:bg-red-900/30"
-              : rowError
-                ? "bg-amber-900/20 hover:bg-amber-900/30"
-                : "hover:bg-muted/20";
+              : "hover:bg-muted/20";
 
           const rowLeftBorder = isPhantom
             ? ""
             : isDuplicate
               ? "border-l-2 border-l-red-500"
-              : rowError
-                ? "border-l-2 border-l-amber-500"
-                : "";
+              : "";
 
           return (
             <tr key={row.id ?? idx} className={`border-t border-border/30 ${rowBg} ${rowLeftBorder}`}>
@@ -2804,7 +2716,7 @@ function RightTable({
                 {horseName ?? <span className="text-zinc-600">-</span>}
               </td>
 
-              <td className={`p-1.5 text-right font-mono text-[10px] ${!isPhantom && row.time_seconds == null ? "bg-red-900/30" : isTimeAnomaly(row.time_seconds) ? "bg-amber-900/40" : ""}`}>
+              <td className="p-1.5 text-right font-mono text-[10px]">
                 {isCorrectionMode && !isPhantom ? (
                   <input
                     type="text"
@@ -2825,12 +2737,10 @@ function RightTable({
                       else if (e.target.value === "") onEdit(row.id, "time_seconds", null);
                     }}
                     placeholder="欠損"
-                    className={`w-16 bg-zinc-800 border rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground ${row.time_seconds == null ? "border-red-500 placeholder-red-500" : "border-zinc-600"}`}
+                    className="w-16 bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground"
                   />
                 ) : row.time_seconds != null ? (
-                  <span className={isTimeAnomaly(row.time_seconds) ? "text-amber-400 font-bold" : ""}>
-                    {row.time_seconds.toFixed(2)}s
-                  </span>
+                  <span>{row.time_seconds.toFixed(2)}s</span>
                 ) : !isPhantom ? (
                   <span className="text-red-400 font-bold">欠損</span>
                 ) : <span className="text-zinc-600">-</span>}
@@ -2856,7 +2766,7 @@ function RightTable({
 
               {cpType === "straight" && (
                 <>
-                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedAnomaly(row.absolute_speed) ? "bg-amber-900/40" : !isPhantom && row.absolute_speed == null ? "bg-red-900/30" : ""}`}>
+                  <td className="p-1.5 text-right font-mono text-[10px]">
                     {isCorrectionMode && !isPhantom ? (
                       <input
                         type="number"
@@ -2864,17 +2774,15 @@ function RightTable({
                         defaultValue={row.absolute_speed ?? ""}
                         onBlur={(e) => onEdit(row.id, "absolute_speed", e.target.value === "" ? null : parseFloat(e.target.value))}
                         placeholder="欠損"
-                        className={`w-14 bg-zinc-800 border rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground ${row.absolute_speed == null ? "border-red-500 placeholder-red-500" : "border-zinc-600"}`}
+                        className="w-14 bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground"
                       />
                     ) : row.absolute_speed != null ? (
-                      <span className={isSpeedAnomaly(row.absolute_speed) ? "text-amber-400 font-bold" : "text-cyan-400"}>
-                        {row.absolute_speed.toFixed(1)}
-                      </span>
+                      <span className="text-cyan-400">{row.absolute_speed.toFixed(1)}</span>
                     ) : !isPhantom ? (
                       <span className="text-red-400 font-bold">欠損</span>
                     ) : <span className="text-zinc-600">-</span>}
                   </td>
-                  <td className={`p-1.5 text-right font-mono text-[10px] ${isSpeedChangeAnomaly(row.speed_change) ? "bg-amber-900/40" : !isPhantom && row.speed_change == null ? "bg-red-900/30" : ""}`}>
+                  <td className="p-1.5 text-right font-mono text-[10px]">
                     {isCorrectionMode && !isPhantom ? (
                       <input
                         type="number"
@@ -2882,10 +2790,10 @@ function RightTable({
                         defaultValue={row.speed_change ?? ""}
                         onBlur={(e) => onEdit(row.id, "speed_change", e.target.value === "" ? null : parseFloat(e.target.value))}
                         placeholder="欠損"
-                        className={`w-14 bg-zinc-800 border rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground ${row.speed_change == null ? "border-red-500 placeholder-red-500" : "border-zinc-600"}`}
+                        className="w-14 bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground"
                       />
                     ) : row.speed_change != null ? (
-                      <span className={isSpeedChangeAnomaly(row.speed_change) ? "text-amber-400 font-bold" : row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
+                      <span className={row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
                         {row.speed_change >= 0 ? "+" : ""}{row.speed_change.toFixed(1)}
                       </span>
                     ) : !isPhantom ? (
