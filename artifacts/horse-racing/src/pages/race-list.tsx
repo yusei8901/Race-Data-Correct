@@ -165,7 +165,7 @@ function getOperationConfig(status: DerivedStatus, isAdmin: boolean): { label: s
     case "レビュー待ち":
       return { label: "レビュー", colorClass: "bg-purple-700 hover:bg-purple-600 text-white border-0", disabled: false, adminOnly: true };
     case "再解析要請":
-      return { label: "レース詳細", colorClass: "bg-orange-700 hover:bg-orange-600 text-white border-0", disabled: false, adminOnly: false };
+      return { label: "レース詳細", colorClass: "bg-orange-700 hover:bg-orange-600 text-white border-0", disabled: false, adminOnly: true };
     case "突合失敗":
       return { label: "レース詳細", colorClass: "bg-orange-700 hover:bg-orange-600 text-white border-0", disabled: false, adminOnly: true };
     case "解析中":

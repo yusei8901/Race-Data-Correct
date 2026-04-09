@@ -89,14 +89,20 @@ def seed():
     preset_names = {
         "CLEAR": "晴天（標準）", "BACKLIGHT": "逆光", "CLOUDY": "曇天", "RAIN": "雨天",
     }
+    VENUE_NAME_JP = {
+        "nakayama": "中山", "hanshin": "阪神", "tokyo": "東京",
+        "kyoto": "京都", "oi": "大井", "kawasaki": "川崎",
+    }
+    SURFACE_JP = {"TURF": "芝", "DIRT": "ダート"}
     for vc in list(VENUE_CODE_MAP.values()):
         for wp in weather_presets:
             for st in ["TURF", "DIRT"]:
+                preset_label = f"{VENUE_NAME_JP[vc]}・{SURFACE_JP[st]}・{preset_names[wp]}"
                 cur.execute(
                     """INSERT INTO venue_weather_preset
                        (id, venue_code, weather_preset_code, name, surface_type, preset_parameters, is_active)
                        VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                    (str(uuid.uuid4()), vc, wp, f"{vc}・{preset_names[wp]}", st, '{}', True),
+                    (str(uuid.uuid4()), vc, wp, preset_label, st, '{}', True),
                 )
 
     # ── race / horse constants ─────────────────────────────────────────────────
@@ -491,9 +497,15 @@ def seed():
                 linkage_status = "FAILED"
             insert_linkage_result(race_id, official_race_id, linkage_status)
 
-            # race_status_history: PENDING initial + current
+            # race_status_history: PENDING initial + intermediate + current
             insert_status_history(race_id, "PENDING", sys_user)
             if status != "PENDING":
+                # Add ANALYZED before statuses that follow it in the workflow
+                if status in {"CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED", "MATCH_FAILED"}:
+                    insert_status_history(race_id, "ANALYZED", sys_user)
+                # Add CORRECTED before REVISION_REQUESTED / CONFIRMED for richer history
+                if status in {"REVISION_REQUESTED"}:
+                    insert_status_history(race_id, "CORRECTED", sys_user)
                 metadata = None
                 if status == "ANALYSIS_REQUESTED":
                     metadata = {

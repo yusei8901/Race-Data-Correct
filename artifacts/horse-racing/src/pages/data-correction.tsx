@@ -46,8 +46,8 @@ const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = 
   8: { bg: "#ec4899", text: "#000", label: "桃" },
 };
 
-const SPECIAL_NOTES = ["ー", "出遅れ", "大幅遅れ", "映像見切れ", "確認困難", "他馬と重複", "落馬", "失格"];
-const EXEMPT_SPECIAL_NOTES = new Set(["映像見切れ", "確認困難", "他馬と重複", "落馬", "失格"]);
+const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "その他"];
+const EXEMPT_SPECIAL_NOTES = new Set(["映像見切れ", "確認困難（ブレが大きい）", "その他"]);
 const LANES = ["内", "中", "外"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
 
@@ -55,6 +55,21 @@ const VENUE_ID_MAP: Record<string, string> = {
   "中山": "nakayama", "阪神": "hanshin", "京都": "kyoto", "東京": "tokyo",
   "大井": "oi", "川崎": "kawasaki",
 };
+
+function formatGoalTime(sec: number): string {
+  const total = Math.round(sec * 100);
+  const mm = Math.floor(total / 6000);
+  const ss = Math.floor((total % 6000) / 100);
+  const cc = total % 100;
+  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}:${String(cc).padStart(2, "0")}`;
+}
+
+function parseGoalTime(s: string): number | null {
+  const m = s.match(/^(\d+):(\d{2}):(\d{2})$/);
+  if (m) return parseInt(m[1]) * 60 + parseInt(m[2]) + parseInt(m[3]) / 100;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
 
 function formatMargin(margin: number | null | undefined, finishPos: number | null | undefined): string {
   if (finishPos === 1) return "-";
@@ -686,7 +701,7 @@ function AnalysisOptionDialog({
     ]).then(([existing, presetList]) => {
       setPresets(presetList || []);
       if (existing) {
-        if (existing.video_goal_time != null) setGoalTime(String(existing.video_goal_time));
+        if (existing.video_goal_time != null) setGoalTime(formatGoalTime(Number(existing.video_goal_time)));
         if (existing.venue_weather_preset_id) setPresetId(existing.venue_weather_preset_id);
         if (existing.comment) setComment(existing.comment);
       }
@@ -695,16 +710,17 @@ function AnalysisOptionDialog({
   }, [raceId]);
 
   const adjustGoalTime = (delta: number) => {
-    const current = parseFloat(goalTime) || 0;
+    const current = parseGoalTime(goalTime) ?? 0;
     const next = Math.max(0, Math.round((current + delta) * 100) / 100);
-    setGoalTime(next.toFixed(2));
+    setGoalTime(formatGoalTime(next));
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
       const body: Record<string, unknown> = {};
-      if (goalTime.trim()) body.video_goal_time = parseFloat(goalTime);
+      const gtSec = parseGoalTime(goalTime);
+      if (gtSec != null && gtSec > 0) body.video_goal_time = gtSec;
       if (presetId) body.venue_weather_preset_id = presetId;
       body.comment = comment.trim() || null;
       const res = await fetch(`${API}/races/${raceId}/analysis-option`, {
@@ -749,7 +765,7 @@ function AnalysisOptionDialog({
                   type="text"
                   value={goalTime}
                   onChange={(e) => setGoalTime(e.target.value)}
-                  placeholder="120.50"
+                  placeholder="01:30:00"
                   className="flex-1 bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground font-mono text-center min-w-0"
                 />
                 <div className="flex gap-1">
@@ -1679,6 +1695,13 @@ export default function DataCorrection() {
 
         <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
 
+          {/* 補正中インジケーター */}
+          {raceStatus === "補正中" && raceLockedBy && (
+            <span className="text-xs text-cyan-400 px-2 py-1 bg-cyan-900/20 border border-cyan-800/50 rounded">
+              {raceLockedBy}が補正中
+            </span>
+          )}
+
           {/* 解析オプション — always visible */}
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setConfirmDialog("analysisOption")}>
             解析オプション
@@ -2607,6 +2630,8 @@ function RightTable({
 }) {
   const presentNums = new Set(orders.map((o) => o.horse_number));
   const missingHorses = entries.map((e) => e.horse_number).filter((n) => !presentNums.has(n));
+  const [timeWarnShown, setTimeWarnShown] = useState(false);
+
   const phantomRows = missingHorses.map((hn) => {
     const e = entries.find((x) => x.horse_number === hn);
     return {
@@ -2784,6 +2809,16 @@ function RightTable({
                   <input
                     type="text"
                     defaultValue={row.time_seconds != null ? row.time_seconds.toFixed(2) : ""}
+                    onFocus={(e) => {
+                      if (!timeWarnShown) {
+                        const ok = window.confirm("変更すると推定ロジックが崩れる危険性があります。続けますか？");
+                        if (ok) {
+                          setTimeWarnShown(true);
+                        } else {
+                          e.currentTarget.blur();
+                        }
+                      }
+                    }}
                     onBlur={(e) => {
                       const v = parseFloat(e.target.value);
                       if (!isNaN(v) && v > 0) onEdit(row.id, "time_seconds", v);
@@ -2884,10 +2919,11 @@ function RightTable({
               <td className="p-1.5 text-center">
                 {isCorrectionMode && !isPhantom ? (
                   <select
-                    value={row.special_note ?? "ー"}
-                    onChange={(e) => onEdit(row.id, "special_note", e.target.value === "ー" ? null : e.target.value)}
-                    className="bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground max-w-[80px]"
+                    value={row.special_note ?? ""}
+                    onChange={(e) => onEdit(row.id, "special_note", e.target.value === "" ? null : e.target.value)}
+                    className="bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground max-w-[100px]"
                   >
+                    <option value="">ー</option>
                     {SPECIAL_NOTES.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                 ) : (

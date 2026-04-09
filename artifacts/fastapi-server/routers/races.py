@@ -700,15 +700,16 @@ def temp_save_correction(race_id: str, body: dict):
                 "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
                 (race_id,),
             )
+            prev_status = _get_previous_status(cur, race_id, "CORRECTING")
             cur.execute(
-                "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
-                (race_id,),
+                "UPDATE race SET status = %s, updated_at = NOW() WHERE id = %s",
+                (prev_status, race_id),
             )
             user_id = _get_sys_user(cur)
-            _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "temp-save exit"})
+            _write_history(cur, race_id, prev_status, user_id, {"reason": "temp-save exit"})
             _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
                          {"status": race_now["status"] if race_now else None},
-                         {"status": "ANALYZED", "reason": "temp-save exit"})
+                         {"status": prev_status, "reason": "temp-save exit"})
         else:
             cur.execute("UPDATE race SET updated_at = NOW() WHERE id = %s", (race_id,))
 
