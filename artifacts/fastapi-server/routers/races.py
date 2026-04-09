@@ -91,7 +91,7 @@ LEFT JOIN LATERAL (
         metadata->>'reanalysis_reason'  AS reanalysis_reason,
         metadata->>'reanalysis_comment' AS reanalysis_comment
     FROM race_status_history
-    WHERE race_id = r.id AND status IN ('ANALYSIS_REQUESTED', 'REANALYZING')
+    WHERE race_id = r.id AND status = 'ANALYSIS_REQUESTED'
     ORDER BY changed_at DESC LIMIT 1
 ) rsh_rea ON true
 """
@@ -477,13 +477,13 @@ def reanalyze_race(race_id: str):
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'ANALYSIS_REQUESTED', updated_at = NOW() WHERE id = %s",
+            "UPDATE race SET status = 'ANALYZING', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYSIS_REQUESTED", user_id)
+        _write_history(cur, race_id, "ANALYZING", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "ANALYSIS_REQUESTED"})
+                     {"status": old["status"]}, {"status": "ANALYZING"})
         conn.commit()
     return get_race(race_id)
 
@@ -618,7 +618,7 @@ def start_correction(race_id: str, body: dict):
 
         old_status = race_row["status"]
 
-        # Write CORRECTING history (prev status needed for 補正中 vs 再補正中)
+        # Write CORRECTING history
         cur.execute(
             "UPDATE race SET status = 'CORRECTING', updated_at = NOW() WHERE id = %s",
             (race_id,),
