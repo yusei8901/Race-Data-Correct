@@ -305,6 +305,7 @@ CREATE TABLE IF NOT EXISTS analysis_option (
   video_id                  UUID NOT NULL REFERENCES race_video(id) ON DELETE CASCADE,
   venue_weather_preset_id   UUID REFERENCES venue_weather_preset(id) ON DELETE SET NULL,
   video_goal_time           DECIMAL(10,2),
+  comment                   TEXT,
   created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(race_id, video_id)

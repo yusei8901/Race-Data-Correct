@@ -706,6 +706,26 @@ def temp_save_correction(race_id: str, body: dict):
     return get_race(race_id)
 
 
+CANONICAL_STATUSES = {
+    "PENDING", "ANALYZING", "ANALYSIS_FAILED", "ANALYZED", "REANALYZING",
+    "MATCH_FAILED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED",
+}
+
+
+def _get_previous_status(cur, race_id: str, current_status: str) -> str:
+    """Look up the canonical status before current_status from race_status_history."""
+    cur.execute(
+        """SELECT status FROM race_status_history
+           WHERE race_id = %s AND status != %s
+           ORDER BY changed_at DESC""",
+        (race_id, current_status),
+    )
+    for row in cur:
+        if row["status"] in CANONICAL_STATUSES:
+            return row["status"]
+    return "ANALYZED"
+
+
 @router.post("/races/{race_id}/corrections/cancel")
 def cancel_correction(race_id: str):
     with get_db() as conn:
@@ -714,18 +734,19 @@ def cancel_correction(race_id: str):
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
+        prev_status = _get_previous_status(cur, race_id, old["status"])
         cur.execute(
             "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
         cur.execute(
-            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
+            "UPDATE race SET status = %s, updated_at = NOW() WHERE id = %s",
+            (prev_status, race_id),
         )
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "correction cancelled"})
+        _write_history(cur, race_id, prev_status, user_id, {"reason": "correction cancelled"})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "ANALYZED", "reason": "correction cancelled"})
+                     {"status": old["status"]}, {"status": prev_status, "reason": "correction cancelled"})
         conn.commit()
     return get_race(race_id)
 
@@ -753,3 +774,62 @@ def force_unlock(race_id: str):
                      {"status": "ANALYZED", "reason": "force-unlock by admin"})
         conn.commit()
     return get_race(race_id)
+
+
+# ── Analysis option endpoints ────────────────────────────────────────────────
+
+@router.get("/races/{race_id}/analysis-option")
+def get_analysis_option(race_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            """SELECT ao.id, ao.race_id, ao.video_id,
+                      ao.venue_weather_preset_id, ao.video_goal_time, ao.comment,
+                      vwp.name AS preset_name,
+                      ao.created_at::text, ao.updated_at::text
+               FROM analysis_option ao
+               LEFT JOIN venue_weather_preset vwp ON ao.venue_weather_preset_id = vwp.id
+               WHERE ao.race_id = %s
+               ORDER BY ao.created_at DESC LIMIT 1""",
+            (race_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return row
+
+
+@router.post("/races/{race_id}/analysis-option")
+def upsert_analysis_option(race_id: str, body: dict):
+    video_goal_time = body.get("video_goal_time")
+    preset_id = body.get("venue_weather_preset_id")
+    comment = body.get("comment")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT id FROM race_video WHERE race_id = %s ORDER BY created_at DESC LIMIT 1",
+            (race_id,),
+        )
+        video = cur.fetchone()
+        if not video:
+            raise HTTPException(status_code=404, detail="No video found for this race")
+        video_id = video["id"]
+        cur.execute("DELETE FROM analysis_option WHERE race_id = %s", (race_id,))
+        cur.execute(
+            """INSERT INTO analysis_option (id, race_id, video_id, venue_weather_preset_id, video_goal_time, comment, created_at, updated_at)
+               VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, NOW(), NOW())
+               RETURNING id""",
+            (race_id, video_id, preset_id, video_goal_time, comment),
+        )
+        conn.commit()
+        return get_analysis_option(race_id)
+
+
+@router.get("/venue-weather-presets")
+def get_venue_weather_presets():
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT id, venue_code, weather_preset_code, name, surface_type FROM venue_weather_preset WHERE is_active = TRUE ORDER BY name"
+        )
+        return cur.fetchall()

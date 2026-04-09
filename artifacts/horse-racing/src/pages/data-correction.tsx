@@ -705,6 +705,113 @@ function CorrectionRequestDialog({
   );
 }
 
+// ── Analysis Option Dialog (解析オプション) ───────────────────────────────────
+interface VenueWeatherPreset {
+  id: string; name: string; venue_code: string; weather_preset_code: string; surface_type: string;
+}
+
+function AnalysisOptionDialog({
+  raceId, raceName, onCancel, onSaved, loading: parentLoading,
+}: {
+  raceId: string; raceName: string; onCancel: () => void;
+  onSaved: () => void; loading?: boolean;
+}) {
+  const [goalTime, setGoalTime] = useState("");
+  const [presetId, setPresetId] = useState<string>("");
+  const [comment, setComment] = useState("");
+  const [presets, setPresets] = useState<VenueWeatherPreset[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [fetching, setFetching] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${API}/races/${raceId}/analysis-option`).then((r) => r.json()),
+      fetch(`${API}/venue-weather-presets`).then((r) => r.json()),
+    ]).then(([existing, presetList]) => {
+      setPresets(presetList || []);
+      if (existing) {
+        if (existing.video_goal_time != null) setGoalTime(String(existing.video_goal_time));
+        if (existing.venue_weather_preset_id) setPresetId(existing.venue_weather_preset_id);
+        if (existing.comment) setComment(existing.comment);
+      }
+      setFetching(false);
+    }).catch(() => setFetching(false));
+  }, [raceId]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (goalTime.trim()) body.video_goal_time = parseFloat(goalTime);
+      if (presetId) body.venue_weather_preset_id = presetId;
+      if (comment.trim()) body.comment = comment;
+      const res = await fetch(`${API}/races/${raceId}/analysis-option`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      onSaved();
+    } catch {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
+        <h2 className="text-sm font-semibold mb-3">解析オプション</h2>
+        <div className="text-xs text-muted-foreground mb-1">対象レース</div>
+        <div className="text-sm font-medium mb-4">{raceName}</div>
+        {fetching ? (
+          <div className="text-xs text-muted-foreground py-4 text-center">読み込み中...</div>
+        ) : (
+          <>
+            <div className="mb-3">
+              <div className="text-xs font-medium text-muted-foreground mb-1">ゴールタイム（1/100秒まで）</div>
+              <input
+                type="text"
+                value={goalTime}
+                onChange={(e) => setGoalTime(e.target.value)}
+                placeholder="例: 120.50"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground"
+              />
+            </div>
+            <div className="mb-3">
+              <div className="text-xs font-medium text-muted-foreground mb-1">解析プリセット</div>
+              <select
+                value={presetId}
+                onChange={(e) => setPresetId(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground cursor-pointer"
+              >
+                <option value="">選択してください</option>
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mb-5">
+              <div className="text-xs font-medium text-muted-foreground mb-1">コメント（任意）</div>
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground resize-none h-20"
+                placeholder="メモを入力してください"
+              />
+            </div>
+          </>
+        )}
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={saving} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+          <Button size="sm" onClick={handleSave} disabled={saving || fetching} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
+            {saving ? "保存中..." : "保存"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Bind Analysis Dialog (解析データ再紐付け) ─────────────────────────────────
 interface AnalysisDataItem {
   id: string; label: string; date: string; venue: string; race_number: number;
@@ -870,7 +977,7 @@ export default function DataCorrection() {
   // UI state
   const [showHistory, setShowHistory] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<
-    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "reanalysis" | "correctionRequest" | "statusDetail" | "bindAnalysis" | null
+    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "reanalysis" | "correctionRequest" | "statusDetail" | "bindAnalysis" | "analysisOption" | null
   >(null);
   const [leftView, setLeftView] = useState<"furlong" | "entries" | "both">("both");
   const [selectedCp, setSelectedCp] = useState<string | null>(null);
@@ -1474,7 +1581,7 @@ export default function DataCorrection() {
 
   const raceTimeFromVideo = videoTime - effectiveVideoOffset;
   const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
-  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち";
+  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち" || (raceStatus === "データ確定" && isAdmin);
   const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
 
   // Duplicate horse number validation
@@ -1576,10 +1683,22 @@ export default function DataCorrection() {
             </Badge>
           )}
 
+          {/* 解析オプション — always visible */}
+          <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setConfirmDialog("analysisOption")}>
+            解析オプション
+          </Button>
+
           {/* 修正履歴/コメント — always visible */}
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setShowHistory(true)}>
             <History className="h-3 w-3" />修正履歴/コメント
           </Button>
+
+          {/* 再解析 — admin only, always visible */}
+          {isAdmin && (
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer" onClick={() => setConfirmDialog("reanalysis")}>
+              再解析
+            </Button>
+          )}
 
           {/* Editing mode buttons */}
           {isEditingMode ? (
@@ -1632,14 +1751,22 @@ export default function DataCorrection() {
             </>
           ) : (
             <>
-              {/* 補正開始 / 補正再開 — when 待機中 or 修正要請 */}
+              {/* 補正開始 / 補正再開 / 再補正 — per status */}
               {canStartCorrection && !isLockedByOther && (
                 <Button
                   size="sm"
-                  className={`h-7 text-xs gap-1.5 cursor-pointer ${raceStatus === "修正要請" ? "bg-cyan-700 hover:bg-cyan-600" : "bg-primary hover:bg-primary/90"} text-white border-0`}
+                  className={`h-7 text-xs gap-1.5 cursor-pointer ${
+                    raceStatus === "修正要請" ? "bg-cyan-700 hover:bg-cyan-600"
+                    : raceStatus === "データ確定" ? "bg-green-700 hover:bg-green-600"
+                    : "bg-primary hover:bg-primary/90"
+                  } text-white border-0`}
                   onClick={handleStart}
                 >
-                  <Play className="h-3 w-3" />{raceStatus === "修正要請" ? "補正再開" : "補正開始"}
+                  <Play className="h-3 w-3" />
+                  {raceStatus === "修正要請" ? "補正再開"
+                    : raceStatus === "データ確定" ? "再補正"
+                    : raceStatus === "レビュー待ち" ? "補正開始"
+                    : "補正開始"}
                 </Button>
               )}
 
@@ -1672,7 +1799,7 @@ export default function DataCorrection() {
                 </Button>
               )}
 
-              {/* 修正要請 — admin only, データ確定 */}
+              {/* 修正要請 — admin only, データ確定 or レビュー待ち */}
               {isAdmin && raceStatus === "データ確定" && (
                 <Button
                   size="sm"
@@ -1706,18 +1833,6 @@ export default function DataCorrection() {
               onClick={() => setConfirmDialog("matchingFailure")}
             >
               突合申請
-            </Button>
-          )}
-
-          {/* 再解析申請 — editing mode only */}
-          {isEditingMode && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
-              onClick={() => setConfirmDialog("reanalysis")}
-            >
-              再解析申請
             </Button>
           )}
 
@@ -2470,6 +2585,17 @@ export default function DataCorrection() {
           raceName={raceName}
           onCancel={() => setConfirmDialog(null)}
           onBind={handleBindAnalysis}
+        />
+      )}
+      {confirmDialog === "analysisOption" && (
+        <AnalysisOptionDialog
+          raceId={raceId}
+          raceName={raceName}
+          onCancel={() => setConfirmDialog(null)}
+          onSaved={() => {
+            setConfirmDialog(null);
+            toast({ title: "解析オプションを保存しました" });
+          }}
         />
       )}
     </div>

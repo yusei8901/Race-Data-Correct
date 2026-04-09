@@ -1,14 +1,13 @@
 import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
-import { Calendar, RefreshCcw, AlertTriangle, X, RotateCcw, Download, RefreshCw } from "lucide-react";
+import { Calendar, RefreshCcw, AlertTriangle, Download, RefreshCw } from "lucide-react";
 import {
   useGetRaces,
   getGetRacesQueryKey,
   useGetRaceSummary,
   getGetRaceSummaryQueryKey,
   useBatchUpdateRaces,
-  useReanalyzeRace,
 } from "@workspace/api-client-react";
 import type { Race } from "@workspace/api-client-react";
 import { Input } from "@/components/ui/input";
@@ -96,11 +95,7 @@ function getStatusBadgeProps(status: DerivedStatus) {
   }
 }
 
-const CORRECTION_DISABLED_STATUSES: DerivedStatus[] = [
-  "未処理", "解析中", "解析失敗",
-];
-
-const SELECTABLE_STATUSES: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
+const SELECTABLE_STATUSES: DerivedStatus[] = ["待機中", "補正中", "再補正中", "レビュー待ち", "修正要請", "データ確定"];
 const BULK_STATUS_OPTIONS: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
 
 function isSelectable(status: DerivedStatus): boolean {
@@ -165,79 +160,19 @@ const STATUS_ROW2: StatusFilterDef[] = [
 
 const ALL_STATUS_CARDS = [...STATUS_ROW1, ...STATUS_ROW2];
 
-interface ReanalyzeDialogProps {
-  race: Race;
-  onClose: () => void;
-  onExecute: (preset: string) => void;
-  isLoading: boolean;
-}
-
-const ANALYSIS_PRESETS = ["標準", "逆光用", "曇り用", "雨天用"];
-
-function ReanalyzeDialog({ race, onClose, onExecute, isLoading }: ReanalyzeDialogProps) {
-  const [selectedPreset, setSelectedPreset] = useState("標準");
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-foreground">再解析の確認</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors cursor-pointer">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="mb-4">
-          <div className="text-sm text-muted-foreground mb-1">対象レース</div>
-          <div className="text-sm font-medium text-foreground">
-            {race.venue} {race.race_number}R — {race.race_name}
-          </div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {race.surface_type} {race.distance}m
-          </div>
-        </div>
-
-        <div className="flex items-start gap-2 bg-amber-950/40 border border-amber-800/50 rounded-md p-3 mb-5">
-          <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
-          <p className="text-xs text-amber-300 leading-relaxed">
-            再解析を実行すると、現在の解析結果が上書きされます。この操作は取り消せません。
-          </p>
-        </div>
-
-        <div className="mb-5">
-          <div className="text-xs font-medium text-muted-foreground mb-2">解析パラメータプリセット</div>
-          <div className="grid grid-cols-2 gap-2">
-            {ANALYSIS_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                onClick={() => setSelectedPreset(preset)}
-                className={`py-2 px-3 rounded-md text-sm font-medium border transition-colors cursor-pointer ${
-                  selectedPreset === preset
-                    ? "bg-orange-500/20 border-orange-500 text-orange-400"
-                    : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
-                }`}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex gap-2 justify-end">
-          <Button variant="outline" onClick={onClose} disabled={isLoading} className="h-8 text-xs cursor-pointer">
-            キャンセル
-          </Button>
-          <Button
-            onClick={() => onExecute(selectedPreset)}
-            disabled={isLoading}
-            className="h-8 text-xs bg-orange-600 hover:bg-orange-500 text-white border-0 cursor-pointer"
-          >
-            {isLoading ? "実行中..." : "再解析を実行"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
+function getOperationConfig(status: DerivedStatus, isAdmin: boolean): { label: string; colorClass: string; disabled: boolean; adminOnly: boolean } {
+  switch (status) {
+    case "データ確定":
+      return { label: "再補正", colorClass: "bg-green-700 hover:bg-green-600 text-white border-0", disabled: false, adminOnly: true };
+    case "レビュー待ち":
+      return { label: "レビュー", colorClass: "bg-purple-700 hover:bg-purple-600 text-white border-0", disabled: false, adminOnly: true };
+    case "再解析待ち":
+      return { label: "データ補正", colorClass: "bg-rose-700 hover:bg-rose-600 text-white border-0", disabled: false, adminOnly: false };
+    case "解析中":
+      return { label: "解析中", colorClass: "bg-zinc-700 text-white border-0", disabled: true, adminOnly: false };
+    default:
+      return { label: "レース詳細", colorClass: "bg-zinc-700 hover:bg-zinc-600 text-white border-0", disabled: false, adminOnly: false };
+  }
 }
 
 function downloadCSV(races: Race[], venue: string) {
@@ -293,7 +228,6 @@ export default function RaceList() {
   const [statusFilter, setStatusFilter] = useState<FilterKey | "total" | null>(saved?.statusFilter ?? null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
-  const [reanalyzeRace, setReanalyzeRace] = useState<Race | null>(null);
   const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
 
   const queryClient = useQueryClient();
@@ -423,7 +357,6 @@ export default function RaceList() {
     .map((r) => r.id);
 
   const batchUpdateMutation = useBatchUpdateRaces();
-  const reanalyzeMutation = useReanalyzeRace();
 
   const handleBulkUpdate = () => {
     if (selectedIds.length === 0) return;
@@ -432,19 +365,6 @@ export default function RaceList() {
       {
         onSuccess: () => {
           setCheckedIds(new Set());
-          queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
-        },
-      }
-    );
-  };
-
-  const handleReanalyze = (_preset: string) => {
-    if (!reanalyzeRace) return;
-    reanalyzeMutation.mutate(
-      { raceId: reanalyzeRace.id },
-      {
-        onSuccess: () => {
-          setReanalyzeRace(null);
           queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
         },
       }
@@ -671,17 +591,11 @@ export default function RaceList() {
                   const videoComplete = race.video_status === "完了";
                   const canSelect = isSelectable(derivedStatus);
                   const isChecked = checkedIds.has(race.id);
-                  const canReanalyze = derivedStatus === "解析失敗" || derivedStatus === "再解析待ち";
                   const isAnalyzing = derivedStatus === "解析中";
                   const isCompleting = completingIds.has(race.id);
 
-                  const correctionDisabled = CORRECTION_DISABLED_STATUSES.includes(derivedStatus);
-
-                  const opLabel = "レース詳細";
-                  const opColorClass = "bg-zinc-700 hover:bg-zinc-600 text-white border-0";
-
-                  const opActionBlocked = !isAdmin && (derivedStatus === "レビュー待ち" || derivedStatus === "データ確定");
-                  const reanalyzeBlocked = !isAdmin;
+                  const opConfig = getOperationConfig(derivedStatus, isAdmin);
+                  const opBlocked = opConfig.disabled || (opConfig.adminOnly && !isAdmin);
 
                   let updatedTime = "-";
                   if (race.updated_at) {
@@ -738,25 +652,25 @@ export default function RaceList() {
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
-                          {correctionDisabled || opActionBlocked ? (
+                          {opBlocked ? (
                             <Button
                               size="sm"
                               disabled
-                              className={`h-6 text-[11px] px-2 opacity-30 cursor-not-allowed ${opColorClass}`}
+                              className={`h-6 text-[11px] px-2 opacity-30 cursor-not-allowed ${opConfig.colorClass}`}
                             >
-                              {opLabel}
+                              {opConfig.label}
                             </Button>
                           ) : (
                             <Link href={`/races/${race.id}`}>
                               <Button
                                 size="sm"
-                                className={`h-6 text-[11px] px-2 cursor-pointer ${opColorClass}`}
+                                className={`h-6 text-[11px] px-2 cursor-pointer ${opConfig.colorClass}`}
                               >
-                                {opLabel}
+                                {opConfig.label}
                               </Button>
                             </Link>
                           )}
-                          {isAnalyzing ? (
+                          {isAnalyzing && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -767,21 +681,6 @@ export default function RaceList() {
                             >
                               <RefreshCw className={`h-3 w-3 ${isCompleting ? "animate-spin" : ""}`} />
                               完了
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className={`h-6 text-[11px] px-2 flex items-center gap-0.5 ${
-                                canReanalyze && !reanalyzeBlocked
-                                  ? "border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer"
-                                  : "opacity-30 cursor-not-allowed"
-                              }`}
-                              disabled={!canReanalyze || reanalyzeBlocked}
-                              onClick={() => canReanalyze && !reanalyzeBlocked && setReanalyzeRace(race)}
-                            >
-                              <RotateCcw className="h-3 w-3" />
-                              再解析
                             </Button>
                           )}
                         </div>
@@ -795,14 +694,6 @@ export default function RaceList() {
         </div>
       </div>
 
-      {reanalyzeRace && (
-        <ReanalyzeDialog
-          race={reanalyzeRace}
-          onClose={() => setReanalyzeRace(null)}
-          onExecute={handleReanalyze}
-          isLoading={reanalyzeMutation.isPending}
-        />
-      )}
     </div>
   );
 }
