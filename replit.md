@@ -63,21 +63,20 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 ### Analysis options
 - `analysis_option` — Per-race analysis params (race×video unique). FK → race, race_video, venue_weather_preset
 
-## English Status Codes (race.status) — 11 display statuses
+## English Status Codes (race.status) — 10 display statuses
 
 | Code | Display (JP) | Note |
 |---|---|---|
 | PENDING | 未処理 | GCSに動画配置済み、解析未実行 |
-| REANALYZING | 再解析待ち | 再解析ジョブ投入済み、実行待ち |
 | ANALYZING | 解析中 | 解析ジョブ実行中 |
 | ANALYSIS_FAILED | 解析失敗 | 解析ジョブがエラー終了 |
 | ANALYZED | 待機中 | 解析完了、補正未実施 |
 | MATCH_FAILED | 突合失敗 | 公式データ突合に失敗 |
-| CORRECTING | 補正中 | 補正中（開始元がCONFIRMED以外） |
-| CORRECTING | 再補正中 | 開始直前がCONFIRMEDのとき（管理者の再補正） |
-| CORRECTED | レビュー待ち | 補正完了、確定待ち（提出） |
+| CORRECTING | 補正中 | データ補正画面で編集中 |
+| CORRECTED | レビュー待ち | 補正完了、データ確定待ち（提出） |
 | REVISION_REQUESTED | 修正要請 | 管理者差し戻し |
-| CONFIRMED | データ確定 | 確定済み（confirmed_by=user.id） |
+| CONFIRMED | データ確定 | 確定済み（confirmed_by=user.id, confirmed_at） |
+| ANALYSIS_REQUESTED | 再解析要請 | 再解析要請がされた状態 |
 
 ## FastAPI Routes (all prefixed `/fastapi`) — PENDING migration to new schema (Task #5)
 

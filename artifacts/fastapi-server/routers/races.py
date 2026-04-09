@@ -12,7 +12,6 @@ router = APIRouter(prefix="/fastapi")
 STATUS_DISPLAY = {
     "PENDING":            ("未", "",       "未処理"),
     "ANALYZING":          ("完了", "解析中",   "解析中"),
-    "REANALYZING":        ("完了", "再解析待ち", "再解析待ち"),
     "ANALYSIS_FAILED":    ("完了", "解析失敗", "解析失敗"),
     "ANALYZED":           ("完了", "完了",     "待機中"),
     "MATCH_FAILED":       ("完了", "突合失敗", "突合失敗"),
@@ -20,14 +19,13 @@ STATUS_DISPLAY = {
     "CORRECTED":          ("完了", "完了",     "レビュー待ち"),
     "REVISION_REQUESTED": ("完了", "完了",     "修正要請"),
     "CONFIRMED":          ("完了", "完了",     "データ確定"),
+    "ANALYSIS_REQUESTED": ("完了", "再解析要請", "再解析要請"),
 }
 
 
 def compute_display_status(english_status: str, video_raw: str, prev_status: Optional[str]) -> tuple:
     """Return (video_status, analysis_status, display_status)."""
     vid, ana, ds = STATUS_DISPLAY.get(english_status, ("未", "", "未処理"))
-    if english_status == "CORRECTING" and prev_status == "CONFIRMED":
-        ds = "再補正中"
     return vid, ana, ds
 
 
@@ -93,7 +91,7 @@ LEFT JOIN LATERAL (
         metadata->>'reanalysis_reason'  AS reanalysis_reason,
         metadata->>'reanalysis_comment' AS reanalysis_comment
     FROM race_status_history
-    WHERE race_id = r.id AND status = 'REANALYZING'
+    WHERE race_id = r.id AND status IN ('ANALYSIS_REQUESTED', 'REANALYZING')
     ORDER BY changed_at DESC LIMIT 1
 ) rsh_rea ON true
 """
@@ -276,13 +274,25 @@ def get_races(
         return [fmt_race(r) for r in cur.fetchall()]
 
 
+DISPLAY_TO_DB_STATUS = {
+    "待機中": "ANALYZED",
+    "補正中": "CORRECTING",
+    "レビュー待ち": "CORRECTED",
+    "修正要請": "REVISION_REQUESTED",
+    "データ確定": "CONFIRMED",
+    "再解析要請": "ANALYSIS_REQUESTED",
+}
+
+
 @router.patch("/races/batch-update")
 def batch_update_races(body: dict):
     race_ids = body.get("race_ids", [])
     if not race_ids:
         return {"updated": 0}
-    ALLOWED_STATUSES = {"ANALYZED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED"}
+    ALLOWED_STATUSES = {"ANALYZED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED", "ANALYSIS_REQUESTED"}
     new_status = body.get("status")
+    if new_status and new_status in DISPLAY_TO_DB_STATUS:
+        new_status = DISPLAY_TO_DB_STATUS[new_status]
     if new_status and new_status not in ALLOWED_STATUSES:
         raise HTTPException(status_code=400, detail=f"Status '{new_status}' is not allowed for batch update")
     set_parts = ["updated_at = NOW()"]
@@ -467,13 +477,13 @@ def reanalyze_race(race_id: str):
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'REANALYZING', updated_at = NOW() WHERE id = %s",
+            "UPDATE race SET status = 'ANALYSIS_REQUESTED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "REANALYZING", user_id)
+        _write_history(cur, race_id, "ANALYSIS_REQUESTED", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "REANALYZING"})
+                     {"status": old["status"]}, {"status": "ANALYSIS_REQUESTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -489,14 +499,14 @@ def reanalysis_request(race_id: str, body: dict):
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'REANALYZING', updated_at = NOW() WHERE id = %s",
+            "UPDATE race SET status = 'ANALYSIS_REQUESTED', updated_at = NOW() WHERE id = %s",
             (race_id,),
         )
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "REANALYZING", user_id,
+        _write_history(cur, race_id, "ANALYSIS_REQUESTED", user_id,
                        {"reanalysis_reason": reason, "reanalysis_comment": comment})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "REANALYZING", "reason": reason})
+                     {"status": old["status"]}, {"status": "ANALYSIS_REQUESTED", "reason": reason})
         conn.commit()
     return get_race(race_id)
 
@@ -707,7 +717,7 @@ def temp_save_correction(race_id: str, body: dict):
 
 
 CANONICAL_STATUSES = {
-    "PENDING", "ANALYZING", "ANALYSIS_FAILED", "ANALYZED", "REANALYZING",
+    "PENDING", "ANALYZING", "ANALYSIS_FAILED", "ANALYZED", "ANALYSIS_REQUESTED",
     "MATCH_FAILED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED",
 }
 

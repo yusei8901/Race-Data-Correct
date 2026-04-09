@@ -614,62 +614,6 @@ function TempSaveDialog({
   );
 }
 
-// ── Reanalysis Request Dialog ─────────────────────────────────────────────────
-const REANALYSIS_REASONS = ["逆光", "曇り", "雨天", "その他"];
-
-function ReanalysisRequestDialog({
-  raceName, onCancel, onSubmit, loading,
-}: {
-  raceName: string; onCancel: () => void; onSubmit: (reason: string, comment: string) => void; loading?: boolean;
-}) {
-  const [reason, setReason] = useState("逆光");
-  const [comment, setComment] = useState("");
-  const isOther = reason === "その他";
-  const canSubmit = !isOther || comment.trim().length > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
-        <h2 className="text-sm font-semibold mb-3">再解析申請</h2>
-        <div className="text-xs text-muted-foreground mb-1">対象レース</div>
-        <div className="text-sm font-medium mb-4">{raceName}</div>
-        <div className="mb-3">
-          <div className="text-xs font-medium text-muted-foreground mb-2">再解析理由</div>
-          <div className="grid grid-cols-2 gap-2">
-            {REANALYSIS_REASONS.map((r) => (
-              <button
-                key={r}
-                onClick={() => setReason(r)}
-                className={`py-2 px-3 rounded-md text-sm font-medium border transition-colors cursor-pointer ${
-                  reason === r
-                    ? "bg-red-500/20 border-red-500 text-red-400"
-                    : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
-                }`}
-              >{r}</button>
-            ))}
-          </div>
-        </div>
-        <div className="mb-5">
-          <div className="text-xs font-medium text-muted-foreground mb-1">
-            コメント{isOther ? <span className="text-red-400 ml-1">（必須）</span> : "（任意）"}
-          </div>
-          <textarea
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground resize-none h-20"
-            placeholder="再解析の理由を入力してください"
-          />
-        </div>
-        <div className="flex gap-2 justify-end">
-          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="h-8 text-xs cursor-pointer">キャンセル</Button>
-          <Button size="sm" onClick={() => onSubmit(reason, comment)} disabled={loading || !canSubmit} className="h-8 text-xs cursor-pointer bg-red-700 hover:bg-red-600">
-            {loading ? "申請中..." : "再解析を申請"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Correction Request Dialog (修正要請) ──────────────────────────────────────
 function CorrectionRequestDialog({
@@ -710,11 +654,15 @@ interface VenueWeatherPreset {
   id: string; name: string; venue_code: string; weather_preset_code: string; surface_type: string;
 }
 
+const REANALYSIS_REASONS_DIALOG = ["逆光", "曇り", "雨天", "その他"];
+
 function AnalysisOptionDialog({
-  raceId, raceName, onCancel, onSaved, loading: parentLoading,
+  raceId, raceName, onCancel, onSaved, isAdmin, onReanalyze, onReanalysisRequest, loading: parentLoading,
 }: {
   raceId: string; raceName: string; onCancel: () => void;
-  onSaved: () => void; loading?: boolean;
+  onSaved: () => void; isAdmin: boolean;
+  onReanalyze: () => void; onReanalysisRequest: (reason: string, comment: string) => void;
+  loading?: boolean;
 }) {
   const [goalTime, setGoalTime] = useState("");
   const [presetId, setPresetId] = useState<string>("");
@@ -722,6 +670,8 @@ function AnalysisOptionDialog({
   const [presets, setPresets] = useState<VenueWeatherPreset[]>([]);
   const [saving, setSaving] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [showReanalysisForm, setShowReanalysisForm] = useState(false);
+  const [reanalysisReason, setReanalysisReason] = useState("逆光");
 
   useEffect(() => {
     Promise.all([
@@ -757,12 +707,23 @@ function AnalysisOptionDialog({
     }
   };
 
+  const handleReanalyze = () => {
+    onReanalyze();
+  };
+
+  const handleReanalysisRequest = () => {
+    const isOther = reanalysisReason === "その他";
+    if (isOther && !comment.trim()) return;
+    onReanalysisRequest(reanalysisReason, comment);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
-        <h2 className="text-sm font-semibold mb-3">解析オプション</h2>
-        <div className="text-xs text-muted-foreground mb-1">対象レース</div>
-        <div className="text-sm font-medium mb-4">{raceName}</div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">解析オプション</h2>
+          <button onClick={onCancel} className="text-zinc-400 hover:text-white cursor-pointer text-lg leading-none">✕</button>
+        </div>
         {fetching ? (
           <div className="text-xs text-muted-foreground py-4 text-center">読み込み中...</div>
         ) : (
@@ -790,8 +751,8 @@ function AnalysisOptionDialog({
                 ))}
               </select>
             </div>
-            <div className="mb-5">
-              <div className="text-xs font-medium text-muted-foreground mb-1">コメント（任意）</div>
+            <div className="mb-4">
+              <div className="text-xs font-medium text-muted-foreground mb-1">コメント{showReanalysisForm && reanalysisReason === "その他" ? <span className="text-red-400 ml-1">（必須）</span> : "（任意）"}</div>
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -799,13 +760,61 @@ function AnalysisOptionDialog({
                 placeholder="メモを入力してください"
               />
             </div>
+
+            {showReanalysisForm && (
+              <div className="mb-4 border border-zinc-700 rounded p-3 bg-zinc-800/50">
+                <div className="text-xs font-medium text-muted-foreground mb-2">再解析理由</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {REANALYSIS_REASONS_DIALOG.map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setReanalysisReason(r)}
+                      className={`py-1.5 px-2 rounded text-xs font-medium border transition-colors cursor-pointer ${
+                        reanalysisReason === r
+                          ? "bg-red-500/20 border-red-500 text-red-400"
+                          : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
+                      }`}
+                    >{r}</button>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
-        <div className="flex gap-2 justify-end">
-          <Button variant="outline" size="sm" onClick={onCancel} disabled={saving} className="h-8 text-xs cursor-pointer">キャンセル</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || fetching} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
-            {saving ? "保存中..." : "保存"}
-          </Button>
+        <div className="flex gap-2 justify-between">
+          <div className="flex gap-2">
+            {isAdmin && (
+              <Button size="sm" onClick={handleReanalyze} disabled={saving || fetching} className="h-8 text-xs cursor-pointer bg-zinc-700 hover:bg-zinc-600 text-white border-0">
+                再解析
+              </Button>
+            )}
+            {showReanalysisForm ? (
+              <Button
+                size="sm"
+                onClick={handleReanalysisRequest}
+                disabled={saving || fetching || (reanalysisReason === "その他" && !comment.trim())}
+                className="h-8 text-xs cursor-pointer bg-red-700 hover:bg-red-600 text-white border-0"
+              >
+                再解析要請を送信
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => setShowReanalysisForm(true)} disabled={saving || fetching} className="h-8 text-xs cursor-pointer bg-zinc-700 hover:bg-zinc-600 text-white border-0">
+                再解析要請
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {showReanalysisForm ? (
+              <Button variant="outline" size="sm" onClick={() => setShowReanalysisForm(false)} className="h-8 text-xs cursor-pointer">戻る</Button>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" onClick={onCancel} disabled={saving} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+                <Button size="sm" onClick={handleSave} disabled={saving || fetching} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
+                  {saving ? "保存中..." : "保存"}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -938,9 +947,9 @@ function StatusDetailPopup({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[440px] max-w-[95vw] p-6">
-        {status === "再解析待ち" && (
+        {status === "再解析要請" && (
           <>
-            <h2 className="text-sm font-semibold mb-3 text-rose-400">再解析待ちの詳細</h2>
+            <h2 className="text-sm font-semibold mb-3 text-rose-400">再解析要請の詳細</h2>
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground">理由: <span className="text-foreground font-medium">{race.reanalysis_reason || "-"}</span></div>
               {race.reanalysis_comment && (
@@ -977,7 +986,7 @@ export default function DataCorrection() {
   // UI state
   const [showHistory, setShowHistory] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<
-    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "reanalysis" | "correctionRequest" | "statusDetail" | "bindAnalysis" | "analysisOption" | null
+    "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "correctionRequest" | "statusDetail" | "bindAnalysis" | "analysisOption" | null
   >(null);
   const [leftView, setLeftView] = useState<"furlong" | "entries" | "both">("both");
   const [selectedCp, setSelectedCp] = useState<string | null>(null);
@@ -1158,13 +1167,11 @@ export default function DataCorrection() {
   const isLockedByOther = !!raceLockedBy && raceLockedBy !== currentUserName;
   const raceStatus = race?.display_status ?? race?.status ?? "";
 
-  // Auto-enter editing mode when navigating to a 補正中/再補正中 race that the current user locked.
-  // Only fires once per race to avoid overriding an intentional cancel.
   useEffect(() => {
     if (!race?.id) return;
     if (autoEditRef.current.has(race.id)) return;
     if (
-      (raceStatus === "補正中" || raceStatus === "再補正中") &&
+      raceStatus === "補正中" &&
       raceLockedBy === currentUserName
     ) {
       autoEditRef.current.add(race.id);
@@ -1174,7 +1181,7 @@ export default function DataCorrection() {
 
   // 補正開始 / 補正再開
   const handleStart = () => {
-    if ((raceStatus === "補正中" || raceStatus === "再補正中") && isLockedByMe) {
+    if (raceStatus === "補正中" && isLockedByMe) {
       setIsEditingMode(true);
       return;
     }
@@ -1186,7 +1193,7 @@ export default function DataCorrection() {
       .then((r) => { if (!r.ok) throw new Error("Lock failed"); return r.json(); })
       .then((updated) => {
         queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
-        const actionType = raceStatus === "修正要請" || raceStatus === "補正中" || raceStatus === "再補正中" ? "補正再開" : "補正開始";
+        const actionType = raceStatus === "修正要請" || raceStatus === "補正中" ? "補正再開" : "補正開始";
         fetch(`${API}/races/${raceId}/history`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1325,9 +1332,9 @@ export default function DataCorrection() {
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_name: currentUserName, action_type: "再解析待ち", description: `理由: ${reason}${comment ? ` / ${comment}` : ""}` }),
+        body: JSON.stringify({ user_name: currentUserName, action_type: "再解析要請", description: `理由: ${reason}${comment ? ` / ${comment}` : ""}` }),
       });
-      toast({ title: "再解析を申請しました" });
+      toast({ title: "再解析を要請しました" });
       setIsEditingMode(false);
     } catch {
       toast({ title: "再解析申請に失敗しました", variant: "destructive" });
@@ -1653,31 +1660,30 @@ export default function DataCorrection() {
 
         <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
           {/* Status badge */}
-          {(raceStatus === "補正中" || raceStatus === "再補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析待ち" || raceStatus === "突合失敗") && (
+          {(raceStatus === "補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析要請" || raceStatus === "突合失敗") && (
             <Badge
               variant="outline"
               className={`text-[10px] cursor-pointer ${
                 raceStatus === "補正中" ? "border-blue-700 text-blue-400 bg-blue-900/20"
-                : raceStatus === "再補正中" ? "border-indigo-700 text-indigo-400 bg-indigo-900/20"
                 : raceStatus === "待機中" ? "border-yellow-700 text-yellow-400 bg-yellow-900/20"
                 : raceStatus === "レビュー待ち" ? "border-purple-700 text-purple-400 bg-purple-900/20"
                 : raceStatus === "修正要請" ? "border-orange-700 text-orange-400 bg-orange-900/20"
                 : raceStatus === "データ確定" ? "border-green-700 text-green-400 bg-green-900/20"
-                : raceStatus === "再解析待ち" ? "border-rose-700 text-rose-400 bg-rose-900/20"
+                : raceStatus === "再解析要請" ? "border-rose-700 text-rose-400 bg-rose-900/20"
                 : raceStatus === "突合失敗" ? "border-red-700 text-red-400 bg-red-900/20"
                 : "border-zinc-700 text-zinc-400"
               }`}
-              onClick={() => (raceStatus === "再解析待ち" || raceStatus === "修正要請") && setConfirmDialog("statusDetail")}
+              onClick={() => (raceStatus === "再解析要請" || raceStatus === "修正要請") && setConfirmDialog("statusDetail")}
             >
               {raceStatus}
-              {raceStatus === "再解析待ち" && race?.reanalysis_reason && (
+              {raceStatus === "再解析要請" && race?.reanalysis_reason && (
                 <span className="ml-1 text-[9px]">({race.reanalysis_reason})</span>
               )}
             </Badge>
           )}
 
           {/* Lock indicator */}
-          {(raceStatus === "補正中" || raceStatus === "再補正中") && isLockedByOther && (
+          {raceStatus === "補正中" && isLockedByOther && (
             <Badge variant="outline" className="text-[10px] border-amber-700 text-amber-400 bg-amber-900/20">
               {raceLockedBy}が編集中
             </Badge>
@@ -1692,13 +1698,6 @@ export default function DataCorrection() {
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 cursor-pointer" onClick={() => setShowHistory(true)}>
             <History className="h-3 w-3" />修正履歴/コメント
           </Button>
-
-          {/* 再解析 — admin only, always visible */}
-          {isAdmin && (
-            <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 border-red-700 text-red-400 hover:bg-red-900/20 cursor-pointer" onClick={() => setConfirmDialog("reanalysis")}>
-              再解析
-            </Button>
-          )}
 
           {/* Editing mode buttons */}
           {isEditingMode ? (
@@ -1764,14 +1763,14 @@ export default function DataCorrection() {
                 >
                   <Play className="h-3 w-3" />
                   {raceStatus === "修正要請" ? "補正再開"
-                    : raceStatus === "データ確定" ? "再補正"
+                    : raceStatus === "データ確定" ? "補正開始"
                     : raceStatus === "レビュー待ち" ? "補正開始"
                     : "補正開始"}
                 </Button>
               )}
 
               {/* Lock warning for non-owner */}
-              {(raceStatus === "補正中" || raceStatus === "再補正中") && isLockedByOther && (
+              {raceStatus === "補正中" && isLockedByOther && (
                 <span className="text-xs text-amber-400 px-2 py-1 bg-amber-900/20 border border-amber-800/50 rounded">
                   {raceLockedBy}が編集中
                 </span>
@@ -1810,8 +1809,8 @@ export default function DataCorrection() {
                 </Button>
               )}
 
-              {/* 強制ロック解除 — admin only, 補正中/再補正中 */}
-              {isAdmin && (raceStatus === "補正中" || raceStatus === "再補正中") && (
+              {/* 強制ロック解除 — admin only, 補正中 */}
+              {isAdmin && raceStatus === "補正中" && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -2559,13 +2558,6 @@ export default function DataCorrection() {
           confirmColor="bg-red-700 hover:bg-red-600"
         />
       )}
-      {confirmDialog === "reanalysis" && (
-        <ReanalysisRequestDialog
-          raceName={raceName}
-          onCancel={() => setConfirmDialog(null)}
-          onSubmit={handleReanalysisRequest}
-        />
-      )}
       {confirmDialog === "correctionRequest" && (
         <CorrectionRequestDialog
           raceName={raceName}
@@ -2591,11 +2583,25 @@ export default function DataCorrection() {
         <AnalysisOptionDialog
           raceId={raceId}
           raceName={raceName}
+          isAdmin={isAdmin}
           onCancel={() => setConfirmDialog(null)}
           onSaved={() => {
             setConfirmDialog(null);
             toast({ title: "解析オプションを保存しました" });
           }}
+          onReanalyze={async () => {
+            try {
+              const res = await fetch(`${API}/races/${raceId}/reanalyze`, { method: "POST" });
+              if (!res.ok) throw new Error("Failed");
+              const updated = await res.json();
+              queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+              toast({ title: "再解析を実行しました" });
+              setConfirmDialog(null);
+            } catch {
+              toast({ title: "再解析に失敗しました", variant: "destructive" });
+            }
+          }}
+          onReanalysisRequest={handleReanalysisRequest}
         />
       )}
     </div>

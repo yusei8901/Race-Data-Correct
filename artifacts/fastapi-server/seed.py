@@ -13,7 +13,7 @@ if not DATABASE_URL:
 
 # ── Status maps ──────────────────────────────────────────────────────────────
 STATUS_WITH_ANALYSIS = {"ANALYZED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED",
-                        "CONFIRMED", "MATCH_FAILED", "REANALYZING"}
+                        "CONFIRMED", "MATCH_FAILED", "ANALYSIS_REQUESTED"}
 STATUS_ANALYZING_JOB = {"ANALYZING"}    # Running job, no result yet
 STATUS_FAILED_JOB = {"ANALYSIS_FAILED"} # Failed job, no result
 # PENDING: no job at all
@@ -134,12 +134,12 @@ def seed():
         ("阪神","中央競馬",7,"4歳2勝クラス","ダート",1200,"右回り","晴","良","13:05","PENDING"),
         ("中山","中央競馬",8,"3歳オープン","芝",1600,"右回り","晴","良","13:40","ANALYZING"),
         ("阪神","中央競馬",8,"3歳オープン","芝",1600,"右回り","晴","良","13:40","ANALYZING"),
-        ("中山","中央競馬",9,"4歳以上オープン","ダート",1800,"右回り","曇","稍重","14:15","REANALYZING"),
-        ("阪神","中央競馬",9,"4歳以上オープン","ダート",1800,"右回り","曇","稍重","14:15","REANALYZING"),
+        ("中山","中央競馬",9,"4歳以上オープン","ダート",1800,"右回り","曇","稍重","14:15","ANALYSIS_REQUESTED"),
+        ("阪神","中央競馬",9,"4歳以上オープン","ダート",1800,"右回り","曇","稍重","14:15","ANALYSIS_REQUESTED"),
         ("中山","中央競馬",10,"5歳以上3勝クラス","芝",2000,"右回り","曇","重","14:50","ANALYSIS_FAILED"),
         ("阪神","中央競馬",10,"5歳以上3勝クラス","芝",2000,"右回り","曇","重","14:50","ANALYSIS_FAILED"),
-        ("中山","中央競馬",11,"3歳重賞","芝",2400,"右回り","晴","良","15:25","REANALYZING"),
-        ("阪神","中央競馬",11,"3歳重賞","芝",2400,"右回り","晴","良","15:25","REANALYZING"),
+        ("中山","中央競馬",11,"3歳重賞","芝",2400,"右回り","晴","良","15:25","ANALYSIS_REQUESTED"),
+        ("阪神","中央競馬",11,"3歳重賞","芝",2400,"右回り","晴","良","15:25","ANALYSIS_REQUESTED"),
         ("中山","中央競馬",12,"4歳以上重賞","ダート",2500,"右回り","晴","良","16:00","MATCH_FAILED"),
         ("阪神","中央競馬",12,"4歳以上重賞","ダート",2500,"右回り","晴","良","16:00","MATCH_FAILED"),
         ("大井","地方競馬",1,"3歳未勝利","ダート",1200,"左回り","晴","良","15:00","ANALYZED"),
@@ -163,12 +163,12 @@ def seed():
 
     statuses_tokyo = [
         "ANALYZED","ANALYZED","CORRECTING","CORRECTED","CONFIRMED",
-        "REVISION_REQUESTED","ANALYZED","CORRECTING","REANALYZING",
+        "REVISION_REQUESTED","ANALYZED","CORRECTING","ANALYSIS_REQUESTED",
         "MATCH_FAILED","ANALYZING","ANALYZED",
     ]
     statuses_kyoto = [
         "ANALYZED","CORRECTING","CORRECTED","CONFIRMED","REVISION_REQUESTED",
-        "ANALYSIS_FAILED","ANALYZED","MATCH_FAILED","REANALYZING",
+        "ANALYSIS_FAILED","ANALYZED","MATCH_FAILED","ANALYSIS_REQUESTED",
         "CORRECTING","PENDING","ANALYZED",
     ]
     start_times = [
@@ -494,7 +494,7 @@ def seed():
             insert_status_history(race_id, "PENDING", sys_user)
             if status != "PENDING":
                 metadata = None
-                if status == "REANALYZING":
+                if status == "ANALYSIS_REQUESTED":
                     metadata = {
                         "reanalysis_reason": "逆光",
                         "reanalysis_comment": "午後の時間帯で逆光が厳しく正確な解析が困難",

@@ -41,20 +41,19 @@ const API = BASE_URL + "/fastapi";
 // Internal DB code → display label mapping (11 statuses)
 type DerivedStatus =
   | "未処理"
-  | "再解析待ち"
   | "解析中"
   | "解析失敗"
   | "待機中"
   | "突合失敗"
   | "補正中"
-  | "再補正中"
   | "レビュー待ち"
   | "修正要請"
-  | "データ確定";
+  | "データ確定"
+  | "再解析要請";
 
 const KNOWN_STATUSES: ReadonlySet<DerivedStatus> = new Set<DerivedStatus>([
-  "未処理", "再解析待ち", "解析中", "解析失敗", "待機中", "突合失敗",
-  "補正中", "再補正中", "レビュー待ち", "修正要請", "データ確定",
+  "未処理", "解析中", "解析失敗", "待機中", "突合失敗",
+  "補正中", "レビュー待ち", "修正要請", "データ確定", "再解析要請",
 ]);
 
 function getDerivedStatus(race: Race): DerivedStatus {
@@ -65,7 +64,6 @@ function getDerivedStatus(race: Race): DerivedStatus {
   const st = race.status ?? "";
   switch (st) {
     case "PENDING":            return "未処理";
-    case "REANALYZING":        return "再解析待ち";
     case "ANALYZING":          return "解析中";
     case "ANALYSIS_FAILED":    return "解析失敗";
     case "ANALYZED":           return "待機中";
@@ -74,6 +72,7 @@ function getDerivedStatus(race: Race): DerivedStatus {
     case "CORRECTED":          return "レビュー待ち";
     case "REVISION_REQUESTED": return "修正要請";
     case "CONFIRMED":          return "データ確定";
+    case "ANALYSIS_REQUESTED": return "再解析要請";
     default:                   return "未処理";
   }
 }
@@ -81,13 +80,12 @@ function getDerivedStatus(race: Race): DerivedStatus {
 function getStatusBadgeProps(status: DerivedStatus) {
   switch (status) {
     case "未処理":       return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700", label: "未処理" };
-    case "再解析待ち":   return { className: "bg-rose-900/40 text-rose-400 border-rose-800", label: "再解析待ち" };
     case "解析中":       return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
     case "解析失敗":     return { className: "bg-red-900/50 text-red-400 border-red-800", label: "解析失敗" };
     case "待機中":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "待機中" };
     case "突合失敗":     return { className: "bg-red-950/60 text-red-300 border-red-900", label: "突合失敗" };
     case "補正中":       return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
-    case "再補正中":     return { className: "bg-indigo-900/40 text-indigo-400 border-indigo-800", label: "再補正中" };
+    case "再解析要請":   return { className: "bg-rose-900/40 text-rose-400 border-rose-800", label: "再解析要請" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
     case "修正要請":     return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };
     case "データ確定":   return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
@@ -95,8 +93,8 @@ function getStatusBadgeProps(status: DerivedStatus) {
   }
 }
 
-const SELECTABLE_STATUSES: DerivedStatus[] = ["待機中", "補正中", "再補正中", "レビュー待ち", "修正要請", "データ確定"];
-const BULK_STATUS_OPTIONS: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
+const SELECTABLE_STATUSES: DerivedStatus[] = ["データ確定", "レビュー待ち", "修正要請", "補正中", "待機中"];
+const BULK_STATUS_OPTIONS: DerivedStatus[] = ["データ確定", "レビュー待ち", "修正要請", "補正中", "待機中"];
 
 function isSelectable(status: DerivedStatus): boolean {
   return SELECTABLE_STATUSES.includes(status);
@@ -123,13 +121,13 @@ function formatDateTitle(dateStr: string): string {
   }
 }
 
-const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析待ち", "突合失敗"]);
+const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
 const HIGHLIGHT_STATUSES: Set<string> = new Set([...ALERT_STATUSES, "未処理"]);
 
 const ALERT_STYLE_MAP: Record<string, { bg: string; border: string; hoverBorder: string; hoverBg: string; shadow: string; textColor: string }> = {
   "修正要請":   { bg: "bg-orange-950/80", border: "border-orange-500", hoverBorder: "hover:border-orange-300", hoverBg: "hover:bg-orange-900/60", shadow: "shadow-[0_0_10px_rgba(249,115,22,0.45)]", textColor: "text-orange-200" },
   "解析失敗":   { bg: "bg-red-950/80",    border: "border-red-500",    hoverBorder: "hover:border-red-300",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
-  "再解析待ち": { bg: "bg-rose-950/80",   border: "border-rose-500",   hoverBorder: "hover:border-rose-300",   hoverBg: "hover:bg-rose-900/60",   shadow: "shadow-[0_0_10px_rgba(244,63,94,0.45)]",  textColor: "text-rose-200" },
+  "再解析要請": { bg: "bg-rose-950/80",   border: "border-rose-500",   hoverBorder: "hover:border-rose-300",   hoverBg: "hover:bg-rose-900/60",   shadow: "shadow-[0_0_10px_rgba(244,63,94,0.45)]",  textColor: "text-rose-200" },
   "突合失敗":   { bg: "bg-red-950/80",    border: "border-red-600",    hoverBorder: "hover:border-red-400",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
 };
 
@@ -143,18 +141,18 @@ interface StatusFilterDef {
 }
 
 const STATUS_ROW1: StatusFilterDef[] = [
-  { key: "データ確定",     label: "データ確定",     colorClass: "text-green-400",  matchStatuses: ["データ確定"] },
-  { key: "補正・再補正中", label: "補正・再補正中", colorClass: "text-blue-400",   matchStatuses: ["補正中", "再補正中"] },
-  { key: "解析・再解析中", label: "解析・再解析中", colorClass: "text-cyan-400",   matchStatuses: ["解析中"] },
-  { key: "修正要請",       label: "修正要請",       colorClass: "text-orange-400", matchStatuses: ["修正要請"] },
-  { key: "突合失敗",       label: "突合失敗",       colorClass: "text-red-300",    matchStatuses: ["突合失敗"] },
+  { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400",  matchStatuses: ["データ確定"] },
+  { key: "補正中",       label: "補正中",       colorClass: "text-blue-400",   matchStatuses: ["補正中"] },
+  { key: "解析中",       label: "解析中",       colorClass: "text-cyan-400",   matchStatuses: ["解析中"] },
+  { key: "修正要請",     label: "修正要請",     colorClass: "text-orange-400", matchStatuses: ["修正要請"] },
+  { key: "突合失敗",     label: "突合失敗",     colorClass: "text-red-300",    matchStatuses: ["突合失敗"] },
 ];
 
 const STATUS_ROW2: StatusFilterDef[] = [
   { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400", matchStatuses: ["レビュー待ち"] },
   { key: "待機中",       label: "待機中",       colorClass: "text-yellow-400", matchStatuses: ["待機中"] },
   { key: "未処理",       label: "未処理",       colorClass: "text-zinc-400",   matchStatuses: ["未処理"] },
-  { key: "再解析待ち",   label: "再解析待ち",   colorClass: "text-rose-400",   matchStatuses: ["再解析待ち"] },
+  { key: "再解析要請",   label: "再解析要請",   colorClass: "text-rose-400",   matchStatuses: ["再解析要請"] },
   { key: "解析失敗",     label: "解析失敗",     colorClass: "text-red-400",    matchStatuses: ["解析失敗"] },
 ];
 
@@ -166,7 +164,7 @@ function getOperationConfig(status: DerivedStatus, isAdmin: boolean): { label: s
       return { label: "再補正", colorClass: "bg-green-700 hover:bg-green-600 text-white border-0", disabled: false, adminOnly: true };
     case "レビュー待ち":
       return { label: "レビュー", colorClass: "bg-purple-700 hover:bg-purple-600 text-white border-0", disabled: false, adminOnly: true };
-    case "再解析待ち":
+    case "再解析要請":
       return { label: "データ補正", colorClass: "bg-rose-700 hover:bg-rose-600 text-white border-0", disabled: false, adminOnly: false };
     case "解析中":
       return { label: "解析中", colorClass: "bg-zinc-700 text-white border-0", disabled: true, adminOnly: false };
@@ -229,6 +227,7 @@ export default function RaceList() {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
   const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -360,16 +359,32 @@ export default function RaceList() {
 
   const handleBulkUpdate = () => {
     if (selectedIds.length === 0) return;
+    setBulkConfirmOpen(true);
+  };
+
+  const executeBulkUpdate = () => {
+    setBulkConfirmOpen(false);
     batchUpdateMutation.mutate(
       { data: { race_ids: selectedIds, status: bulkStatus } },
       {
         onSuccess: () => {
           setCheckedIds(new Set());
           queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
+          toast({ title: `${selectedIds.length}件のレースを「${bulkStatus}」に変更しました` });
+        },
+        onError: () => {
+          toast({ title: "一括変更に失敗しました", variant: "destructive" });
         },
       }
     );
   };
+
+  const bulkConfirmRaceNames = useMemo(() => {
+    if (!bulkConfirmOpen) return [];
+    return filteredRaces
+      .filter((r) => selectedIds.includes(r.id))
+      .map((r) => `${r.venue} ${r.race_number}R ${r.race_name}`);
+  }, [bulkConfirmOpen, filteredRaces, selectedIds]);
 
   const handleCompleteAnalysis = async (raceId: string) => {
     setCompletingIds((prev) => new Set(prev).add(raceId));
@@ -693,6 +708,28 @@ export default function RaceList() {
           </Table>
         </div>
       </div>
+
+      {bulkConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[520px] max-w-[95vw] p-6">
+            <h2 className="text-sm font-semibold mb-3">一括ステータス変更の確認</h2>
+            <p className="text-xs text-muted-foreground mb-2">
+              以下の{bulkConfirmRaceNames.length}件のレースを「<span className="text-foreground font-medium">{bulkStatus}</span>」に変更します。
+            </p>
+            <div className="max-h-[200px] overflow-auto bg-zinc-800/60 border border-zinc-700 rounded p-2 mb-4">
+              {bulkConfirmRaceNames.map((name, i) => (
+                <div key={i} className="text-xs text-zinc-300 py-0.5">{name}</div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setBulkConfirmOpen(false)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+              <Button size="sm" onClick={executeBulkUpdate} disabled={batchUpdateMutation.isPending} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
+                {batchUpdateMutation.isPending ? "変更中..." : "変更する"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
