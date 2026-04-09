@@ -1,0 +1,116 @@
+# API設計（Reactフロント向け管理API）
+
+React補正ツール・管理画面から呼び出すAPIを定義。フロント・バックエンド・解析基盤の並行実装を可能にする。
+
+**前提:** フロント=React、バックエンド=API、DB=Cloud SQL。動画は GCS 直配置・検知はバックエンド。解析・ジョブ基盤と連携。
+
+**公式データのハロンタイム（および必要に応じてゴールタイム等）をアンカー（基準）とし、ユーザーに通過タイムを数値フィールドだけで直接修正・上書きさせない。** ユーザーの操作は**馬の紐付け・走行位置（レーン）・特記事項・映像オーバーレイ上の BBOX／キーフレーム等**に限定しやすくし整合性を保ちやすくする。**サーバ／解析エンジンが再計算**した通過タイム・順位・速度は **`GET /races/{raceId}/analysis` の再取得**または **`PUT …/corrections/save` のレスポンス**で参照する。
+
+---
+
+## 1. API一覧
+
+### 認証 / 権限
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/auth/me` | 自分情報。認証済み主体を `external_subject_id` と突合し DB の `user` を返す想定 |
+| GET | `/auth/permissions` | 権限一覧 |
+
+**認証:** IAP 背後に API。OIDC の不変IDを `user.external_subject_id` に対応。将来 GCIP 追加時も JWT 検証は共通部品化。メールはログインキーにしない。
+
+### 一覧 / 詳細
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/races` | レース一覧（status, eventId, correctedBy, eventDateFrom, eventDateTo, page, limit） |
+| GET | `/races/status` | ステータス別件数 |
+| GET | `/races/{raceId}` | レース詳細 |
+| GET | `/races/{raceId}/analysis` | `【修正箇所】` 解析結果ヘッダ＋明細。レスポンスは「点（200m通過）」と「線（直線50m区間）」を論理的に分離した構造 |
+| GET | `/races/{raceId}/comparison` | **公式ハロン・ゴールタイム等のアンカー**と解析／再計算結果の差分表示に利用 |
+| GET | `/videos` | 動画一覧（raceId, eventId, status でフィルタ可） |
+
+### 補正
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| POST | `/races/{raceId}/corrections/start` | 補正開始・ロック取得。**管理者**は **`CONFIRMED` からも開始可**`race.status` は `CORRECTING`（確定取り消し専用 API は必須としない） |
+| PUT | `/races/{raceId}/corrections/save` | 補正保存（`version` 必須。`correctionData` は DB の `correction_result.correction_data` と同義。内容は下記「補正保存と correction_data」）。保存のたびに新版 `correction_result`。保存時に**再計算を同期実行**し派生タイム等を返すか、非同期ジョブに回すかは実装で選択可 |
+| POST | `/races/{raceId}/corrections/recalculate` | **明示的再計算**（任意・`correctionData` または直近保存内容を入力に、派生タイム・順位・速度を再算出）。`save` 内で完結する場合は省略可 |
+| POST | `/races/{raceId}/corrections/complete` | 補正完了 |
+| POST | `/races/{raceId}/corrections/cancel` | 補正キャンセル |
+| POST | `/races/{raceId}/corrections/revert` | 差戻し（補正破棄→未補正。管理者差し戻しとは別） |
+| POST | `/races/{raceId}/revision/reject` | 管理者が**差し戻し（レビュー）**（`CORRECTED`→`REVISION_REQUESTED`）。**既存の提出済み補正は DB 上の過去版として残す**。再編集は `corrections/start` で**新セッション** |
+
+### 特記事項マスタ（`correction_memo_master`）
+
+補正画面の**選択肢一覧取得**専用。マスタは**事前に DB に登録**する。選択結果は **`correction_result.correction_data`（JSONB）** に保存（`PUT …/corrections/save` の `correctionData`）。マスタ行は DB の `id`, `memo_text`, `display_order`, `is_active`。
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/correction-memo-masters` | 一覧（有効のみ等は Query で実装定義） |
+
+### 解析
+
+**再解析**（`POST …/analysis/reanalyze`）では **常に新規 `analysis_job` として実行し、新しいジョブ ID を発行**する。**旧 `analysis_job` 行は物理削除**する方針。
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| POST | `/races/{raceId}/analysis/jobs` | 解析ジョブ投入 |
+| GET | `/races/{raceId}/analysis/jobs` | ジョブ一覧 |
+| GET | `/races/{raceId}/analysis/jobs/{jobId}` | ジョブ進捗・結果 |
+| POST | `/races/{raceId}/analysis/reanalyze` | 再解析 |
+
+### 登録 / 確定 / 突合
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/categories` | カテゴリ一覧 |
+| GET | `/events` | 開催一覧 |
+| POST | `/events` | 開催登録 |
+| GET | `/events/{eventId}/races` | 開催に紐づくレース一覧 |
+| POST | `/events/{eventId}/races` | レース作成 |
+| ~~POST~~ | `~~/races/{raceId}/videos~~` | `廃止：` 動画は管理者が GCS へ直接アップロード。multipart 用 API は提供しない |
+| PUT | `/races/{raceId}/videos/{videoId}` | 動画の DB 属性更新（`race_video` に対応：レース紐付け・`storage_path`・登録 `status` 等。完了/未完了）。GCS 配置後の DB 反映や手動確認用。補正UI有効化に必要なら COMPLETED へ更新 |
+| POST | `/races/{raceId}/confirm` | 確定 |
+| POST | `/races/{raceId}/linkage` | 公式データ突合 |
+| POST | `/races/{raceId}/linkage/retry` | 再突合 |
+
+### 解析プリセット
+
+DB テーブル **`venue_weather_preset`** に対応。競馬場コード・天候区分・芝ダ別・`preset_parameters`（JSON）を管理する。
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/venue-weather-presets` | プリセット一覧。Query: `venueCode`, `weatherPresetCode`, `surfaceType`, `activeOnly`（省略時は有効のみ推奨） |
+| GET | `/venue-weather-presets/{presetId}` | プリセット1件 |
+| POST | `/venue-weather-presets` | 新規作成（管理者または編集権限。権限は `/auth/permissions` と整合） |
+| PUT | `/venue-weather-presets/{presetId}` | 更新（全項目置換） |
+| DELETE | `/venue-weather-presets/{presetId}` | **論理削除推奨:** `is_active=false`（物理削除は運用方針で選択可） |
+
+POST/PUT で `(venue_code, weather_preset_code, surface_type)` 重複は 409。
+
+### レースステータス一括変更
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| POST | `/races/bulk-status` | **管理者。複数レースの `race.status` を一括更新。単体の `POST confirm` / `revision/reject` 等と同じ遷移可否**をレースごとに検証 |
+
+### 履歴 / 出力
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/races/{raceId}/history` | レース単位の**統合タイムライン**（`race_status_history` 相当のステータス遷移、補正セッション開始/完了、確定、差し戻し等の**イベント要約**。一覧用） |
+| GET | `/races/{raceId}/corrections/history` | **補正の版一覧**（セッション・`version`・`correctedBy`・`correctedAt`・`correctionData` またはサマリ）。誰がいつ保存したかの追跡用 |
+| GET | `/audit-logs` | 監査ログ。`raceId` 等でフィルタ可能にしてもよい（実装で定義） |
+| ~~GET~~ | `~~/races/{raceId}/export/csv~~` | `廃止：` レース単位 CSV は廃止 |
+| ~~POST~~ | `~~/races/{raceId}/export/csv~~` | `廃止：` 同上 |
+| GET | `/events/{eventId}/export/csv` | `【修正箇所】` 開催単位 CSV 出力（同期）。`dataset=passing_points\|straight_sections\|all` を受け、当該 `race_event` 配下の対象レースを出力 |
+| POST | `/events/{eventId}/export/csv` | `【修正箇所】` 開催単位 CSV 出力（非同期ジョブ起動）。`dataset` 指定時は対象種別のみ、未指定は2種類（点/線）を同時出力 |
+| GET | `/export-jobs/{jobId}` | エクスポートジョブ状態（`csv_export_job.id` 等と対応） |
+
+`【修正箇所】` **CSV出力データセット定義（開催単位）**
+
+- `passing_points`: 200mラップタイム（通過地点）データ。主な列は `race_id`, `horse_number`, `marker_distance`, `rank`, `passing_time`, `lane_position`, `ai_class_name`, `special_note`, `is_manually_corrected`
+- `straight_sections`: ラストスパート50m区間データ。主な列は `race_id`, `horse_number`, `section_start_dist`, `section_end_dist`, `section_avg_speed`, `speed_diff`, `lateral_position`, `ai_class_name`, `is_manually_corrected`
+- `all`: 上記2種類を同一リクエストで出力（ファイル分割やZIP化は実装で定義）

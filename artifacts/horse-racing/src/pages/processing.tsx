@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Settings2, Plus, Trash2, Pencil, ChevronDown, ChevronRight,
   FolderOpen, Clock, Film, CheckCircle, XCircle, RefreshCcw,
-  AlertTriangle, X, CheckSquare, Square, Save, RotateCcw
+  AlertTriangle, X, CheckSquare, Square, Save, RotateCcw, ClipboardList
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -944,6 +944,113 @@ function AnalysisParamsPanel() {
   );
 }
 
+// ── Audit Log Panel ─────────────────────────────────────────────────────────────
+
+const FASTAPI_URL = `${BASE_URL}/fastapi`;
+
+interface AuditLogItem {
+  id: string;
+  user_id: string | null;
+  action: string;
+  target_table: string;
+  target_id: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+function AuditLogPanel() {
+  const [logs, setLogs] = useState<AuditLogItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [limit, setLimit] = useState(50);
+
+  const fetchLogs = () => {
+    setLoading(true);
+    fetch(`${FASTAPI_URL}/audit-logs?limit=${limit}`)
+      .then((r) => r.json())
+      .then((d) => setLogs(d.items || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchLogs(); }, [limit]);
+
+  const ACTION_COLOR: Record<string, string> = {
+    STATUS_CHANGE: "text-cyan-400",
+    CREATE: "text-green-400",
+    UPDATE: "text-yellow-400",
+    DELETE: "text-red-400",
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold">監査ログ</h2>
+        <div className="flex items-center gap-2">
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+            className="h-7 text-xs bg-zinc-800 border border-zinc-700 rounded px-2 text-zinc-300"
+          >
+            {[50, 100, 200].map((n) => (
+              <option key={n} value={n}>{n}件</option>
+            ))}
+          </select>
+          <Button variant="outline" size="sm" onClick={fetchLogs} className="h-7 text-xs cursor-pointer border-zinc-700 gap-1">
+            <RefreshCcw className="h-3 w-3" />更新
+          </Button>
+        </div>
+      </div>
+      {loading ? (
+        <div className="text-xs text-zinc-500 py-8 text-center">読み込み中...</div>
+      ) : logs.length === 0 ? (
+        <div className="text-xs text-zinc-600 py-8 text-center">監査ログがありません</div>
+      ) : (
+        <div className="border border-zinc-800 rounded overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-zinc-800/60">
+              <tr>
+                <th className="px-3 py-1.5 text-left text-zinc-500 font-normal">日時</th>
+                <th className="px-3 py-1.5 text-left text-zinc-500 font-normal">アクション</th>
+                <th className="px-3 py-1.5 text-left text-zinc-500 font-normal">テーブル</th>
+                <th className="px-3 py-1.5 text-left text-zinc-500 font-normal">対象ID</th>
+                <th className="px-3 py-1.5 text-left text-zinc-500 font-normal">変更内容</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log) => (
+                <tr key={log.id} className="border-t border-zinc-800/50 hover:bg-zinc-800/20">
+                  <td className="px-3 py-1.5 text-zinc-500 whitespace-nowrap font-mono">
+                    {log.created_at ? log.created_at.slice(0, 19).replace("T", " ") : "-"}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <span className={`font-medium ${ACTION_COLOR[log.action] || "text-zinc-300"}`}>
+                      {log.action}
+                    </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-zinc-400">{log.target_table}</td>
+                  <td className="px-3 py-1.5 text-zinc-500 font-mono">{log.target_id?.slice(0, 8)}...</td>
+                  <td className="px-3 py-1.5 text-zinc-500">
+                    {log.new_value ? (
+                      <span>
+                        {Object.entries(log.new_value)
+                          .filter(([k]) => k !== "batch")
+                          .map(([k, v]) => `${k}: ${v}`)
+                          .join(" / ")}
+                      </span>
+                    ) : "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function ProcessingManagement() {
   const { toast } = useToast();
@@ -1035,6 +1142,12 @@ export default function ProcessingManagement() {
           >
             <Film className="h-3.5 w-3.5" />解析ツール管理
           </TabsTrigger>
+          <TabsTrigger
+            value="audit"
+            className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-4 h-full text-sm font-medium gap-1.5"
+          >
+            <ClipboardList className="h-3.5 w-3.5" />監査ログ
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="batch" className="flex-1 flex flex-col mt-0 p-6 overflow-hidden focus-visible:outline-none">
@@ -1073,6 +1186,10 @@ export default function ProcessingManagement() {
 
         <TabsContent value="analysis" className="flex-1 flex flex-col mt-0 p-6 overflow-hidden focus-visible:outline-none">
           <AnalysisParamsPanel />
+        </TabsContent>
+
+        <TabsContent value="audit" className="flex-1 flex flex-col mt-0 p-6 overflow-auto focus-visible:outline-none">
+          <AuditLogPanel />
         </TabsContent>
       </Tabs>
 

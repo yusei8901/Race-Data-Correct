@@ -837,10 +837,312 @@ def upsert_analysis_option(race_id: str, body: dict):
 
 
 @router.get("/venue-weather-presets")
-def get_venue_weather_presets():
+def get_venue_weather_presets(
+    active_only: bool = Query(True),
+    venue_code: Optional[str] = Query(None),
+    surface_type: Optional[str] = Query(None),
+):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        where = []
+        params = []
+        if active_only:
+            where.append("is_active = TRUE")
+        if venue_code:
+            where.append("venue_code = %s")
+            params.append(venue_code)
+        if surface_type:
+            where.append("surface_type = %s")
+            params.append(surface_type)
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        cur.execute(
+            f"SELECT id, venue_code, weather_preset_code, name, surface_type, is_active FROM venue_weather_preset {where_sql} ORDER BY name",
+            params,
+        )
+        return cur.fetchall()
+
+
+@router.get("/venue-weather-presets/{preset_id}")
+def get_venue_weather_preset(preset_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            "SELECT id, venue_code, weather_preset_code, name, surface_type FROM venue_weather_preset WHERE is_active = TRUE ORDER BY name"
+            "SELECT id, venue_code, weather_preset_code, name, surface_type, is_active, preset_parameters FROM venue_weather_preset WHERE id = %s",
+            (preset_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        return row
+
+
+@router.post("/venue-weather-presets", status_code=201)
+def create_venue_weather_preset(body: dict):
+    required = ["venue_code", "weather_preset_code", "name", "surface_type"]
+    for f in required:
+        if f not in body:
+            raise HTTPException(status_code=422, detail=f"Missing field: {f}")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT id FROM venue_weather_preset WHERE venue_code = %s AND weather_preset_code = %s AND surface_type = %s",
+            (body["venue_code"], body["weather_preset_code"], body["surface_type"]),
+        )
+        if cur.fetchone():
+            raise HTTPException(status_code=409, detail="Duplicate (venue_code, weather_preset_code, surface_type)")
+        cur.execute(
+            """INSERT INTO venue_weather_preset
+                 (id, venue_code, weather_preset_code, name, surface_type, preset_parameters, is_active, created_at, updated_at)
+               VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, TRUE, NOW(), NOW())
+               RETURNING id, venue_code, weather_preset_code, name, surface_type, is_active""",
+            (body["venue_code"], body["weather_preset_code"], body["name"],
+             body["surface_type"], json.dumps(body.get("preset_parameters", {}))),
+        )
+        conn.commit()
+        return cur.fetchone()
+
+
+@router.put("/venue-weather-presets/{preset_id}")
+def update_venue_weather_preset(preset_id: str, body: dict):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT id FROM venue_weather_preset WHERE id = %s", (preset_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Preset not found")
+        fields = ["updated_at = NOW()"]
+        params = []
+        for f in ("venue_code", "weather_preset_code", "name", "surface_type"):
+            if f in body:
+                fields.append(f"{f} = %s")
+                params.append(body[f])
+        if "preset_parameters" in body:
+            fields.append("preset_parameters = %s")
+            params.append(json.dumps(body["preset_parameters"]))
+        if "is_active" in body:
+            fields.append("is_active = %s")
+            params.append(body["is_active"])
+        params.append(preset_id)
+        cur.execute(
+            f"UPDATE venue_weather_preset SET {', '.join(fields)} WHERE id = %s RETURNING id, venue_code, weather_preset_code, name, surface_type, is_active",
+            params,
+        )
+        conn.commit()
+        return cur.fetchone()
+
+
+@router.delete("/venue-weather-presets/{preset_id}")
+def delete_venue_weather_preset(preset_id: str):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "UPDATE venue_weather_preset SET is_active = FALSE, updated_at = NOW() WHERE id = %s RETURNING id",
+            (preset_id,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Preset not found")
+        conn.commit()
+        return {"deleted": preset_id}
+
+
+# ── API spec aligned endpoints ───────────────────────────────────────────────
+
+@router.post("/races/bulk-status")
+def bulk_status_update(body: dict):
+    """POST /races/bulk-status — 仕様書準拠の一括ステータス変更。"""
+    return batch_update_races(body)
+
+
+@router.get("/races/{race_id}/comparison")
+def get_race_comparison(race_id: str):
+    """公式アンカー（official_horse_furlong_time）と解析結果の比較。"""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            """SELECT ohr.horse_number, ohr.horse_name,
+                      ohft.furlong_distance, ohft.furlong_time_seconds AS official_time
+               FROM official_horse_furlong_time ohft
+               JOIN official_horse_reference ohr ON ohr.id = ohft.horse_reference_id
+               JOIN race_linkage_result rlr ON rlr.race_id = %s::uuid AND rlr.official_reference_id IS NOT NULL
+               ORDER BY ohr.horse_number, ohft.furlong_distance""",
+            (race_id,),
+        )
+        official = cur.fetchall()
+
+        cur.execute(
+            """SELECT ard.horse_number, ard.marker_type AS checkpoint,
+                      ard.time_sec AS analysis_time, ard.is_corrected
+               FROM analysis_result_detail ard
+               JOIN analysis_result_header arh ON arh.id = ard.header_id AND arh.is_current = TRUE
+               WHERE arh.race_id = %s::uuid
+               ORDER BY ard.horse_number, ard.marker_type""",
+            (race_id,),
+        )
+        analysis = cur.fetchall()
+
+        return {
+            "race_id": race_id,
+            "official_anchor": official,
+            "analysis_results": analysis,
+        }
+
+
+@router.get("/races/{race_id}/corrections/history")
+def get_corrections_history(race_id: str):
+    """補正の版一覧。"""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            """SELECT cr.id::text, cs.id::text AS session_id,
+                      cr.version, u.name AS corrected_by,
+                      cr.corrected_at::text, cr.created_at::text
+               FROM correction_result cr
+               JOIN correction_session cs ON cs.id = cr.session_id
+               LEFT JOIN "user" u ON u.id = cr.corrected_by
+               WHERE cs.race_id = %s::uuid
+               ORDER BY cr.corrected_at DESC""",
+            (race_id,),
         )
         return cur.fetchall()
+
+
+@router.put("/races/{race_id}/corrections/save")
+def save_correction(race_id: str, body: dict):
+    """PUT /races/{raceId}/corrections/save — version 必須の補正保存。"""
+    return temp_save_correction(race_id, body)
+
+
+@router.post("/races/{race_id}/corrections/recalculate")
+def recalculate_correction(race_id: str, body: dict = None):
+    """明示的再計算（現時点ではスタブ）。"""
+    return {"race_id": race_id, "recalculated": True, "message": "Recalculation queued"}
+
+
+@router.post("/races/{race_id}/corrections/revert")
+def revert_correction(race_id: str):
+    """補正破棄 → 前のステータスへ戻す。cancel と同等。"""
+    return cancel_correction(race_id)
+
+
+@router.post("/races/{race_id}/revision/reject")
+def revision_reject(race_id: str, body: dict = None):
+    """管理者差し戻し CORRECTED → REVISION_REQUESTED。"""
+    return correction_request(race_id, body or {})
+
+
+@router.post("/races/{race_id}/linkage")
+def trigger_linkage(race_id: str, body: dict = None):
+    """公式データ突合を実行（ANALYZED → MATCH_FAILED or 突合成功）。"""
+    body = body or {}
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT status FROM race WHERE id = %s::uuid", (race_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Race not found")
+        cur.execute(
+            "INSERT INTO race_linkage_result (id, race_id, linkage_status, created_at) VALUES (gen_random_uuid(), %s::uuid, 'PENDING', NOW()) ON CONFLICT (race_id) DO NOTHING",
+            (race_id,),
+        )
+        conn.commit()
+    return get_race(race_id)
+
+
+@router.post("/races/{race_id}/linkage/retry")
+def retry_linkage(race_id: str, body: dict = None):
+    """突合リトライ。"""
+    return trigger_linkage(race_id, body)
+
+
+@router.put("/races/{race_id}/videos/{video_id}")
+def update_video(race_id: str, video_id: str, body: dict):
+    """動画 DB 属性更新（storage_path, status 等）。"""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT id FROM race_video WHERE id = %s::uuid AND race_id = %s::uuid",
+            (video_id, race_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Video not found")
+        fields = ["updated_at = NOW()"]
+        params = []
+        for f in ("storage_path", "status"):
+            if f in body:
+                fields.append(f"{f} = %s")
+                params.append(body[f])
+        params += [video_id, race_id]
+        cur.execute(
+            f"""UPDATE race_video SET {', '.join(fields)}
+               WHERE id = %s::uuid AND race_id = %s::uuid
+               RETURNING id::text, race_id::text, storage_path, status, uploaded_at::text""",
+            params,
+        )
+        result = cur.fetchone()
+        conn.commit()
+        return result
+
+
+@router.get("/correction-memo-masters")
+def get_correction_memo_masters(active_only: bool = Query(True)):
+    """GET /correction-memo-masters — 仕様書準拠パス。"""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        where = "WHERE is_active = TRUE" if active_only else ""
+        cur.execute(f"SELECT id, memo_text, display_order, is_active FROM correction_memo_master {where} ORDER BY display_order")
+        return cur.fetchall()
+
+
+@router.get("/videos")
+def get_videos(
+    race_id: Optional[str] = Query(None),
+    event_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+):
+    """動画一覧（raceId, eventId, status でフィルタ可）。"""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        where = []
+        params = []
+        if race_id:
+            where.append("rv.race_id = %s::uuid")
+            params.append(race_id)
+        if event_id:
+            where.append("r.event_id = %s::uuid")
+            params.append(event_id)
+        if status:
+            where.append("rv.status = %s")
+            params.append(status)
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        cur.execute(
+            f"""SELECT rv.id::text, rv.race_id::text, rv.storage_path,
+                       rv.status, rv.uploaded_at::text, rv.created_at::text,
+                       r.race_name, r.race_number
+                FROM race_video rv
+                JOIN race r ON r.id = rv.race_id
+                {where_sql}
+                ORDER BY rv.created_at DESC""",
+            params,
+        )
+        return cur.fetchall()
+
+
+@router.get("/auth/me")
+def auth_me():
+    """自分の情報（IAP 認証はスキップ。開発用スタブ）。"""
+    return {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "name": "開発ユーザー",
+        "email": "dev@example.com",
+        "role": "admin",
+    }
+
+
+@router.get("/auth/permissions")
+def auth_permissions():
+    """権限一覧（開発用スタブ）。"""
+    return {
+        "canCorrect": True,
+        "canConfirm": True,
+        "canReanalyze": True,
+        "canBulkUpdate": True,
+    }

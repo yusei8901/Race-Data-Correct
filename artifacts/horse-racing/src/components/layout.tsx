@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ShieldCheck,
   User,
+  CalendarDays,
 } from "lucide-react";
 import { useUserRole } from "@/contexts/user-role";
 import type { UserRole } from "@/contexts/user-role";
@@ -22,6 +23,7 @@ export function Layout({ children }: LayoutProps) {
 
   const allNavItems = [
     { name: "処理管理", href: "/processing", icon: Settings, adminOnly: true, match: (loc: string) => loc.startsWith("/processing") },
+    { name: "開催管理", href: "/events", icon: CalendarDays, adminOnly: true, match: (loc: string) => loc.startsWith("/events") },
     { name: "レース一覧", href: "/", icon: ListOrdered, adminOnly: false, match: (loc: string) => loc === "/" || loc.startsWith("/races/") },
   ];
 
