@@ -1,10 +1,12 @@
 -- Furlong CUBE normalized schema migration
--- Core design: 19 tables (race_category through csv_export_job)
--- Extended with 3 operational support tables (tables 20-22):
---   analysis_venue_config: per-venue analysis parameters (intentional extension)
---   batch_job: processing management batch jobs (intentional extension)
---   analysis_option: per-race analysis parameters for analysis/re-analysis
--- Total: 22 tables
+-- 24 tables total:
+--   1-19: core tables (race_category through csv_export_job)
+--   20: analysis_venue_config (per-venue analysis parameters)
+--   21: batch_job (processing management)
+--   22: analysis_option (per-race analysis parameters)
+--   23: analysis_passing_point (200m lap-time point data for CSV/visualization)
+--   24: analysis_straight_section (straight-section data for CSV/visualization)
+-- csv_export_job.dataset: passing_points / straight_sections / all
 
 -- 1. user (no FK deps)
 CREATE TABLE IF NOT EXISTS "user" (
@@ -267,6 +269,7 @@ CREATE TABLE IF NOT EXISTS race_status_history (
 CREATE TABLE IF NOT EXISTS csv_export_job (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES race_event(id) ON DELETE CASCADE,
+  dataset VARCHAR(30) NOT NULL DEFAULT 'all',
   status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
   storage_path VARCHAR(500),
   requested_by UUID REFERENCES "user"(id) ON DELETE SET NULL,
@@ -276,6 +279,7 @@ CREATE TABLE IF NOT EXISTS csv_export_job (
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ
 );
+-- dataset values: passing_points / straight_sections / all
 
 -- 20. analysis_venue_config (analysis parameters per venue, no FK)
 CREATE TABLE IF NOT EXISTS analysis_venue_config (
@@ -309,5 +313,52 @@ CREATE TABLE IF NOT EXISTS analysis_option (
   created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(race_id, video_id)
+);
+
+-- 23. analysis_passing_point (解析通過地点（点）: 200m lap-time points for CSV/visualization)
+CREATE TABLE IF NOT EXISTS analysis_passing_point (
+  id                    BIGSERIAL PRIMARY KEY,
+  race_id               UUID NOT NULL REFERENCES race(id) ON DELETE CASCADE,
+  header_id             UUID NOT NULL REFERENCES analysis_result_header(id) ON DELETE CASCADE,
+  horse_number          INT NOT NULL,
+  frame_number          INT,
+  horse_name            VARCHAR(100),
+  marker_distance       INT NOT NULL,
+  marker_type           VARCHAR(50),
+  rank                  INT,
+  video_time_sec        DECIMAL(10,2),
+  passing_time          DECIMAL(10,2) NOT NULL,
+  official_time_sec     DECIMAL(10,2),
+  lane_position         VARCHAR(20),
+  ai_class_name         VARCHAR(50),
+  special_note          VARCHAR(200),
+  is_manually_corrected BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(race_id, horse_number, marker_distance)
+);
+
+-- 24. analysis_straight_section (解析直線区間（線）: straight section data for CSV/visualization)
+CREATE TABLE IF NOT EXISTS analysis_straight_section (
+  id                    BIGSERIAL PRIMARY KEY,
+  race_id               UUID NOT NULL REFERENCES race(id) ON DELETE CASCADE,
+  header_id             UUID NOT NULL REFERENCES analysis_result_header(id) ON DELETE CASCADE,
+  horse_number          INT NOT NULL,
+  frame_number          INT,
+  horse_name            VARCHAR(100),
+  section_start_dist    INT NOT NULL,
+  section_end_dist      INT NOT NULL,
+  section_no            INT,
+  est_video_time_sec    DECIMAL(10,2),
+  est_passing_time      DECIMAL(10,2),
+  est_official_time_sec DECIMAL(10,2),
+  section_avg_speed     DECIMAL(10,2),
+  speed_diff            DECIMAL(10,2),
+  lateral_position      DECIMAL(10,4),
+  ai_class_name         VARCHAR(50),
+  is_manually_corrected BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(race_id, horse_number, section_start_dist, section_end_dist)
 );
 

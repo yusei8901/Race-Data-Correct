@@ -34,6 +34,7 @@ def seed():
     # ── Truncate new tables in reverse dependency order ───────────────────────
     cur.execute("""
         TRUNCATE
+          analysis_passing_point, analysis_straight_section,
           csv_export_job, audit_log, race_status_history, race_linkage_result,
           correction_result, correction_session,
           analysis_result_detail, analysis_result_header, analysis_job,
@@ -553,6 +554,100 @@ def seed():
                ON CONFLICT (venue_id) DO NOTHING""",
             (_vid, _vname, _rtype, _json.dumps(_default_params)),
         )
+
+    # ── csv_export_job (sample export jobs per race_event) ────────────────────
+    admin_id = user_ids["管理者"]
+    cur.execute("SELECT id FROM race_event LIMIT 3")
+    export_event_rows = cur.fetchall()
+    _dataset_cycle = ["all", "passing_points", "straight_sections"]
+    for _i, _erow in enumerate(export_event_rows):
+        _ds = _dataset_cycle[_i % len(_dataset_cycle)]
+        cur.execute(
+            """INSERT INTO csv_export_job
+               (id, event_id, dataset, status, storage_path, requested_by, race_count,
+                created_at, started_at, completed_at)
+               VALUES (%s, %s, %s, 'SUCCESS',
+                       %s, %s, 12, NOW() - INTERVAL '2 hours',
+                       NOW() - INTERVAL '2 hours',
+                       NOW() - INTERVAL '1 hour 59 minutes')""",
+            (str(uuid.uuid4()), _erow["id"], _ds,
+             f"gs://furlong-bucket/export/event_{_i+1}_{_ds}.zip",
+             admin_id),
+        )
+
+    # ── analysis_passing_point & analysis_straight_section (sample data) ──────
+    # Seed 2 races that have analysis results with passing points and straight sections
+    cur.execute("""
+        SELECT arh.race_id, arh.id AS header_id
+        FROM analysis_result_header arh
+        WHERE arh.is_current = TRUE
+        LIMIT 2
+    """)
+    _sample_headers = cur.fetchall()
+
+    _marker_distances = [1200, 1000, 800, 600, 400, 200, 0]
+    _marker_type_map = {
+        1200: "ハロン14", 1000: "ハロン12", 800: "ハロン10",
+        600: "ハロン8",  400: "ハロン6",  200: "ハロン4",  0: "ゴール",
+    }
+    _lane_options_seed = ["内", "中", "外"]
+    _ai_colors = ["cap_orange_1", "cap_blue_2", "cap_red_3", "cap_green_4",
+                  "cap_yellow_5", "cap_white_6", "cap_black_7", "cap_pink_8"]
+
+    for _sh in _sample_headers:
+        _race_id = _sh["race_id"]
+        _header_id = _sh["header_id"]
+
+        for _hn in range(1, 9):  # 8 horses as sample
+            _fname = ((_hn - 1) // 2) + 1
+            _hname = horse_names[(_hn - 1) % len(horse_names)]
+            _ai_cls = _ai_colors[(_hn - 1) % len(_ai_colors)]
+            _base_pt = round(12.0 + _hn * 0.15, 2)
+
+            # passing points (200m checkpoints)
+            for _md in _marker_distances:
+                _rank = _hn if _md > 0 else max(1, _hn - 1)
+                _vtime = round(45.0 + (_hn * 0.3) + (1200 - _md) * 0.08, 2)
+                _ptime = round(_base_pt + (_hn * 0.05), 2)
+                _offtime = round(_ptime + 0.05, 2)
+                cur.execute(
+                    """INSERT INTO analysis_passing_point
+                       (race_id, header_id, horse_number, frame_number, horse_name,
+                        marker_distance, marker_type, rank, video_time_sec,
+                        passing_time, official_time_sec, lane_position,
+                        ai_class_name, special_note, is_manually_corrected)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,FALSE)
+                       ON CONFLICT (race_id, horse_number, marker_distance) DO NOTHING""",
+                    (_race_id, _header_id, _hn, _fname, _hname,
+                     _md, _marker_type_map.get(_md), _rank,
+                     _vtime, _ptime, _offtime,
+                     _lane_options_seed[_hn % len(_lane_options_seed)], _ai_cls),
+                )
+
+            # straight sections (50m segments from 400m to 0m)
+            for _sec_no, (_ssd, _sed) in enumerate([(400, 350), (350, 300), (300, 250),
+                                                     (250, 200), (200, 150), (150, 100),
+                                                     (100, 50),  (50, 0)], start=1):
+                _avg_spd = round(58.0 + _hn * 0.5 + _sec_no * 0.3, 2)
+                _diff = round(random.uniform(-2.0, 2.0), 2)
+                _lat = round(random.uniform(-0.05, 0.05), 4)
+                _evtime = round(60.0 + _sec_no * 1.2 + _hn * 0.1, 2)
+                _eptime = round(55.0 + _sec_no * 1.1 + _hn * 0.1, 2)
+                _eofftime = round(_eptime + 0.1, 2)
+                cur.execute(
+                    """INSERT INTO analysis_straight_section
+                       (race_id, header_id, horse_number, frame_number, horse_name,
+                        section_start_dist, section_end_dist, section_no,
+                        est_video_time_sec, est_passing_time, est_official_time_sec,
+                        section_avg_speed, speed_diff, lateral_position,
+                        ai_class_name, is_manually_corrected)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
+                       ON CONFLICT (race_id, horse_number, section_start_dist, section_end_dist) DO NOTHING""",
+                    (_race_id, _header_id, _hn, _fname, _hname,
+                     _ssd, _sed, _sec_no,
+                     _evtime, _eptime, _eofftime,
+                     _avg_spd, _diff, _lat, _ai_cls),
+                )
 
     conn.commit()
     conn.close()

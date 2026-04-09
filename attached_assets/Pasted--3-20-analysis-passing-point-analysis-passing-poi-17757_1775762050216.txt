@@ -1,0 +1,70 @@
+### 3.20 analysis_passing_point
+
+| 物理名 | 論理名 | 管理対象 |
+| --- | --- | --- |
+| analysis_passing_point | 解析通過地点（点） | `【修正箇所】` 200mラップタイム等の「地点通過時点」データ。CSV/可視化で利用するクリーンテーブル |
+
+| カラム | 型 | PK | FK | NULL | 説明 |
+| --- | --- | --- | --- | --- | --- |
+| id | BIGINT | ○ |  |  | 主キー |
+| race_id | BIGINT |  | ○ |  | [race.id](http://race.id/) |
+| header_id | BIGINT |  | ○ |  | analysis_result_header.id |
+| horse_number | INT |  |  |  | 公式馬番（official_horse_reference と JOIN） |
+| frame_number | INT |  |  | ○ | 枠番（CSV 利便性のため保持） |
+| horse_name | VARCHAR(100) |  |  | ○ | 馬名（CSV 利便性のため保持） |
+| marker_distance | INT |  |  |  | 残り距離（例: 1200, 1000, 200, 0） |
+| marker_type | VARCHAR(50) |  |  | ○ | ハロン14 / ゴール等（互換参照用） |
+| rank | INT |  |  | ○ | その地点の通過順位 |
+| video_time_sec | DECIMAL(10,2) |  |  | ○ | 映像上の秒数（動画開始起点） |
+| passing_time | DECIMAL(10,2) |  |  |  | `【修正箇所】` 利用側の正タイム（未補正時=AI算出、補正済み=再計算） |
+| official_time_sec | DECIMAL(10,2) |  |  | ○ | 公式通過タイム（比較用。1着馬等） |
+| lane_position | VARCHAR(20) |  |  | ○ | 走行レーン（内・中・外等） |
+| ai_class_name | VARCHAR(50) |  |  | ○ | AI識別子（例: cap_orange_1） |
+| special_note | VARCHAR(200) |  |  | ○ | 特記事項（表示用サマリ） |
+| is_manually_corrected | BOOLEAN |  |  |  | BBOX等の手動補正が入ったか |
+| created_at | TIMESTAMP |  |  |  | 作成日時 |
+| updated_at | TIMESTAMP |  |  |  | 更新日時 |
+
+**Unique:** (race_id, horse_number, marker_distance)
+
+**ダミーデータ例:**
+
+| id | race_id | header_id | horse_number | frame_number | horse_name | marker_distance | marker_type | rank | video_time_sec | passing_time | official_time_sec | lane_position | ai_class_name | special_note | is_manually_corrected | created_at | updated_at |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 1 | 1 | 1 | ルンウィンディ | 1200 | ハロン14 | 2 | 45.20 | 12.40 | 12.40 | 中 | cap_orange_1 | NULL | true | 2024-03-15 12:05:31 | 2024-03-15 12:10:00 |
+
+### 3.21 analysis_straight_section
+
+| 物理名 | 論理名 | 管理対象 |
+| --- | --- | --- |
+| analysis_straight_section | 解析直線区間（線） | `【修正箇所】` 最後の直線50m区間データ。速度推移や可視化向けのクリーンテーブル |
+
+| カラム | 型 | PK | FK | NULL | 説明 |
+| --- | --- | --- | --- | --- | --- |
+| id | BIGINT | ○ |  |  | 主キー |
+| race_id | BIGINT |  | ○ |  | [race.id](http://race.id/) |
+| header_id | BIGINT |  | ○ |  | analysis_result_header.id |
+| horse_number | INT |  |  |  | 公式馬番 |
+| frame_number | INT |  |  | ○ | 枠番（CSV 利便性） |
+| horse_name | VARCHAR(100) |  |  | ○ | 馬名（CSV 利便性） |
+| section_start_dist | INT |  |  |  | 区間開始距離（例: 残り400m） |
+| section_end_dist | INT |  |  |  | 区間終了距離（例: 残り350m） |
+| section_no | INT |  |  | ○ | 互換性のため保持（必要に応じ利用） |
+| est_video_time_sec | DECIMAL(10,2) |  |  | ○ | 推定映像時間 |
+| est_passing_time | DECIMAL(10,2) |  |  | ○ | 推定通過タイム（ゲート開門起点） |
+| est_official_time_sec | DECIMAL(10,2) |  |  | ○ | 推定公式タイム |
+| section_avg_speed | DECIMAL(10,2) |  |  | ○ | 区間平均速度（km/h） |
+| speed_diff | DECIMAL(10,2) |  |  | ○ | 前区間との差分速度 |
+| lateral_position | DECIMAL(10,4) |  |  | ○ | 横位置（centerline_dy 等） |
+| ai_class_name | VARCHAR(50) |  |  | ○ | AI識別子 |
+| is_manually_corrected | BOOLEAN |  |  |  | 手動補正が区間値に影響したか |
+| created_at | TIMESTAMP |  |  |  | 作成日時 |
+| updated_at | TIMESTAMP |  |  |  | 更新日時 |
+
+**Unique:** (race_id, horse_number, section_start_dist, section_end_dist)
+
+**ダミーデータ例:**
+
+| id | race_id | header_id | horse_number | frame_number | horse_name | section_start_dist | section_end_dist | section_no | est_video_time_sec | est_passing_time | est_official_time_sec | section_avg_speed | speed_diff | lateral_position | ai_class_name | is_manually_corrected | created_at | updated_at |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 1 | 1 | 1 | ルンウィンディ | 400 | 350 | 1 | 64.20 | 59.40 | 59.50 | 58.20 | 1.20 | 0.0230 | cap_orange_1 | true | 2024-03-15 12:05:31 | 2024-03-15 12:10:00 |
