@@ -10,12 +10,13 @@ router = APIRouter(prefix="/fastapi")
 
 # English DB code → (video_col_status, analysis_col_status, display_status)
 STATUS_DISPLAY = {
+    "PENDING":            ("未", "",       "未処理"),
     "ANALYZING":          ("完了", "解析中",   "解析中"),
-    "REANALYZING":        ("完了", "解析失敗", "再解析要請"),
+    "REANALYZING":        ("完了", "再解析待ち", "再解析待ち"),
     "ANALYSIS_FAILED":    ("完了", "解析失敗", "解析失敗"),
     "ANALYZED":           ("完了", "完了",     "待機中"),
     "MATCH_FAILED":       ("完了", "突合失敗", "突合失敗"),
-    "CORRECTING":         ("完了", "完了",     "補正中"),      # may be overridden to 再補正中
+    "CORRECTING":         ("完了", "完了",     "補正中"),
     "CORRECTED":          ("完了", "完了",     "レビュー待ち"),
     "REVISION_REQUESTED": ("完了", "完了",     "修正要請"),
     "CONFIRMED":          ("完了", "完了",     "データ確定"),
@@ -24,12 +25,7 @@ STATUS_DISPLAY = {
 
 def compute_display_status(english_status: str, video_raw: str, prev_status: Optional[str]) -> tuple:
     """Return (video_status, analysis_status, display_status)."""
-    if english_status == "PENDING":
-        if video_raw == "COMPLETED":
-            return "完了", "未", "未解析"
-        return "未", "", "未処理"
     vid, ana, ds = STATUS_DISPLAY.get(english_status, ("未", "", "未処理"))
-    # 補正中 → 再補正中 if the previous status was CONFIRMED
     if english_status == "CORRECTING" and prev_status == "CONFIRMED":
         ds = "再補正中"
     return vid, ana, ds

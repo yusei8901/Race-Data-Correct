@@ -10,7 +10,8 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - **Frontend**: `artifacts/horse-racing` — React + Vite + Tailwind + shadcn/ui
 - **Backend**: `artifacts/fastapi-server` — Python FastAPI, psycopg2, PostgreSQL
 - **API Client**: `lib/api-client-react` — auto-generated from OpenAPI (Orval)
-- **DB Schema**: `lib/db/src/schema/` — 19 Drizzle ORM TypeScript files (UUID PKs)
+- **DB Schema**: `lib/db/src/schema/` — Drizzle ORM TypeScript files (UUID PKs)
+- **DB Migrations**: `lib/db/migrations/create_new_schema.sql` — 22 tables
 - **DB**: PostgreSQL via `DATABASE_URL`
 
 ## Key Files
@@ -23,9 +24,7 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - `artifacts/fastapi-server/main.py` — FastAPI app + router mounts
 - `artifacts/fastapi-server/routers/` — races, entries, passing_orders, history, batch_jobs, analysis
 - `artifacts/fastapi-server/seed.py` — DB seed for new 19-table schema (run with `python seed.py`)
-- `lib/db/migrations/create_new_schema.sql` — Raw SQL used to create all 19 tables
-
-## DB Tables (19-table schema, all UUID PKs)
+## DB Tables (22-table schema, all UUID PKs)
 
 ### Core hierarchy
 - `race_category` — JRA / LOCAL
@@ -61,20 +60,24 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - `audit_log` — Operation audit log. FK → users
 - `csv_export_job` — CSV export jobs. FK → race_event, users
 
-## English Status Codes (race.status)
+### Analysis options
+- `analysis_option` — Per-race analysis params (race×video unique). FK → race, race_video, venue_weather_preset
+
+## English Status Codes (race.status) — 11 display statuses
 
 | Code | Display (JP) | Note |
 |---|---|---|
-| PENDING | 未処理/未解析 | 未処理=video INCOMPLETE; 未解析=video COMPLETED |
-| REANALYZING | 再解析要請 | Reanalysis requested/queued |
-| ANALYZING | 解析中 | Analysis job running |
-| ANALYSIS_FAILED | 解析失敗 | Analysis job failed |
-| ANALYZED | 待機中 | Analysis complete, not corrected |
-| MATCH_FAILED | 突合失敗 | Official data linkage failed |
-| CORRECTING | 補正中/再補正中 | 再補正中 if prev status was CONFIRMED |
-| CORRECTED | レビュー待ち | Correction complete, pending review |
-| REVISION_REQUESTED | 修正要請 | Admin rejected, needs correction |
-| CONFIRMED | データ確定 | Confirmed/finalized |
+| PENDING | 未処理 | GCSに動画配置済み、解析未実行 |
+| REANALYZING | 再解析待ち | 再解析ジョブ投入済み、実行待ち |
+| ANALYZING | 解析中 | 解析ジョブ実行中 |
+| ANALYSIS_FAILED | 解析失敗 | 解析ジョブがエラー終了 |
+| ANALYZED | 待機中 | 解析完了、補正未実施 |
+| MATCH_FAILED | 突合失敗 | 公式データ突合に失敗 |
+| CORRECTING | 補正中 | 補正中（開始元がCONFIRMED以外） |
+| CORRECTING | 再補正中 | 開始直前がCONFIRMEDのとき（管理者の再補正） |
+| CORRECTED | レビュー待ち | 補正完了、確定待ち（提出） |
+| REVISION_REQUESTED | 修正要請 | 管理者差し戻し |
+| CONFIRMED | データ確定 | 確定済み（confirmed_by=user.id） |
 
 ## FastAPI Routes (all prefixed `/fastapi`) — PENDING migration to new schema (Task #5)
 
@@ -107,7 +110,7 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 - **TempSaveDialog** — 3 options: save & continue, save & exit, discard & exit
 - **ReanalysisRequestDialog** — reason dropdown + optional comment
 - **CorrectionRequestDialog** — admin comment for correction request
-- **StatusDetailPopup** — shows reason/comment for 再解析要請/修正要請 statuses
+- **StatusDetailPopup** — shows reason/comment for 再解析待ち/修正要請 statuses
 - **BindAnalysisDialog** — select analysis data to re-bind for 突合失敗 races
 - **HistoryModal** — correction history with comment tab + restoration stub
 

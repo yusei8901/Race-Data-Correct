@@ -1,9 +1,10 @@
 -- Furlong CUBE normalized schema migration
 -- Core design: 19 tables (race_category through csv_export_job)
--- Extended with 2 operational support tables (tables 20-21):
+-- Extended with 3 operational support tables (tables 20-22):
 --   analysis_venue_config: per-venue analysis parameters (intentional extension)
 --   batch_job: processing management batch jobs (intentional extension)
--- Total: 21 tables
+--   analysis_option: per-race analysis parameters for analysis/re-analysis
+-- Total: 22 tables
 
 -- 1. user (no FK deps)
 CREATE TABLE IF NOT EXISTS "user" (
@@ -295,5 +296,17 @@ CREATE TABLE IF NOT EXISTS batch_job (
   next_run_at     TIMESTAMPTZ,
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- 22. analysis_option (解析オプション: per-race analysis parameters)
+CREATE TABLE IF NOT EXISTS analysis_option (
+  id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  race_id                   UUID NOT NULL REFERENCES race(id) ON DELETE CASCADE,
+  video_id                  UUID NOT NULL REFERENCES race_video(id) ON DELETE CASCADE,
+  venue_weather_preset_id   UUID REFERENCES venue_weather_preset(id) ON DELETE SET NULL,
+  video_goal_time           DECIMAL(10,2),
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(race_id, video_id)
 );
 

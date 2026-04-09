@@ -39,77 +39,65 @@ const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 const API = BASE_URL + "/fastapi";
 
 // ---- Status Matrix ----
+// Internal DB code → display label mapping (11 statuses)
 type DerivedStatus =
   | "未処理"
-  | "未解析"
+  | "再解析待ち"
   | "解析中"
+  | "解析失敗"
   | "待機中"
+  | "突合失敗"
   | "補正中"
   | "再補正中"
   | "レビュー待ち"
-  | "データ確定"
   | "修正要請"
-  | "解析失敗"
-  | "再解析要請"
-  | "突合失敗";
+  | "データ確定";
 
 const KNOWN_STATUSES: ReadonlySet<DerivedStatus> = new Set<DerivedStatus>([
-  "未処理", "未解析", "解析中", "待機中", "補正中", "再補正中",
-  "レビュー待ち", "データ確定", "修正要請", "解析失敗", "再解析要請", "突合失敗",
+  "未処理", "再解析待ち", "解析中", "解析失敗", "待機中", "突合失敗",
+  "補正中", "再補正中", "レビュー待ち", "修正要請", "データ確定",
 ]);
 
 function getDerivedStatus(race: Race): DerivedStatus {
-  // Prefer the API's pre-computed display_status (backend handles all logic)
   const ds = race.display_status ?? "";
   if (ds && KNOWN_STATUSES.has(ds as DerivedStatus)) {
     return ds as DerivedStatus;
   }
-  // Fallback: compute from component fields for backward compatibility
-  const vs = race.video_status ?? "";
-  const as_ = race.analysis_status ?? "";
   const st = race.status ?? "";
-
-  if (vs !== "完了") return "未処理";
-  if (as_ === "未" || as_ === "") return "未解析";
-  if (as_ === "解析中" || as_ === "再解析中") return "解析中";
-  if (as_ === "解析失敗") {
-    if (st === "再解析要請" || st === "REANALYZING") return "再解析要請";
-    return "解析失敗";
+  switch (st) {
+    case "PENDING":            return "未処理";
+    case "REANALYZING":        return "再解析待ち";
+    case "ANALYZING":          return "解析中";
+    case "ANALYSIS_FAILED":    return "解析失敗";
+    case "ANALYZED":           return "待機中";
+    case "MATCH_FAILED":       return "突合失敗";
+    case "CORRECTING":         return "補正中";
+    case "CORRECTED":          return "レビュー待ち";
+    case "REVISION_REQUESTED": return "修正要請";
+    case "CONFIRMED":          return "データ確定";
+    default:                   return "未処理";
   }
-  if (as_ === "突合失敗") return "突合失敗";
-  if (as_ === "完了") {
-    if (st === "ANALYZED" || st === "待機中" || st === "未補正") return "待機中";
-    if (st === "CORRECTING" || st === "補正中") return "補正中";
-    if (st === "CORRECTED" || st === "レビュー待ち") return "レビュー待ち";
-    if (st === "CONFIRMED" || st === "データ確定") return "データ確定";
-    if (st === "REVISION_REQUESTED" || st === "修正要請" || st === "修正要求") return "修正要請";
-    if (st === "補正完了" || st === "データ補正") return "待機中";
-    if (st === "レビュー") return "レビュー待ち";
-    return "待機中";
-  }
-  return "未処理";
 }
 
 function getStatusBadgeProps(status: DerivedStatus) {
   switch (status) {
     case "未処理":       return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700", label: "未処理" };
-    case "未解析":       return { className: "bg-slate-800/60 text-slate-400 border-slate-700", label: "未解析" };
+    case "再解析待ち":   return { className: "bg-rose-900/40 text-rose-400 border-rose-800", label: "再解析待ち" };
     case "解析中":       return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800", label: "解析中" };
+    case "解析失敗":     return { className: "bg-red-900/50 text-red-400 border-red-800", label: "解析失敗" };
     case "待機中":       return { className: "bg-yellow-900/40 text-yellow-400 border-yellow-800", label: "待機中" };
+    case "突合失敗":     return { className: "bg-red-950/60 text-red-300 border-red-900", label: "突合失敗" };
     case "補正中":       return { className: "bg-blue-900/40 text-blue-400 border-blue-800", label: "補正中" };
     case "再補正中":     return { className: "bg-indigo-900/40 text-indigo-400 border-indigo-800", label: "再補正中" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
-    case "データ確定":   return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
     case "修正要請":     return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };
-    case "解析失敗":     return { className: "bg-red-900/50 text-red-400 border-red-800", label: "解析失敗" };
-    case "再解析要請":   return { className: "bg-rose-900/40 text-rose-400 border-rose-800", label: "再解析要請" };
-    case "突合失敗":     return { className: "bg-red-950/60 text-red-300 border-red-900", label: "突合失敗" };
+    case "データ確定":   return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
     default:             return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
   }
 }
 
 const CORRECTION_DISABLED_STATUSES: DerivedStatus[] = [
-  "未処理", "未解析", "解析中", "解析失敗",
+  "未処理", "解析中", "解析失敗",
 ];
 
 const SELECTABLE_STATUSES: DerivedStatus[] = ["待機中", "補正中", "レビュー待ち", "修正要請", "データ確定"];
@@ -140,30 +128,39 @@ function formatDateTitle(dateStr: string): string {
   }
 }
 
-const ALERT_STATUSES: Set<DerivedStatus> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
-const HIGHLIGHT_STATUSES: Set<DerivedStatus> = new Set([...ALERT_STATUSES, "未処理"]);
+const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析待ち", "突合失敗"]);
+const HIGHLIGHT_STATUSES: Set<string> = new Set([...ALERT_STATUSES, "未処理"]);
 
 const ALERT_STYLE_MAP: Record<string, { bg: string; border: string; hoverBorder: string; hoverBg: string; shadow: string; textColor: string }> = {
   "修正要請":   { bg: "bg-orange-950/80", border: "border-orange-500", hoverBorder: "hover:border-orange-300", hoverBg: "hover:bg-orange-900/60", shadow: "shadow-[0_0_10px_rgba(249,115,22,0.45)]", textColor: "text-orange-200" },
   "解析失敗":   { bg: "bg-red-950/80",    border: "border-red-500",    hoverBorder: "hover:border-red-300",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
-  "再解析要請": { bg: "bg-rose-950/80",   border: "border-rose-500",   hoverBorder: "hover:border-rose-300",   hoverBg: "hover:bg-rose-900/60",   shadow: "shadow-[0_0_10px_rgba(244,63,94,0.45)]",  textColor: "text-rose-200" },
+  "再解析待ち": { bg: "bg-rose-950/80",   border: "border-rose-500",   hoverBorder: "hover:border-rose-300",   hoverBg: "hover:bg-rose-900/60",   shadow: "shadow-[0_0_10px_rgba(244,63,94,0.45)]",  textColor: "text-rose-200" },
   "突合失敗":   { bg: "bg-red-950/80",    border: "border-red-600",    hoverBorder: "hover:border-red-400",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
 };
 
-const STATUS_ROW1: { key: DerivedStatus; label: string; colorClass: string }[] = [
-  { key: "データ確定",   label: "データ確定",   colorClass: "text-green-400" },
-  { key: "修正要請",     label: "修正要請",     colorClass: "text-orange-400" },
-  { key: "補正中",       label: "補正中",       colorClass: "text-blue-400" },
-  { key: "解析中",       label: "解析中",       colorClass: "text-cyan-400" },
-  { key: "解析失敗",     label: "解析失敗",     colorClass: "text-red-400" },
+type FilterKey = string;
+
+interface StatusFilterDef {
+  key: FilterKey;
+  label: string;
+  colorClass: string;
+  matchStatuses: DerivedStatus[];
+}
+
+const STATUS_ROW1: StatusFilterDef[] = [
+  { key: "データ確定",     label: "データ確定",     colorClass: "text-green-400",  matchStatuses: ["データ確定"] },
+  { key: "補正・再補正中", label: "補正・再補正中", colorClass: "text-blue-400",   matchStatuses: ["補正中", "再補正中"] },
+  { key: "解析・再解析中", label: "解析・再解析中", colorClass: "text-cyan-400",   matchStatuses: ["解析中"] },
+  { key: "修正要請",       label: "修正要請",       colorClass: "text-orange-400", matchStatuses: ["修正要請"] },
+  { key: "突合失敗",       label: "突合失敗",       colorClass: "text-red-300",    matchStatuses: ["突合失敗"] },
 ];
 
-const STATUS_ROW2: { key: DerivedStatus; label: string; colorClass: string }[] = [
-  { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400" },
-  { key: "再解析要請",   label: "再解析要請",   colorClass: "text-rose-400" },
-  { key: "待機中",       label: "待機中",       colorClass: "text-yellow-400" },
-  { key: "未処理",       label: "未処理",       colorClass: "text-zinc-400" },
-  { key: "突合失敗",     label: "突合失敗",     colorClass: "text-red-300" },
+const STATUS_ROW2: StatusFilterDef[] = [
+  { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400", matchStatuses: ["レビュー待ち"] },
+  { key: "待機中",       label: "待機中",       colorClass: "text-yellow-400", matchStatuses: ["待機中"] },
+  { key: "未処理",       label: "未処理",       colorClass: "text-zinc-400",   matchStatuses: ["未処理"] },
+  { key: "再解析待ち",   label: "再解析待ち",   colorClass: "text-rose-400",   matchStatuses: ["再解析待ち"] },
+  { key: "解析失敗",     label: "解析失敗",     colorClass: "text-red-400",    matchStatuses: ["解析失敗"] },
 ];
 
 const ALL_STATUS_CARDS = [...STATUS_ROW1, ...STATUS_ROW2];
@@ -293,7 +290,7 @@ export default function RaceList() {
   const [date, setDate] = useState(saved?.date ?? "");
   const [venue, setVenue] = useState<string>(saved?.venue ?? "all");
   const [raceType, setRaceType] = useState<string>(saved?.raceType ?? "中央競馬");
-  const [statusFilter, setStatusFilter] = useState<DerivedStatus | "total" | null>(saved?.statusFilter ?? null);
+  const [statusFilter, setStatusFilter] = useState<FilterKey | "total" | null>(saved?.statusFilter ?? null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
   const [reanalyzeRace, setReanalyzeRace] = useState<Race | null>(null);
@@ -362,20 +359,31 @@ export default function RaceList() {
   };
 
   const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { total: 0 };
-    ALL_STATUS_CARDS.forEach((c) => { counts[c.key] = 0; });
+    const perStatus: Record<string, number> = {};
+    let total = 0;
     races.forEach((race) => {
       const ds = getDerivedStatus(race);
-      counts[ds] = (counts[ds] || 0) + 1;
-      counts["total"] = (counts["total"] || 0) + 1;
+      perStatus[ds] = (perStatus[ds] || 0) + 1;
+      total++;
+    });
+    const counts: Record<string, number> = { total };
+    ALL_STATUS_CARDS.forEach((c) => {
+      counts[c.key] = c.matchStatuses.reduce((sum, s) => sum + (perStatus[s] || 0), 0);
     });
     return counts;
   }, [races]);
 
+  const activeFilterCard = useMemo(() => {
+    if (!statusFilter || statusFilter === "total") return null;
+    return ALL_STATUS_CARDS.find((c) => c.key === statusFilter) ?? null;
+  }, [statusFilter]);
+
   const filteredRaces = useMemo(() => {
     if (!statusFilter || statusFilter === "total") return races;
-    return races.filter((r) => getDerivedStatus(r) === statusFilter);
-  }, [races, statusFilter]);
+    if (!activeFilterCard) return races;
+    const matchSet = new Set(activeFilterCard.matchStatuses);
+    return races.filter((r) => matchSet.has(getDerivedStatus(r)));
+  }, [races, statusFilter, activeFilterCard]);
 
   const eligibleIds = useMemo(
     () => filteredRaces.filter((r) => isSelectable(getDerivedStatus(r))).map((r) => r.id),
@@ -663,21 +671,14 @@ export default function RaceList() {
                   const videoComplete = race.video_status === "完了";
                   const canSelect = isSelectable(derivedStatus);
                   const isChecked = checkedIds.has(race.id);
-                  const canReanalyze = derivedStatus === "解析失敗" || derivedStatus === "再解析要請";
+                  const canReanalyze = derivedStatus === "解析失敗" || derivedStatus === "再解析待ち";
                   const isAnalyzing = derivedStatus === "解析中";
                   const isCompleting = completingIds.has(race.id);
 
                   const correctionDisabled = CORRECTION_DISABLED_STATUSES.includes(derivedStatus);
 
-                  let opLabel = "データ補正";
-                  let opColorClass = "bg-red-700 hover:bg-red-600 text-white border-0";
-                  if (derivedStatus === "レビュー待ち") {
-                    opLabel = "レビュー";
-                    opColorClass = "bg-purple-700 hover:bg-purple-600 text-white border-0";
-                  } else if (derivedStatus === "データ確定") {
-                    opLabel = "再補正";
-                    opColorClass = "bg-blue-700 hover:bg-blue-600 text-white border-0";
-                  }
+                  const opLabel = "レース詳細";
+                  const opColorClass = "bg-zinc-700 hover:bg-zinc-600 text-white border-0";
 
                   const opActionBlocked = !isAdmin && (derivedStatus === "レビュー待ち" || derivedStatus === "データ確定");
                   const reanalyzeBlocked = !isAdmin;

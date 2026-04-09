@@ -831,9 +831,9 @@ function StatusDetailPopup({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[440px] max-w-[95vw] p-6">
-        {status === "再解析要請" && (
+        {status === "再解析待ち" && (
           <>
-            <h2 className="text-sm font-semibold mb-3 text-rose-400">再解析要請の詳細</h2>
+            <h2 className="text-sm font-semibold mb-3 text-rose-400">再解析待ちの詳細</h2>
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground">理由: <span className="text-foreground font-medium">{race.reanalysis_reason || "-"}</span></div>
               {race.reanalysis_comment && (
@@ -1218,7 +1218,7 @@ export default function DataCorrection() {
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_name: currentUserName, action_type: "再解析要請", description: `理由: ${reason}${comment ? ` / ${comment}` : ""}` }),
+        body: JSON.stringify({ user_name: currentUserName, action_type: "再解析待ち", description: `理由: ${reason}${comment ? ` / ${comment}` : ""}` }),
       });
       toast({ title: "再解析を申請しました" });
       setIsEditingMode(false);
@@ -1546,7 +1546,7 @@ export default function DataCorrection() {
 
         <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
           {/* Status badge */}
-          {(raceStatus === "補正中" || raceStatus === "再補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析要請" || raceStatus === "突合失敗") && (
+          {(raceStatus === "補正中" || raceStatus === "再補正中" || raceStatus === "待機中" || raceStatus === "レビュー待ち" || raceStatus === "修正要請" || raceStatus === "データ確定" || raceStatus === "再解析待ち" || raceStatus === "突合失敗") && (
             <Badge
               variant="outline"
               className={`text-[10px] cursor-pointer ${
@@ -1556,14 +1556,14 @@ export default function DataCorrection() {
                 : raceStatus === "レビュー待ち" ? "border-purple-700 text-purple-400 bg-purple-900/20"
                 : raceStatus === "修正要請" ? "border-orange-700 text-orange-400 bg-orange-900/20"
                 : raceStatus === "データ確定" ? "border-green-700 text-green-400 bg-green-900/20"
-                : raceStatus === "再解析要請" ? "border-rose-700 text-rose-400 bg-rose-900/20"
+                : raceStatus === "再解析待ち" ? "border-rose-700 text-rose-400 bg-rose-900/20"
                 : raceStatus === "突合失敗" ? "border-red-700 text-red-400 bg-red-900/20"
                 : "border-zinc-700 text-zinc-400"
               }`}
-              onClick={() => (raceStatus === "再解析要請" || raceStatus === "修正要請") && setConfirmDialog("statusDetail")}
+              onClick={() => (raceStatus === "再解析待ち" || raceStatus === "修正要請") && setConfirmDialog("statusDetail")}
             >
               {raceStatus}
-              {raceStatus === "再解析要請" && race?.reanalysis_reason && (
+              {raceStatus === "再解析待ち" && race?.reanalysis_reason && (
                 <span className="ml-1 text-[9px]">({race.reanalysis_reason})</span>
               )}
             </Badge>
