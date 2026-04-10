@@ -33,14 +33,14 @@ export interface Race {
   /** @nullable */
   start_time?: string | null;
   /**
-   * English status code: PENDING | ANALYZING | REANALYZING | ANALYSIS_FAILED | ANALYZED |
-   * MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED
+   * English status code: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED |
+   * MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED
    */
   status: string;
   /**
    * Japanese display label computed by API:
-   * 未処理 | 未解析 | 解析中 | 再解析要請 | 解析失敗 | 待機中 | 突合失敗 |
-   * 補正中 | 再補正中 | レビュー待ち | 修正要請 | データ確定
+   * 未処理 | 解析中 | 解析失敗 | 待機中 | 突合失敗 |
+   * 補正中 | レビュー待ち | 修正要請 | データ確定 | 再解析要請
    * @nullable
    */
   display_status?: string | null;

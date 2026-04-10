@@ -78,86 +78,24 @@ function generateMockVideos(jobId: string, count: number, type: "pending" | "com
 
 // ── Analysis Params structure ──────────────────────────────────────────────────
 interface M200Params {
-  polyline_fps: number;
-  polyline_resolution: string;
   detection_confidence: number;
-  white_balance: number;
-  gamma: number;
-  saturation: number;
 }
 
 interface StraightGeneralParams {
-  speed_window: number;
-  sampling_fps: number;
-  roi_preset: string;
   left_rail_ratio: number;
-  bottom_ratio: number;
-  course_type: string;
-  inference_overlay: boolean;
-}
-
-interface StraightAdvancedParams {
-  front_mask_scale: number;
-  valid_frame_rate: number;
-  flow_mad: number;
-  accel_threshold: number;
-  lane_update_interval: number;
-  confidence_threshold: number;
-  max_frame_size: string;
-  raft_priority: boolean;
-  csv_output: boolean;
-  debug_log: boolean;
-}
-
-interface OtherParams {
-  speed_logic: string;
-  analysis_fps: number;
-  cap_recognition: string;
-  noise_reduction: number;
 }
 
 interface AnalysisParams {
   m200: M200Params;
   straight_general: StraightGeneralParams;
-  straight_advanced: StraightAdvancedParams;
-  other: OtherParams;
 }
 
 const DEFAULT_PARAMS: AnalysisParams = {
   m200: {
-    polyline_fps: 30,
-    polyline_resolution: "720p",
     detection_confidence: 70,
-    white_balance: 0,
-    gamma: 1.0,
-    saturation: 0,
   },
   straight_general: {
-    speed_window: 0.5,
-    sampling_fps: 30,
-    roi_preset: "自動検出",
     left_rail_ratio: 15,
-    bottom_ratio: 20,
-    course_type: "標準",
-    inference_overlay: false,
-  },
-  straight_advanced: {
-    front_mask_scale: 1.0,
-    valid_frame_rate: 60,
-    flow_mad: 2.0,
-    accel_threshold: 0.5,
-    lane_update_interval: 30,
-    confidence_threshold: 75,
-    max_frame_size: "1920px",
-    raft_priority: false,
-    csv_output: false,
-    debug_log: false,
-  },
-  other: {
-    speed_logic: "補間法（推奨）",
-    analysis_fps: 60,
-    cap_recognition: "アダプティブ（推奨）",
-    noise_reduction: 50,
   },
 };
 
@@ -167,8 +105,6 @@ function getNestedParams(raw: Record<string, any>, surfaceType: string, preset: 
   return {
     m200: { ...DEFAULT_PARAMS.m200, ...(nested.m200 || {}) },
     straight_general: { ...DEFAULT_PARAMS.straight_general, ...(nested.straight_general || {}) },
-    straight_advanced: { ...DEFAULT_PARAMS.straight_advanced, ...(nested.straight_advanced || {}) },
-    other: { ...DEFAULT_PARAMS.other, ...(nested.other || {}) },
   };
 }
 
@@ -656,7 +592,6 @@ function AnalysisParamsPanel() {
   const [selectedVenueId, setSelectedVenueId] = useState<string>("tokyo");
   const [surfaceType, setSurfaceType] = useState<"芝" | "ダート">("芝");
   const [preset, setPreset] = useState<string>("標準");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [params, setParams] = useState<AnalysisParams>(DEFAULT_PARAMS);
   const [isDirty, setIsDirty] = useState(false);
 
@@ -691,15 +626,6 @@ function AnalysisParamsPanel() {
     setParams((p) => ({ ...p, straight_general: { ...p.straight_general, [key]: val } }));
     setIsDirty(true);
   };
-  const updateSA = (key: keyof StraightAdvancedParams, val: any) => {
-    setParams((p) => ({ ...p, straight_advanced: { ...p.straight_advanced, [key]: val } }));
-    setIsDirty(true);
-  };
-  const updateOther = (key: keyof OtherParams, val: any) => {
-    setParams((p) => ({ ...p, other: { ...p.other, [key]: val } }));
-    setIsDirty(true);
-  };
-
   const handleSave = () => {
     if (!selectedVenueId) return;
     const existingRaw = (paramsData?.params as Record<string, any>) || {};
@@ -809,117 +735,13 @@ function AnalysisParamsPanel() {
           {/* 200m params */}
           <div className="border border-border rounded-lg bg-card p-4 space-y-4">
             <div className="text-sm font-semibold text-foreground border-b border-border pb-2">200mごとの集計パラメータ</div>
-            <SliderRow label="ポリライン検出頻度" desc="白線のポリライン検出を実行するフレーム頻度" value={params.m200.polyline_fps} min={1} max={60} step={1} unit=" fps" onChange={(v) => updateM200("polyline_fps", v)} isTurf={surfaceType === "芝"} />
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs font-medium text-foreground">ポリライン検出解像度</div>
-              <div className="text-[10px] text-muted-foreground">ポリライン検出時の解像度。高いほど精度向上</div>
-              <Select value={params.m200.polyline_resolution} onValueChange={(v) => updateM200("polyline_resolution", v)}>
-                <SelectTrigger className="h-8 w-[140px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["360p", "480p", "720p", "1080p"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
             <SliderRow label="物体検知モデル確証度閾値" desc="馬や騎手を検出する際の確証度の最低閾値" value={params.m200.detection_confidence} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("detection_confidence", v)} isTurf={surfaceType === "芝"} />
-            <SliderRow label="ホワイトバランス調整" desc="逆光や曇り時の色温度補正" value={params.m200.white_balance} min={-100} max={100} step={1} unit="" onChange={(v) => updateM200("white_balance", v)} isTurf={surfaceType === "芝"} />
-            <SliderRow label="ガンマ補正" desc="明暗コントラスト調整（1.0が標準）" value={params.m200.gamma} min={0.1} max={3.0} step={0.1} unit="" onChange={(v) => updateM200("gamma", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
-            <SliderRow label="彩度調整" desc="帽色検出向上のための彩度調整" value={params.m200.saturation} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("saturation", v)} isTurf={surfaceType === "芝"} />
           </div>
 
           {/* Straight general */}
           <div className="border border-border rounded-lg bg-card p-4 space-y-4">
             <div className="text-sm font-semibold text-foreground border-b border-border pb-2">最後の直線パラメータ - 一般設定</div>
-            <SliderRow label="速度集計ウィンドウ（秒）" desc="速度を平均化する時間幅" value={params.straight_general.speed_window} min={0.1} max={2.0} step={0.1} unit="s" onChange={(v) => updateSG("speed_window", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
-            <SliderRow label="サンプリングFPS" desc="解析時のサンプリングフレームレート" value={params.straight_general.sampling_fps} min={1} max={60} step={1} unit=" fps" onChange={(v) => updateSG("sampling_fps", v)} isTurf={surfaceType === "芝"} />
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs font-medium text-foreground">ROIプリセット</div>
-              <div className="text-[10px] text-muted-foreground">関心領域の自動検出プリセット</div>
-              <Select value={params.straight_general.roi_preset} onValueChange={(v) => updateSG("roi_preset", v)}>
-                <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["自動検出", "固定", "カスタム"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
             <SliderRow label="左ラチ帯の幅比率" desc="" value={params.straight_general.left_rail_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("left_rail_ratio", v)} isTurf={surfaceType === "芝"} />
-            <SliderRow label="下帯の高さ比率" desc="" value={params.straight_general.bottom_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("bottom_ratio", v)} isTurf={surfaceType === "芝"} />
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs font-medium text-foreground">直線距離のコース種別</div>
-              <Select value={params.straight_general.course_type} onValueChange={(v) => updateSG("course_type", v)}>
-                <SelectTrigger className="h-8 w-[140px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["標準", "短距離", "長距離"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <ToggleRow label="推論フレームオーバーレイ" value={params.straight_general.inference_overlay} onChange={(v) => updateSG("inference_overlay", v)} />
-          </div>
-
-          {/* Straight advanced (collapsible) */}
-          <div className="border border-border rounded-lg bg-card overflow-hidden">
-            <button
-              className="w-full flex items-center justify-between p-4 text-sm font-semibold text-foreground hover:bg-muted/20 transition-colors cursor-pointer"
-              onClick={() => setAdvancedOpen(!advancedOpen)}
-            >
-              <span>最後の直線パラメータ - 高度な設定</span>
-              <span className="text-[10px] text-primary">{advancedOpen ? "閉じる ∧" : "展開 ∨"}</span>
-            </button>
-            {advancedOpen && (
-              <div className="px-4 pb-4 space-y-4 border-t border-border">
-                <div className="pt-4" />
-                <SliderRow label="前景マスク倍率" desc="" value={params.straight_advanced.front_mask_scale} min={0.5} max={3.0} step={0.1} unit="x" onChange={(v) => updateSA("front_mask_scale", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
-                <SliderRow label="有効画素率" desc="" value={params.straight_advanced.valid_frame_rate} min={0} max={100} step={1} unit="%" onChange={(v) => updateSA("valid_frame_rate", v)} isTurf={surfaceType === "芝"} />
-                <SliderRow label="フローMAD" desc="" value={params.straight_advanced.flow_mad} min={0} max={10} step={0.1} unit="" onChange={(v) => updateSA("flow_mad", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
-                <SliderRow label="加減速判定しきい値" desc="" value={params.straight_advanced.accel_threshold} min={0} max={2.0} step={0.1} unit="" onChange={(v) => updateSA("accel_threshold", parseFloat(v.toFixed(1)))} isTurf={surfaceType === "芝"} />
-                <SliderRow label="標検出更新間隔" desc="" value={params.straight_advanced.lane_update_interval} min={1} max={60} step={1} unit="f" onChange={(v) => updateSA("lane_update_interval", v)} isTurf={surfaceType === "芝"} />
-                <SliderRow label="信頼度閾値" desc="" value={params.straight_advanced.confidence_threshold} min={0} max={100} step={1} unit="%" onChange={(v) => updateSA("confidence_threshold", v)} isTurf={surfaceType === "芝"} />
-                <div className="flex flex-col gap-1.5">
-                  <div className="text-xs font-medium text-foreground">最大フレームサイズ</div>
-                  <Select value={params.straight_advanced.max_frame_size} onValueChange={(v) => updateSA("max_frame_size", v)}>
-                    <SelectTrigger className="h-8 w-[140px] text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {["1280px", "1920px", "2560px"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-3 gap-4 pt-1">
-                  <ToggleRow label="RAFT優先" value={params.straight_advanced.raft_priority} onChange={(v) => updateSA("raft_priority", v)} />
-                  <ToggleRow label="CSV詳細出力" value={params.straight_advanced.csv_output} onChange={(v) => updateSA("csv_output", v)} />
-                  <ToggleRow label="デバッグログ" value={params.straight_advanced.debug_log} onChange={(v) => updateSA("debug_log", v)} />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Other params */}
-          <div className="border border-border rounded-lg bg-card p-4 space-y-4">
-            <div className="text-sm font-semibold text-foreground border-b border-border pb-2">速度算出パラメータ</div>
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs font-medium text-foreground">速度算出ロジック</div>
-              <div className="text-[10px] text-muted-foreground">馬の速度を算出するアルゴリズム。補間法が最もバランスが良い。</div>
-              <Select value={params.other.speed_logic} onValueChange={(v) => updateOther("speed_logic", v)}>
-                <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["補間法（推奨）", "差分法", "平均法"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <SliderRow label="解析フレームレート" desc="解析時のフレームレート。高いほど精度が向上するが処理時間が増加。" value={params.other.analysis_fps} min={1} max={120} step={1} unit=" fps" onChange={(v) => updateOther("analysis_fps", v)} isTurf={surfaceType === "芝"} />
-          </div>
-
-          <div className="border border-border rounded-lg bg-card p-4 space-y-4">
-            <div className="text-sm font-semibold text-foreground border-b border-border pb-2">画像処理パラメータ</div>
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs font-medium text-foreground">帽色認識モード</div>
-              <div className="text-[10px] text-muted-foreground">騎手の帽色を認識する方式。アダプティブが照明変化に強い。</div>
-              <Select value={params.other.cap_recognition} onValueChange={(v) => updateOther("cap_recognition", v)}>
-                <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["アダプティブ（推奨）", "固定", "学習済み"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <SliderRow label="ノイズ除去レベル" desc="映像のノイズを除去するレベル。高すぎると細部が失われる可能性。" value={params.other.noise_reduction} min={0} max={100} step={1} unit="%" onChange={(v) => updateOther("noise_reduction", v)} isTurf={surfaceType === "芝"} />
           </div>
 
           <div className="h-4" />
