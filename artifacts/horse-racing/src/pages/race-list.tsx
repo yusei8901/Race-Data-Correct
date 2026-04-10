@@ -121,6 +121,12 @@ function formatDateTitle(dateStr: string): string {
   }
 }
 
+function getCourse(race: Race): string {
+  const surface = race.surface_type || "-";
+  const dir = (race.direction || "").replace("回り", "");
+  return dir ? `${surface}・${dir}` : surface;
+}
+
 const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
 const HIGHLIGHT_STATUSES: Set<string> = new Set([...ALERT_STATUSES, "未処理"]);
 
@@ -567,9 +573,8 @@ export default function RaceList() {
               <TableRow>
                 <TableHead style={{ width: "6%" }} className="text-center text-xs">競馬場</TableHead>
                 <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
-                <TableHead style={{ width: "6.5%" }} className="text-xs">出走時刻</TableHead>
-                <TableHead style={{ width: "14%" }} className="text-xs">レース名</TableHead>
-                <TableHead style={{ width: "4%" }} className="text-center text-xs">芝ダ</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-center text-xs">レースID</TableHead>
+                <TableHead style={{ width: "9%" }} className="text-center text-xs">コース</TableHead>
                 <TableHead style={{ width: "6%" }} className="text-center text-xs">距離</TableHead>
                 <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 {isAdmin && (
@@ -582,24 +587,24 @@ export default function RaceList() {
                     />
                   </TableHead>
                 )}
-                <TableHead style={{ width: isAdmin ? "10%" : "14%" }} className="text-xs">ステータス</TableHead>
+                <TableHead style={{ width: isAdmin ? "12%" : "16%" }} className="text-xs">ステータス</TableHead>
                 <TableHead style={{ width: "8%" }} className="text-xs">担当者</TableHead>
-                <TableHead style={{ width: "6.5%" }} className="text-xs">更新時間</TableHead>
-                <TableHead style={{ width: "24%" }} className="text-center text-xs">操作</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-xs">更新時間</TableHead>
+                <TableHead style={{ width: "27%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isRacesLoading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: isAdmin ? 12 : 11 }).map((_, j) => (
+                    {Array.from({ length: isAdmin ? 11 : 10 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : filteredRaces.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 12 : 11} className="h-32 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={isAdmin ? 11 : 10} className="h-32 text-center text-muted-foreground text-sm">
                     該当するレースが見つかりません
                   </TableCell>
                 </TableRow>
@@ -607,7 +612,6 @@ export default function RaceList() {
                 filteredRaces.map((race) => {
                   const derivedStatus = getDerivedStatus(race);
                   const badgeProps = getStatusBadgeProps(derivedStatus);
-                  const isTurf = race.surface_type === "芝";
                   const videoComplete = race.video_status === "完了";
                   const canSelect = isSelectable(derivedStatus);
                   const isChecked = checkedIds.has(race.id);
@@ -629,13 +633,10 @@ export default function RaceList() {
                     <TableRow key={race.id} className={`hover:bg-muted/30 ${isChecked ? "bg-primary/5" : ""}`}>
                       <TableCell className="text-xs text-center font-medium">{race.venue}</TableCell>
                       <TableCell className="text-xs text-center font-bold">{race.race_number}R</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{race.start_time?.substring(0, 5) || "-"}</TableCell>
-                      <TableCell className="text-xs font-medium truncate">{race.race_name}</TableCell>
-                      <TableCell className="text-center">
-                        <span className={`text-xs font-bold ${isTurf ? "text-green-400" : "text-amber-500"}`}>
-                          {isTurf ? "芝" : "ダ"}
-                        </span>
+                      <TableCell className="text-xs text-center font-mono text-muted-foreground">
+                        {race.race_id_num != null ? String(race.race_id_num).padStart(8, "0") : "-"}
                       </TableCell>
+                      <TableCell className="text-xs text-center text-muted-foreground">{getCourse(race)}</TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{race.distance}m</TableCell>
                       <TableCell className="text-center">
                         <Badge
@@ -664,9 +665,16 @@ export default function RaceList() {
                         </TableCell>
                       )}
                       <TableCell>
-                        <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className}`}>
-                          {badgeProps.label}
-                        </Badge>
+                        <div className="flex flex-col gap-0.5">
+                          <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className} w-fit`}>
+                            {badgeProps.label}
+                          </Badge>
+                          {derivedStatus === "解析失敗" && race.analysis_failure_reason && (
+                            <span className="text-[9px] text-red-400/80 leading-tight">
+                              失敗理由：{race.analysis_failure_reason}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>

@@ -207,9 +207,9 @@ def seed():
             return event_cache[key]
         eid = str(uuid.uuid4())
         cur.execute(
-            """INSERT INTO race_event (id, category_id, event_date, venue_code, venue_name, round)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (eid, cat_ids[cat_code], race_date, venue_code, venue_name, 1),
+            """INSERT INTO race_event (id, category_id, event_date, venue_code, venue_name, round, kaisai_day)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (eid, cat_ids[cat_code], race_date, venue_code, venue_name, 1, 1),
         )
         event_cache[key] = eid
         return eid
@@ -511,6 +511,10 @@ def seed():
                     metadata = {
                         "reanalysis_reason": "逆光",
                         "reanalysis_comment": "午後の時間帯で逆光が厳しく正確な解析が困難",
+                    }
+                elif status == "ANALYSIS_FAILED":
+                    metadata = {
+                        "failure_reason": "ゴールタイム読み取り不可",
                     }
                 elif status == "REVISION_REQUESTED":
                     metadata = {

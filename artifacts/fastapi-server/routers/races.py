@@ -57,7 +57,10 @@ SELECT
     rsh_prev.prev_status,
     rsh_rev.correction_request_comment,
     rsh_rea.reanalysis_reason,
-    rsh_rea.reanalysis_comment
+    rsh_rea.reanalysis_comment,
+    rsh_fail.analysis_failure_reason,
+    re.round        AS kaisai_round,
+    re.kaisai_day   AS kaisai_day
 FROM race r
 JOIN race_event re ON r.event_id = re.id
 JOIN race_category rc ON re.category_id = rc.id
@@ -94,6 +97,12 @@ LEFT JOIN LATERAL (
     WHERE race_id = r.id AND status = 'ANALYSIS_REQUESTED'
     ORDER BY changed_at DESC LIMIT 1
 ) rsh_rea ON true
+LEFT JOIN LATERAL (
+    SELECT metadata->>'failure_reason' AS analysis_failure_reason
+    FROM race_status_history
+    WHERE race_id = r.id AND status = 'ANALYSIS_FAILED'
+    ORDER BY changed_at DESC LIMIT 1
+) rsh_fail ON true
 """
 
 RACE_TYPE_MAP = {
@@ -102,6 +111,29 @@ RACE_TYPE_MAP = {
 }
 
 LOCK_TIMEOUT_SECONDS = 1800  # 30 minutes
+
+# Venue code → numeric (JRA standard + local)
+VENUE_CODE_INT: dict = {
+    "sapporo": 1, "hakodate": 2, "fukushima": 3, "niigata": 4,
+    "tokyo": 5, "nakayama": 6, "chukyo": 7, "kyoto": 8,
+    "hanshin": 9, "kokura": 10,
+    "oi": 30, "kawasaki": 31, "funabashi": 32, "urawa": 33,
+}
+
+
+def compute_race_id_num(race_date: Optional[str], venue_code: Optional[str],
+                        kaisai_round: Optional[int], kaisai_day: Optional[int],
+                        race_number: Optional[int]) -> Optional[int]:
+    """Compute 8-digit race ID: YY RR DD VV NN (year2 + round1 + day1 + venue2 + racenum2)."""
+    try:
+        year2 = int(race_date[:4]) % 100 if race_date else 0
+        rnd = int(kaisai_round or 1)
+        day = int(kaisai_day or 1)
+        vc = VENUE_CODE_INT.get(venue_code or "", 0)
+        rnum = int(race_number or 0)
+        return int(f"{year2:02d}{rnd:01d}{day:01d}{vc:02d}{rnum:02d}")
+    except Exception:
+        return None
 
 
 def fmt_race(row: dict) -> dict:
@@ -130,6 +162,14 @@ def fmt_race(row: dict) -> dict:
     raw_type = row.get("race_type_raw") or ""
     race_type = RACE_TYPE_MAP.get(raw_type, raw_type)
 
+    race_id_num = compute_race_id_num(
+        row.get("race_date"),
+        row.get("venue_code"),
+        row.get("kaisai_round"),
+        row.get("kaisai_day"),
+        row.get("race_number"),
+    )
+
     return {
         "id": row["id"],
         "race_date": row["race_date"],
@@ -144,6 +184,7 @@ def fmt_race(row: dict) -> dict:
         "weather": row.get("weather"),
         "condition": row.get("condition"),
         "start_time": row.get("start_time"),
+        "race_id_num": race_id_num,
         # English status for API logic
         "status": english_status,
         # Japanese display label for UI
@@ -159,6 +200,7 @@ def fmt_race(row: dict) -> dict:
         "correction_request_comment": row.get("correction_request_comment"),
         "reanalysis_reason": row.get("reanalysis_reason"),
         "reanalysis_comment": row.get("reanalysis_comment"),
+        "analysis_failure_reason": row.get("analysis_failure_reason"),
         "updated_at": row["updated_at"],
         "created_at": row["created_at"],
     }

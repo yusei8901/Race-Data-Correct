@@ -1963,7 +1963,7 @@ export default function DataCorrection() {
           <div className="flex-shrink-0 bg-zinc-950">
 
             {/* Video box — full column width, 16:9 */}
-            <div className="relative w-full" style={{ aspectRatio: "16/9" }}>
+            <div className="relative w-full overflow-hidden" style={{ aspectRatio: "16/9" }}>
               {/* Video background */}
               <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
                 {/* Simulated video background */}

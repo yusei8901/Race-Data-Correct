@@ -55,9 +55,13 @@ export interface Race {
   /** @nullable */
   assigned_user?: string | null;
   /** @nullable */
+  race_id_num?: number | null;
+  /** @nullable */
   correction_request_comment?: string | null;
   /** @nullable */
   reanalysis_reason?: string | null;
+  /** @nullable */
+  analysis_failure_reason?: string | null;
   /** @nullable */
   reanalysis_comment?: string | null;
   /** @nullable */
