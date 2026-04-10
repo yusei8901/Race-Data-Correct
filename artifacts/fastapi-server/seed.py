@@ -195,6 +195,14 @@ def seed():
         races_0405.append(("京都","中央競馬",i+1,race_names_pool[i],surface,dist,"右回り","曇",cond,start_times[i],statuses_kyoto[i]))
     # Index 22 in races_0405 = Kyoto R11 = PENDING + INCOMPLETE video (未処理)
     incomplete_video_idxs_05 = {22}
+    # Additional NEEDS_SETUP races for 2026-04-05 (indices 24-27)
+    races_0405.extend([
+        ("東京", "中央競馬", 13, "解析設定待ち②", "ダート", 1400, "左回り", "晴", "良", "16:30", "PENDING"),
+        ("東京", "中央競馬", 14, "解析設定待ち③", "芝",    2000, "左回り", "晴", "良", "16:50", "PENDING"),
+        ("京都", "中央競馬", 13, "解析設定待ち④", "芝",    1800, "右回り", "曇", "良", "16:30", "PENDING"),
+        ("京都", "中央競馬", 14, "解析設定待ち⑤", "ダート", 1200, "右回り", "曇", "稍重", "16:50", "PENDING"),
+    ])
+    file_race_link_failed_idxs_05 = {24, 25, 26, 27}
 
     # ── Helper: race_event cache ──────────────────────────────────────────────
     event_cache = {}  # (date, venue_code, cat_code) → event_id
@@ -546,7 +554,8 @@ def seed():
                   incomplete_video_idxs=incomplete_video_idxs_04,
                   file_race_link_failed_idxs=file_race_link_failed_idxs_04)
     process_races(race_date_2, races_0405, inject_bad_data=True,
-                  incomplete_video_idxs=incomplete_video_idxs_05)
+                  incomplete_video_idxs=incomplete_video_idxs_05,
+                  file_race_link_failed_idxs=file_race_link_failed_idxs_05)
 
     # ── Test patterns A-E (2026-04-06) — UI verification data ────────────────
     race_date_test = "2026-04-06"
