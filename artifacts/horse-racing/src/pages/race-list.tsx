@@ -127,6 +127,33 @@ function getCourse(race: Race): string {
   return dir ? `${surface}・${dir}` : surface;
 }
 
+function formatGoalTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const cs = Math.round((sec % 1) * 100);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(cs).padStart(2, "0")}`;
+}
+
+const VIDEO_SELECTABLE_STATUSES = new Set(["NEEDS_SETUP", "STANDBY"]);
+const VIDEO_BULK_OPTIONS: { value: string; label: string }[] = [
+  { value: "NEEDS_SETUP", label: "解析未設定" },
+  { value: "STANDBY",     label: "準備完了" },
+];
+
+function isVideoSelectable(race: Race): boolean {
+  return VIDEO_SELECTABLE_STATUSES.has(race.video_raw_status || "");
+}
+
+function getVideoBadgeProps(displayStatus: string | null | undefined) {
+  switch (displayStatus) {
+    case "完了":       return { className: "bg-green-900/40 text-green-400 border-green-800",   label: "完了" };
+    case "準備完了":   return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800",     label: "準備完了" };
+    case "解析未設定": return { className: "bg-amber-900/40 text-amber-400 border-amber-800",  label: "解析未設定" };
+    case "未完了":     return { className: "bg-zinc-800/60 text-zinc-500 border-zinc-700",     label: "未完了" };
+    default:           return { className: "bg-zinc-800/60 text-zinc-500 border-zinc-700",     label: displayStatus || "-" };
+  }
+}
+
 const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
 const HIGHLIGHT_STATUSES: Set<string> = new Set([...ALERT_STATUSES, "未処理"]);
 
@@ -236,6 +263,9 @@ export default function RaceList() {
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
   const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [videoCheckedIds, setVideoCheckedIds] = useState<Set<string>>(new Set());
+  const [videoBulkStatus, setVideoBulkStatus] = useState<string>("STANDBY");
+  const [videoBulkConfirmOpen, setVideoBulkConfirmOpen] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -397,6 +427,67 @@ export default function RaceList() {
       }));
   }, [bulkConfirmOpen, filteredRaces, selectedIds]);
 
+  // ── Video bulk update helpers ──
+  const videoSelectableIds = useMemo(
+    () => filteredRaces.filter((r) => isVideoSelectable(r)).map((r) => r.id),
+    [filteredRaces],
+  );
+  const videoAllChecked = videoSelectableIds.length > 0 && videoSelectableIds.every((id) => videoCheckedIds.has(id));
+  const videoSomeChecked = videoSelectableIds.some((id) => videoCheckedIds.has(id));
+
+  const toggleVideoRow = (id: string) => {
+    setVideoCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllVideo = (checked: boolean | "indeterminate") => {
+    if (checked === true) setVideoCheckedIds(new Set(videoSelectableIds));
+    else setVideoCheckedIds(new Set());
+  };
+
+  const videoSelectedIds = filteredRaces
+    .filter((r) => videoCheckedIds.has(r.id) && isVideoSelectable(r))
+    .map((r) => r.id);
+
+  const handleVideoBulkUpdate = () => {
+    if (videoSelectedIds.length === 0) return;
+    setVideoBulkConfirmOpen(true);
+  };
+
+  const executeVideoBulkUpdate = async () => {
+    setVideoBulkConfirmOpen(false);
+    try {
+      const res = await fetch(`${API}/races/batch-update-video`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ race_ids: videoSelectedIds, status: videoBulkStatus }),
+      });
+      if (res.ok) {
+        setVideoCheckedIds(new Set());
+        queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
+        toast({ title: `${videoSelectedIds.length}件の動画ステータスを変更しました` });
+      } else {
+        toast({ title: "動画ステータス変更に失敗しました", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "通信エラーが発生しました", variant: "destructive" });
+    }
+  };
+
+  const videoBulkConfirmRaces = useMemo(() => {
+    if (!videoBulkConfirmOpen) return [];
+    return filteredRaces
+      .filter((r) => videoSelectedIds.includes(r.id))
+      .map((r) => ({
+        label: `${r.venue} ${r.race_number}R`,
+        currentVideoStatus: r.video_display_status || "-",
+      }));
+  }, [videoBulkConfirmOpen, filteredRaces, videoSelectedIds]);
+
   const handleCompleteAnalysis = async (raceId: string) => {
     setCompletingIds((prev) => new Set(prev).add(raceId));
     try {
@@ -532,10 +623,10 @@ export default function RaceList() {
         </div>
       </div>
 
-      {/* Bulk action bar — admin only */}
+      {/* Bulk action bar — race status */}
       {isAdmin && selectedIds.length > 0 && (
-        <div className="mx-6 mb-2 flex items-center gap-3 bg-primary/10 border border-primary/30 rounded-md px-4 py-2">
-          <span className="text-xs text-muted-foreground">{selectedIds.length}件選択中</span>
+        <div className="mx-6 mb-1 flex items-center gap-3 bg-primary/10 border border-primary/30 rounded-md px-4 py-2">
+          <span className="text-xs text-muted-foreground font-medium">レース {selectedIds.length}件選択中</span>
           <Select value={bulkStatus} onValueChange={setBulkStatus}>
             <SelectTrigger className="w-[140px] h-7 text-xs cursor-pointer">
               <SelectValue />
@@ -546,20 +637,33 @@ export default function RaceList() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            size="sm"
-            className="h-7 text-xs cursor-pointer"
-            onClick={handleBulkUpdate}
-            disabled={batchUpdateMutation.isPending}
-          >
+          <Button size="sm" className="h-7 text-xs cursor-pointer" onClick={handleBulkUpdate} disabled={batchUpdateMutation.isPending}>
             {batchUpdateMutation.isPending ? "更新中..." : "一括変更"}
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 text-xs ml-auto cursor-pointer"
-            onClick={() => setCheckedIds(new Set())}
-          >
+          <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto cursor-pointer" onClick={() => setCheckedIds(new Set())}>
+            選択解除
+          </Button>
+        </div>
+      )}
+
+      {/* Bulk action bar — video status */}
+      {isAdmin && videoSelectedIds.length > 0 && (
+        <div className="mx-6 mb-2 flex items-center gap-3 bg-blue-950/30 border border-blue-800/50 rounded-md px-4 py-2">
+          <span className="text-xs text-blue-300 font-medium">動画 {videoSelectedIds.length}件選択中</span>
+          <Select value={videoBulkStatus} onValueChange={setVideoBulkStatus}>
+            <SelectTrigger className="w-[140px] h-7 text-xs cursor-pointer">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {VIDEO_BULK_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" className="h-7 text-xs cursor-pointer bg-blue-700 hover:bg-blue-600 text-white border-0" onClick={handleVideoBulkUpdate}>
+            動画ステータス変更
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto cursor-pointer" onClick={() => setVideoCheckedIds(new Set())}>
             選択解除
           </Button>
         </div>
@@ -571,14 +675,24 @@ export default function RaceList() {
           <Table className="w-full table-fixed">
             <TableHeader className="bg-muted/50 sticky top-0 z-10 backdrop-blur">
               <TableRow>
-                <TableHead style={{ width: "6%" }} className="text-center text-xs">競馬場</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
                 <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
-                <TableHead style={{ width: "10%" }} className="text-center text-xs">レースID</TableHead>
-                <TableHead style={{ width: "9%" }} className="text-center text-xs">コース</TableHead>
-                <TableHead style={{ width: "6%" }} className="text-center text-xs">距離</TableHead>
+                <TableHead style={{ width: "9%" }} className="text-center text-xs">レースID</TableHead>
+                <TableHead style={{ width: "8%" }} className="text-center text-xs">コース</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-center text-xs">距離</TableHead>
+                {isAdmin && (
+                  <TableHead style={{ width: "3%" }} className="text-center">
+                    <Checkbox
+                      checked={videoAllChecked ? true : videoSomeChecked ? "indeterminate" : false}
+                      onCheckedChange={toggleAllVideo}
+                      aria-label="動画全選択"
+                      className="cursor-pointer"
+                    />
+                  </TableHead>
+                )}
                 <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 {isAdmin && (
-                  <TableHead style={{ width: "4%" }} className="text-center">
+                  <TableHead style={{ width: "3%" }} className="text-center">
                     <Checkbox
                       checked={allChecked ? true : someChecked ? "indeterminate" : false}
                       onCheckedChange={toggleAll}
@@ -587,24 +701,25 @@ export default function RaceList() {
                     />
                   </TableHead>
                 )}
-                <TableHead style={{ width: isAdmin ? "12%" : "16%" }} className="text-xs">ステータス</TableHead>
-                <TableHead style={{ width: "8%" }} className="text-xs">担当者</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-xs">更新時間</TableHead>
-                <TableHead style={{ width: "27%" }} className="text-center text-xs">操作</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-xs">ステータス</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-xs">担当者</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-xs">更新時間</TableHead>
+                <TableHead style={{ width: "11%" }} className="text-xs">解析オプション</TableHead>
+                <TableHead style={{ width: isAdmin ? "23%" : "29%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isRacesLoading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: isAdmin ? 11 : 10 }).map((_, j) => (
+                    {Array.from({ length: isAdmin ? 13 : 11 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : filteredRaces.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 11 : 10} className="h-32 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={isAdmin ? 13 : 11} className="h-32 text-center text-muted-foreground text-sm">
                     該当するレースが見つかりません
                   </TableCell>
                 </TableRow>
@@ -612,9 +727,11 @@ export default function RaceList() {
                 filteredRaces.map((race) => {
                   const derivedStatus = getDerivedStatus(race);
                   const badgeProps = getStatusBadgeProps(derivedStatus);
-                  const videoComplete = race.video_status === "完了";
+                  const videoBadge = getVideoBadgeProps(race.video_display_status);
                   const canSelect = isSelectable(derivedStatus);
+                  const canSelectVideo = isVideoSelectable(race);
                   const isChecked = checkedIds.has(race.id);
+                  const isVideoChecked = videoCheckedIds.has(race.id);
                   const isAnalyzing = derivedStatus === "解析中";
                   const isCompleting = completingIds.has(race.id);
 
@@ -634,20 +751,27 @@ export default function RaceList() {
                       <TableCell className="text-xs text-center font-medium">{race.venue}</TableCell>
                       <TableCell className="text-xs text-center font-bold">{race.race_number}R</TableCell>
                       <TableCell className="text-xs text-center font-mono text-muted-foreground">
-                        {race.race_id_num != null ? String(race.race_id_num).padStart(8, "0") : "-"}
+                        {race.race_id_num != null ? String(race.race_id_num).padStart(10, "0") : "-"}
                       </TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{getCourse(race)}</TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{race.distance}m</TableCell>
+                      {isAdmin && (
+                        <TableCell className="text-center">
+                          {canSelectVideo ? (
+                            <Checkbox
+                              checked={isVideoChecked}
+                              onCheckedChange={() => toggleVideoRow(race.id)}
+                              aria-label={`${race.race_number}R動画選択`}
+                              className="cursor-pointer"
+                            />
+                          ) : (
+                            <span className="block w-4 h-4" />
+                          )}
+                        </TableCell>
+                      )}
                       <TableCell className="text-center">
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] font-normal border ${
-                            videoComplete
-                              ? "bg-green-900/40 text-green-400 border-green-800"
-                              : "bg-zinc-800/60 text-zinc-500 border-zinc-700"
-                          }`}
-                        >
-                          {videoComplete ? "完了" : "未完了"}
+                        <Badge variant="outline" className={`text-[10px] font-normal border ${videoBadge.className}`}>
+                          {videoBadge.label}
                         </Badge>
                       </TableCell>
                       {isAdmin && (
@@ -670,14 +794,26 @@ export default function RaceList() {
                             {badgeProps.label}
                           </Badge>
                           {derivedStatus === "解析失敗" && race.analysis_failure_reason && (
-                            <span className="text-[9px] text-red-400/80 leading-tight">
-                              失敗理由：{race.analysis_failure_reason}
+                            <span className="text-[9px] text-red-400/80 leading-tight text-center block">
+                              {race.analysis_failure_reason}
                             </span>
                           )}
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[9px] text-zinc-500 leading-none">ゴールタイム</div>
+                          <div className="text-[10px] font-mono text-zinc-300 leading-none">
+                            {race.video_goal_time_raw != null ? formatGoalTime(race.video_goal_time_raw) : "-"}
+                          </div>
+                          <div className="text-[9px] text-zinc-500 leading-none mt-0.5">解析プリセット</div>
+                          <div className="text-[10px] text-zinc-300 leading-none truncate">
+                            {race.preset_name || "-"}
+                          </div>
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
                           {opBlocked ? (
@@ -749,6 +885,39 @@ export default function RaceList() {
               <Button variant="outline" size="sm" onClick={() => setBulkConfirmOpen(false)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
               <Button size="sm" onClick={executeBulkUpdate} disabled={batchUpdateMutation.isPending} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
                 {batchUpdateMutation.isPending ? "変更中..." : "変更する"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {videoBulkConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-zinc-900 border border-blue-800/50 rounded-lg shadow-2xl w-[500px] max-w-[95vw] p-6">
+            <h2 className="text-sm font-semibold mb-3 text-blue-300">動画ステータス一括変更の確認</h2>
+            <p className="text-xs text-muted-foreground mb-2">
+              以下の{videoBulkConfirmRaces.length}件の動画ステータスを変更します。
+            </p>
+            <div className="max-h-[240px] overflow-auto bg-zinc-800/60 border border-zinc-700 rounded p-2 mb-4 space-y-0.5">
+              {videoBulkConfirmRaces.map((item, i) => (
+                <div key={i} className="flex items-center justify-between text-xs py-0.5 gap-2">
+                  <span className="text-zinc-300 truncate">{item.label}</span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${getVideoBadgeProps(item.currentVideoStatus).className}`}>
+                      {item.currentVideoStatus}
+                    </span>
+                    <span className="text-zinc-500 text-[10px]">→</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${getVideoBadgeProps(VIDEO_BULK_OPTIONS.find(o => o.value === videoBulkStatus)?.label).className}`}>
+                      {VIDEO_BULK_OPTIONS.find(o => o.value === videoBulkStatus)?.label}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setVideoBulkConfirmOpen(false)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+              <Button size="sm" onClick={executeVideoBulkUpdate} className="h-8 text-xs cursor-pointer bg-blue-700 hover:bg-blue-600 text-white border-0">
+                変更する
               </Button>
             </div>
           </div>

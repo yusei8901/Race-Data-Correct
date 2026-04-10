@@ -452,13 +452,13 @@ def seed():
                  dist, direction, weather, cond, status),
             )
 
-            # race_video: INCOMPLETE, FILE_RACE_LINK_FAILED, or COMPLETED
+            # race_video: INCOMPLETE, NEEDS_SETUP, or FINISHED
             if race_idx in incomplete_video_idxs:
                 video_status = "INCOMPLETE"
             elif race_idx in file_race_link_failed_idxs:
-                video_status = "FILE_RACE_LINK_FAILED"
+                video_status = "NEEDS_SETUP"
             else:
-                video_status = "COMPLETED"
+                video_status = "FINISHED"
             video_id = str(uuid.uuid4())
             storage_path = f"gs://furlong-bucket/{race_date.replace('-', '')}/{venue_code}_{rnum:02d}.mp4"
             cur.execute(

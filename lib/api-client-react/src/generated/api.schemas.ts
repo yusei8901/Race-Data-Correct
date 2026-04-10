@@ -63,6 +63,14 @@ export interface Race {
   /** @nullable */
   analysis_failure_reason?: string | null;
   /** @nullable */
+  video_raw_status?: string | null;
+  /** @nullable */
+  video_display_status?: string | null;
+  /** @nullable */
+  video_goal_time_raw?: number | null;
+  /** @nullable */
+  preset_name?: string | null;
+  /** @nullable */
   reanalysis_comment?: string | null;
   /** @nullable */
   locked_by?: string | null;

@@ -103,6 +103,13 @@ LEFT JOIN LATERAL (
     WHERE race_id = r.id AND status = 'ANALYSIS_FAILED'
     ORDER BY changed_at DESC LIMIT 1
 ) rsh_fail ON true
+LEFT JOIN LATERAL (
+    SELECT ao.video_goal_time, vwp.name AS preset_name
+    FROM analysis_option ao
+    LEFT JOIN venue_weather_preset vwp ON vwp.id = ao.venue_weather_preset_id
+    WHERE ao.race_id = r.id
+    ORDER BY ao.updated_at DESC LIMIT 1
+) ao ON true
 """
 
 RACE_TYPE_MAP = {
@@ -111,6 +118,14 @@ RACE_TYPE_MAP = {
 }
 
 LOCK_TIMEOUT_SECONDS = 1800  # 30 minutes
+
+# race_video.status → Japanese display label
+VIDEO_STATUS_DISPLAY = {
+    "INCOMPLETE":  "未完了",
+    "NEEDS_SETUP": "解析未設定",
+    "STANDBY":     "準備完了",
+    "FINISHED":    "完了",
+}
 
 # Venue code → numeric (JRA standard + local)
 VENUE_CODE_INT: dict = {
@@ -124,14 +139,14 @@ VENUE_CODE_INT: dict = {
 def compute_race_id_num(race_date: Optional[str], venue_code: Optional[str],
                         kaisai_round: Optional[int], kaisai_day: Optional[int],
                         race_number: Optional[int]) -> Optional[int]:
-    """Compute 8-digit race ID: YY RR DD VV NN (year2 + round1 + day1 + venue2 + racenum2)."""
+    """Compute 10-digit race ID: YYYY RR DD VV NN (year4 + round1 + day1 + venue2 + racenum2)."""
     try:
-        year2 = int(race_date[:4]) % 100 if race_date else 0
+        year4 = int(race_date[:4]) if race_date else 0
         rnd = int(kaisai_round or 1)
         day = int(kaisai_day or 1)
         vc = VENUE_CODE_INT.get(venue_code or "", 0)
         rnum = int(race_number or 0)
-        return int(f"{year2:02d}{rnd:01d}{day:01d}{vc:02d}{rnum:02d}")
+        return int(f"{year4:04d}{rnd:01d}{day:01d}{vc:02d}{rnum:02d}")
     except Exception:
         return None
 
@@ -201,6 +216,10 @@ def fmt_race(row: dict) -> dict:
         "reanalysis_reason": row.get("reanalysis_reason"),
         "reanalysis_comment": row.get("reanalysis_comment"),
         "analysis_failure_reason": row.get("analysis_failure_reason"),
+        "video_raw_status": row.get("video_raw_status"),
+        "video_display_status": VIDEO_STATUS_DISPLAY.get(row.get("video_raw_status") or "", "未完了"),
+        "video_goal_time_raw": float(row["video_goal_time"]) if row.get("video_goal_time") is not None else None,
+        "preset_name": row.get("preset_name"),
         "updated_at": row["updated_at"],
         "created_at": row["created_at"],
     }
@@ -358,6 +377,37 @@ def batch_update_races(body: dict):
                              None, {"status": new_status, "batch": True})
         conn.commit()
         return {"updated": len(updated_rows)}
+
+
+VIDEO_ALLOWED_STATUSES = {"NEEDS_SETUP", "STANDBY"}
+
+
+@router.patch("/races/batch-update-video")
+def batch_update_video(body: dict):
+    """Batch update race_video.status for latest video of given races."""
+    race_ids = body.get("race_ids", [])
+    if not race_ids:
+        return {"updated": 0}
+    new_status = body.get("status")
+    if new_status not in VIDEO_ALLOWED_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Video status '{new_status}' not allowed")
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        updated = 0
+        for race_id in race_ids:
+            cur.execute(
+                """UPDATE race_video SET status = %s, updated_at = NOW()
+                   WHERE id = (
+                       SELECT id FROM race_video WHERE race_id = %s::uuid
+                       ORDER BY created_at DESC LIMIT 1
+                   ) AND status = ANY(ARRAY['NEEDS_SETUP','STANDBY'])
+                   RETURNING id""",
+                (new_status, race_id),
+            )
+            if cur.fetchone():
+                updated += 1
+        conn.commit()
+        return {"updated": updated}
 
 
 @router.get("/races/{race_id}")
