@@ -306,6 +306,17 @@ export default function RaceList() {
   const [presetBulkSaving, setPresetBulkSaving] = useState(false);
   const goalTimeInputRef = useRef<HTMLInputElement>(null);
 
+  type PendingChange = {
+    race: Race;
+    type: "goalTime" | "preset";
+    fieldLabel: string;
+    fromLabel: string;
+    toLabel: string;
+    save: () => Promise<void>;
+  };
+  const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
+  const [pendingPresetDisplay, setPendingPresetDisplay] = useState<{ raceId: string; value: string } | null>(null);
+
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -567,7 +578,7 @@ export default function RaceList() {
     setEditingGoalTime({ raceId: race.id, value: val });
   };
 
-  const handleGoalTimeCommit = async (race: Race) => {
+  const handleGoalTimeCommit = (race: Race) => {
     if (!editingGoalTime || editingGoalTime.raceId !== race.id) return;
     const raw = editingGoalTime.value.trim();
     setEditingGoalTime(null);
@@ -576,11 +587,47 @@ export default function RaceList() {
       toast({ title: "無効な時刻形式です（例: 1:30.05）", variant: "destructive" });
       return;
     }
-    await saveAnalysisOption(race, { goalTimeSec: parsed });
+    const fromLabel = race.video_goal_time_raw != null ? formatGoalTimeDisplay(race.video_goal_time_raw) : "（未設定）";
+    const toLabel = parsed != null ? formatGoalTimeDisplay(parsed) : "（クリア）";
+    if (fromLabel === toLabel) return;
+    setPendingChange({
+      race,
+      type: "goalTime",
+      fieldLabel: "ゴールタイム",
+      fromLabel,
+      toLabel,
+      save: () => saveAnalysisOption(race, { goalTimeSec: parsed }),
+    });
   };
 
-  const handlePresetChange = async (race: Race, newPresetId: string) => {
-    await saveAnalysisOption(race, { presetId: newPresetId || null });
+  const handlePresetChange = (race: Race, newPresetId: string) => {
+    const fromPreset = presets.find((p) => p.id === (race.preset_id || ""));
+    const toPreset = presets.find((p) => p.id === newPresetId);
+    const fromLabel = fromPreset?.name ?? "（未選択）";
+    const toLabel = toPreset?.name ?? "（未選択）";
+    if (newPresetId === (race.preset_id || "")) return;
+    setPendingPresetDisplay({ raceId: race.id, value: newPresetId });
+    setPendingChange({
+      race,
+      type: "preset",
+      fieldLabel: "解析プリセット",
+      fromLabel,
+      toLabel,
+      save: () => saveAnalysisOption(race, { presetId: newPresetId || null }),
+    });
+  };
+
+  const cancelPendingChange = () => {
+    setPendingChange(null);
+    setPendingPresetDisplay(null);
+  };
+
+  const confirmPendingChange = async () => {
+    if (!pendingChange) return;
+    const { save } = pendingChange;
+    setPendingChange(null);
+    setPendingPresetDisplay(null);
+    await save();
   };
 
   const executePresetBulkUpdate = async () => {
@@ -934,7 +981,6 @@ export default function RaceList() {
                         const isNeedsSetup = race.video_raw_status === "NEEDS_SETUP";
                         const isSaving = savingOptionIds.has(race.id);
                         const isEditingThis = editingGoalTime?.raceId === race.id;
-                        const hasVideo = race.video_raw_status && race.video_raw_status !== "INCOMPLETE";
                         const surfaceFilter = race.surface_type === "芝" ? "TURF" : race.surface_type === "ダート" ? "DIRT" : null;
                         const filteredPresets = presets.filter(
                           (p) => (!race.venue_code || p.venue_code === race.venue_code) && (!surfaceFilter || p.surface_type === surfaceFilter)
@@ -950,38 +996,34 @@ export default function RaceList() {
                                     <AlertTriangle className="h-2.5 w-2.5 text-amber-500 flex-shrink-0" />
                                   )}
                                 </div>
-                                {hasVideo ? (
-                                  isEditingThis ? (
-                                    <input
-                                      ref={goalTimeInputRef}
-                                      autoFocus
-                                      value={editingGoalTime!.value}
-                                      onChange={(e) => setEditingGoalTime({ raceId: race.id, value: e.target.value })}
-                                      onBlur={() => handleGoalTimeCommit(race)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") { e.preventDefault(); handleGoalTimeCommit(race); }
-                                        if (e.key === "Escape") setEditingGoalTime(null);
-                                      }}
-                                      className="w-full text-[10px] font-mono bg-zinc-800 border border-amber-600 rounded px-1 py-0.5 text-amber-200 focus:outline-none"
-                                      placeholder="1:30.05"
-                                    />
-                                  ) : (
-                                    <div
-                                      className={`text-[10px] font-mono leading-none cursor-text hover:opacity-80 transition-opacity px-1 py-0.5 rounded ${
-                                        isNeedsSetup && race.video_goal_time_raw == null
-                                          ? "text-amber-400/70 hover:text-amber-300"
-                                          : "text-zinc-300 hover:text-white"
-                                      }`}
-                                      onClick={() => handleGoalTimeEditStart(race)}
-                                      title="クリックして編集"
-                                    >
-                                      {race.video_goal_time_raw != null
-                                        ? formatGoalTimeDisplay(race.video_goal_time_raw)
-                                        : <span className="text-zinc-600 text-[9px]">クリックして入力</span>}
-                                    </div>
-                                  )
+                                {isEditingThis ? (
+                                  <input
+                                    ref={goalTimeInputRef}
+                                    autoFocus
+                                    value={editingGoalTime!.value}
+                                    onChange={(e) => setEditingGoalTime({ raceId: race.id, value: e.target.value })}
+                                    onBlur={() => handleGoalTimeCommit(race)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") { e.preventDefault(); handleGoalTimeCommit(race); }
+                                      if (e.key === "Escape") setEditingGoalTime(null);
+                                    }}
+                                    className="w-full text-[10px] font-mono bg-zinc-800 border border-amber-600 rounded px-1 py-0.5 text-amber-200 focus:outline-none"
+                                    placeholder="1:30.05"
+                                  />
                                 ) : (
-                                  <div className="text-[10px] font-mono text-zinc-600 px-1">-</div>
+                                  <div
+                                    className={`text-[10px] font-mono leading-none cursor-text hover:opacity-80 transition-opacity px-1 py-0.5 rounded ${
+                                      isNeedsSetup && race.video_goal_time_raw == null
+                                        ? "text-amber-400/70 hover:text-amber-300"
+                                        : "text-zinc-300 hover:text-white"
+                                    }`}
+                                    onClick={() => handleGoalTimeEditStart(race)}
+                                    title="クリックして編集"
+                                  >
+                                    {race.video_goal_time_raw != null
+                                      ? formatGoalTimeDisplay(race.video_goal_time_raw)
+                                      : <span className="text-zinc-600 text-[9px]">クリックして入力</span>}
+                                  </div>
                                 )}
                               </div>
                               {/* 解析プリセット row */}
@@ -992,25 +1034,25 @@ export default function RaceList() {
                                     <AlertTriangle className="h-2.5 w-2.5 text-amber-500 flex-shrink-0" />
                                   )}
                                 </div>
-                                {hasVideo ? (
-                                  <select
-                                    value={race.preset_id || ""}
-                                    onChange={(e) => handlePresetChange(race, e.target.value)}
-                                    disabled={isSaving}
-                                    className={`w-full text-[10px] rounded px-1 py-0.5 cursor-pointer border focus:outline-none ${
-                                      isNeedsSetup && !race.preset_id
-                                        ? "bg-amber-950/50 border-amber-700/60 text-amber-300"
-                                        : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
-                                    }`}
-                                  >
-                                    <option value="">未選択</option>
-                                    {filteredPresets.map((p) => (
-                                      <option key={p.id} value={p.id}>{p.name}</option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <div className="text-[10px] text-zinc-600 px-1">-</div>
-                                )}
+                                <select
+                                  value={
+                                    pendingPresetDisplay?.raceId === race.id
+                                      ? pendingPresetDisplay.value
+                                      : (race.preset_id || "")
+                                  }
+                                  onChange={(e) => handlePresetChange(race, e.target.value)}
+                                  disabled={isSaving}
+                                  className={`w-full text-[10px] rounded px-1 py-0.5 cursor-pointer border focus:outline-none ${
+                                    isNeedsSetup && !race.preset_id
+                                      ? "bg-amber-950/50 border-amber-700/60 text-amber-300"
+                                      : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
+                                  }`}
+                                >
+                                  <option value="">未選択</option>
+                                  {filteredPresets.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
                               </div>
                               {isSaving && (
                                 <div className="text-[8px] text-zinc-500 text-center">保存中...</div>
@@ -1090,6 +1132,31 @@ export default function RaceList() {
               <Button variant="outline" size="sm" onClick={() => setBulkConfirmOpen(false)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
               <Button size="sm" onClick={executeBulkUpdate} disabled={batchUpdateMutation.isPending} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
                 {batchUpdateMutation.isPending ? "変更中..." : "変更する"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingChange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[400px] max-w-[95vw] p-5">
+            <h2 className="text-sm font-semibold mb-2">設定を変更しますか？</h2>
+            <p className="text-[11px] text-zinc-400 mb-3">
+              <span className="text-zinc-200">{pendingChange.race.venue} {pendingChange.race.race_number}R</span> の
+              <span className="text-primary font-medium ml-1">{pendingChange.fieldLabel}</span> を変更します。
+            </p>
+            <div className="flex items-center justify-center gap-3 bg-zinc-800/60 border border-zinc-700 rounded px-3 py-2.5 mb-4">
+              <span className="text-[11px] text-zinc-400 max-w-[40%] text-right break-all leading-snug">{pendingChange.fromLabel}</span>
+              <span className="text-zinc-500 text-xs flex-shrink-0">→</span>
+              <span className="text-[11px] text-primary font-medium max-w-[40%] break-all leading-snug">{pendingChange.toLabel}</span>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={cancelPendingChange} className="h-8 text-xs cursor-pointer">
+                キャンセル
+              </Button>
+              <Button size="sm" onClick={confirmPendingChange} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
+                変更する
               </Button>
             </div>
           </div>

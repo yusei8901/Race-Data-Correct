@@ -548,6 +548,85 @@ def seed():
     process_races(race_date_2, races_0405, inject_bad_data=True,
                   incomplete_video_idxs=incomplete_video_idxs_05)
 
+    # ── Test patterns A-E (2026-04-06) — UI verification data ────────────────
+    race_date_test = "2026-04-06"
+    admin_user = user_ids["管理者"]
+
+    def get_preset_id_by(venue_code, surface_type, weather_code="CLEAR"):
+        cur.execute(
+            """SELECT id FROM venue_weather_preset
+               WHERE venue_code=%s AND surface_type=%s AND weather_preset_code=%s LIMIT 1""",
+            (venue_code, surface_type, weather_code),
+        )
+        row = cur.fetchone()
+        return row["id"] if row else None
+
+    # (venue, rtype, rnum, rname, surface, dist, dir, weather, cond, stime,
+    #  race_status, video_status, goal_time_sec, preset_weather, preset_surface)
+    test_patterns = [
+        ("中山", "中央競馬", 1, "[A] 動画未アップロード",
+         "芝",    1600, "右回り", "晴", "良", "10:00",
+         "PENDING",         "INCOMPLETE", None,  None,   None),
+        ("阪神", "中央競馬", 1, "[B] 解析設定待ち（入力不足）",
+         "芝",    1600, "右回り", "晴", "良", "10:30",
+         "PENDING",         "NEEDS_SETUP", None,  None,   None),
+        ("東京", "中央競馬", 1, "[C] 準備完了（設定済み）",
+         "芝",    1600, "左回り", "晴", "良", "11:00",
+         "PENDING",         "STANDBY",    83.40, "CLEAR", "TURF"),
+        ("京都", "中央競馬", 1, "[D] 解析失敗（エラーあり）",
+         "芝",    1600, "右回り", "曇", "良", "11:30",
+         "ANALYSIS_FAILED", "STANDBY",    None,  None,   None),
+        ("大井", "地方競馬", 1, "[E] 解析完了（待機中）",
+         "ダート", 1600, "左回り", "晴", "良", "12:00",
+         "ANALYZED",        "FINISHED",   None,  None,   None),
+    ]
+
+    for (venue, rtype, rnum, rname, surface, dist, direction,
+         weather, cond, stime, race_status, video_status,
+         goal_time_sec, preset_weather, preset_surface) in test_patterns:
+        vc = VENUE_CODE_MAP[venue]
+        eid = get_or_create_event(race_date_test, venue, rtype)
+        race_id = str(uuid.uuid4())
+        cur.execute(
+            """INSERT INTO race
+               (id, event_id, race_number, race_name, start_time, surface_type,
+                distance, direction, weather, track_condition, status)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (race_id, eid, rnum, rname, stime, surface,
+             dist, direction, weather, cond, race_status),
+        )
+        video_id = str(uuid.uuid4())
+        sp = f"gs://furlong-bucket/{race_date_test.replace('-','')}/{vc}_{rnum:02d}.mp4"
+        cur.execute(
+            "INSERT INTO race_video (id, race_id, storage_path, status) VALUES (%s,%s,%s,%s)",
+            (video_id, race_id, sp, video_status),
+        )
+        # status history
+        insert_status_history(race_id, "PENDING", admin_user)
+        if race_status == "ANALYSIS_FAILED":
+            insert_failed_job(video_id)
+            insert_status_history(race_id, "ANALYSIS_FAILED", admin_user,
+                                  {"failure_reason": "ゴールタイム読み取り不可"})
+        elif race_status == "ANALYZED":
+            _, hdr = insert_analysis_chain(race_id, video_id, 0, True, venue, surface, dist)
+            cur.execute("UPDATE race SET current_analysis_result_id=%s WHERE id=%s", (hdr, race_id))
+            insert_status_history(race_id, "ANALYZED", admin_user)
+        # analysis_option for pattern C (STANDBY + goal_time set)
+        if video_status == "STANDBY" and goal_time_sec is not None:
+            pid = get_preset_id_by(vc, preset_surface or "TURF", preset_weather or "CLEAR")
+            if pid:
+                cur.execute(
+                    """INSERT INTO analysis_option
+                       (id, race_id, video_id, venue_weather_preset_id,
+                        video_goal_time, comment, created_at, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,NULL,NOW(),NOW())""",
+                    (str(uuid.uuid4()), race_id, video_id, pid, goal_time_sec),
+                )
+        # official + jra reference
+        off_id = insert_official_horse_data(race_date_test, vc, rnum)
+        insert_jra_reference(race_date_test, vc, rnum, weather, dist, surface, direction)
+        insert_linkage_result(race_id, off_id, "FAILED")
+
     # ── analysis_venue_config (per-venue analysis parameters) ─────────────────
     import json as _json
     _default_params = {

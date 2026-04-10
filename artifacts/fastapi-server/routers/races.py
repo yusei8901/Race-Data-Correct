@@ -60,7 +60,10 @@ SELECT
     rsh_rea.reanalysis_comment,
     rsh_fail.analysis_failure_reason,
     re.round        AS kaisai_round,
-    re.kaisai_day   AS kaisai_day
+    re.kaisai_day   AS kaisai_day,
+    ao.video_goal_time,
+    ao.preset_id,
+    ao.preset_name
 FROM race r
 JOIN race_event re ON r.event_id = re.id
 JOIN race_category rc ON re.category_id = rc.id
