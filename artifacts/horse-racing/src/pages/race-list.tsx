@@ -911,16 +911,22 @@ export default function RaceList() {
                         </TableCell>
                       )}
                       <TableCell>
-                        <div className="flex flex-col gap-0.5">
+                        {derivedStatus === "解析失敗" && race.analysis_failure_reason ? (
+                          <div className="inline-flex flex-col rounded border border-red-800 overflow-hidden w-fit max-w-full">
+                            <div className="px-1.5 py-0.5 bg-red-900/50">
+                              <span className="text-[10px] font-normal text-red-400">解析失敗</span>
+                            </div>
+                            <div className="px-1.5 py-0.5 bg-red-950/60 border-t border-red-800/60">
+                              <span className="text-[8px] text-red-400/75 leading-tight block break-words">
+                                {race.analysis_failure_reason}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
                           <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className} w-fit`}>
                             {badgeProps.label}
                           </Badge>
-                          {derivedStatus === "解析失敗" && race.analysis_failure_reason && (
-                            <span className="text-[9px] text-red-400/80 leading-tight text-center block">
-                              {race.analysis_failure_reason}
-                            </span>
-                          )}
-                        </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
