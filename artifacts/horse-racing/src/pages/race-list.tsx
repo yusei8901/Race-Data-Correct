@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
 import { Calendar, RefreshCcw, AlertTriangle, Download, RefreshCw } from "lucide-react";
@@ -134,6 +134,37 @@ function formatGoalTime(sec: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(cs).padStart(2, "0")}`;
 }
 
+function formatGoalTimeDisplay(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const cs = Math.round((sec % 1) * 100);
+  return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+}
+
+function parseGoalTimeInput(s: string): number | null {
+  const s1 = s.trim();
+  if (!s1) return null;
+  const m1 = s1.match(/^(\d+):(\d{2})\.(\d{1,2})$/);
+  if (m1) {
+    const cs = m1[3].length === 1 ? parseInt(m1[3]) * 10 : parseInt(m1[3]);
+    return parseInt(m1[1]) * 60 + parseInt(m1[2]) + cs / 100;
+  }
+  const m2 = s1.match(/^(\d+):(\d{2}):(\d{2})$/);
+  if (m2) return parseInt(m2[1]) * 60 + parseInt(m2[2]) + parseInt(m2[3]) / 100;
+  const m3 = s1.match(/^(\d+):(\d{2})$/);
+  if (m3) return parseInt(m3[1]) * 60 + parseInt(m3[2]);
+  const n = parseFloat(s1);
+  return isNaN(n) ? null : n;
+}
+
+interface VenuePreset {
+  id: string;
+  name: string;
+  venue_code: string;
+  surface_type: string;
+  is_active: boolean;
+}
+
 const VIDEO_SELECTABLE_STATUSES = new Set(["NEEDS_SETUP", "STANDBY"]);
 const VIDEO_BULK_OPTIONS: { value: string; label: string }[] = [
   { value: "NEEDS_SETUP", label: "解析未設定" },
@@ -267,6 +298,14 @@ export default function RaceList() {
   const [videoBulkStatus, setVideoBulkStatus] = useState<string>("STANDBY");
   const [videoBulkConfirmOpen, setVideoBulkConfirmOpen] = useState(false);
 
+  const [presets, setPresets] = useState<VenuePreset[]>([]);
+  const [editingGoalTime, setEditingGoalTime] = useState<{ raceId: string; value: string } | null>(null);
+  const [savingOptionIds, setSavingOptionIds] = useState<Set<string>>(new Set());
+  const [presetBulkOpen, setPresetBulkOpen] = useState(false);
+  const [presetBulkPresetId, setPresetBulkPresetId] = useState<string>("");
+  const [presetBulkSaving, setPresetBulkSaving] = useState(false);
+  const goalTimeInputRef = useRef<HTMLInputElement>(null);
+
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -285,6 +324,13 @@ export default function RaceList() {
     if (!date) return;
     sessionStorage.setItem(RACE_LIST_STATE_KEY, JSON.stringify({ date, venue, raceType, statusFilter }));
   }, [date, venue, raceType, statusFilter]);
+
+  useEffect(() => {
+    fetch(`${API}/venue-weather-presets?active_only=true`)
+      .then((r) => r.json())
+      .then((data) => setPresets(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
 
   // Always fetch all races for date+type, filter by venue client-side
   const queryParams = {
@@ -488,6 +534,79 @@ export default function RaceList() {
       }));
   }, [videoBulkConfirmOpen, filteredRaces, videoSelectedIds]);
 
+  const saveAnalysisOption = async (
+    race: Race,
+    overrides: { goalTimeSec?: number | null; presetId?: string | null }
+  ) => {
+    const raceId = race.id;
+    setSavingOptionIds((prev) => new Set(prev).add(raceId));
+    const body: Record<string, unknown> = {};
+    const gt = "goalTimeSec" in overrides ? overrides.goalTimeSec : race.video_goal_time_raw;
+    const pid = "presetId" in overrides ? overrides.presetId : race.preset_id;
+    if (gt != null) body.video_goal_time = gt;
+    if (pid) body.venue_weather_preset_id = pid;
+    try {
+      const res = await fetch(`${API}/races/${raceId}/analysis-option`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
+      } else {
+        toast({ title: "保存に失敗しました", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "通信エラーが発生しました", variant: "destructive" });
+    }
+    setSavingOptionIds((prev) => { const s = new Set(prev); s.delete(raceId); return s; });
+  };
+
+  const handleGoalTimeEditStart = (race: Race) => {
+    const val = race.video_goal_time_raw != null ? formatGoalTimeDisplay(race.video_goal_time_raw) : "";
+    setEditingGoalTime({ raceId: race.id, value: val });
+  };
+
+  const handleGoalTimeCommit = async (race: Race) => {
+    if (!editingGoalTime || editingGoalTime.raceId !== race.id) return;
+    const raw = editingGoalTime.value.trim();
+    setEditingGoalTime(null);
+    const parsed = raw === "" ? null : parseGoalTimeInput(raw);
+    if (raw !== "" && parsed === null) {
+      toast({ title: "無効な時刻形式です（例: 1:30.05）", variant: "destructive" });
+      return;
+    }
+    await saveAnalysisOption(race, { goalTimeSec: parsed });
+  };
+
+  const handlePresetChange = async (race: Race, newPresetId: string) => {
+    await saveAnalysisOption(race, { presetId: newPresetId || null });
+  };
+
+  const executePresetBulkUpdate = async () => {
+    if (!presetBulkPresetId || videoSelectedIds.length === 0) return;
+    setPresetBulkSaving(true);
+    try {
+      const res = await fetch(`${API}/races/bulk-update-preset`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ race_ids: videoSelectedIds, venue_weather_preset_id: presetBulkPresetId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPresetBulkOpen(false);
+        setVideoCheckedIds(new Set());
+        queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
+        toast({ title: `${data.updated}件にプリセットを設定しました` });
+      } else {
+        toast({ title: "一括設定に失敗しました", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "通信エラーが発生しました", variant: "destructive" });
+    }
+    setPresetBulkSaving(false);
+  };
+
   const handleCompleteAnalysis = async (raceId: string) => {
     setCompletingIds((prev) => new Set(prev).add(raceId));
     try {
@@ -663,6 +782,9 @@ export default function RaceList() {
           <Button size="sm" className="h-7 text-xs cursor-pointer bg-blue-700 hover:bg-blue-600 text-white border-0" onClick={handleVideoBulkUpdate}>
             動画ステータス変更
           </Button>
+          <Button size="sm" className="h-7 text-xs cursor-pointer bg-amber-800 hover:bg-amber-700 text-white border-0" onClick={() => { setPresetBulkPresetId(""); setPresetBulkOpen(true); }}>
+            一括プリセット設定
+          </Button>
           <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto cursor-pointer" onClick={() => setVideoCheckedIds(new Set())}>
             選択解除
           </Button>
@@ -802,18 +924,95 @@ export default function RaceList() {
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-0.5">
-                          <div className="text-[9px] text-zinc-500 leading-none">ゴールタイム</div>
-                          <div className="text-[10px] font-mono text-zinc-300 leading-none">
-                            {race.video_goal_time_raw != null ? formatGoalTime(race.video_goal_time_raw) : "-"}
-                          </div>
-                          <div className="text-[9px] text-zinc-500 leading-none mt-0.5">解析プリセット</div>
-                          <div className="text-[10px] text-zinc-300 leading-none truncate">
-                            {race.preset_name || "-"}
-                          </div>
-                        </div>
-                      </TableCell>
+                      {(() => {
+                        const isNeedsSetup = race.video_raw_status === "NEEDS_SETUP";
+                        const isSaving = savingOptionIds.has(race.id);
+                        const isEditingThis = editingGoalTime?.raceId === race.id;
+                        const hasVideo = race.video_raw_status && race.video_raw_status !== "INCOMPLETE";
+                        const surfaceFilter = race.surface_type === "芝" ? "TURF" : race.surface_type === "ダート" ? "DIRT" : null;
+                        const filteredPresets = presets.filter(
+                          (p) => (!race.venue_code || p.venue_code === race.venue_code) && (!surfaceFilter || p.surface_type === surfaceFilter)
+                        );
+                        return (
+                          <TableCell className={`p-1.5 ${isNeedsSetup ? "bg-amber-950/25" : ""}`}>
+                            <div className="flex flex-col gap-1">
+                              {/* ゴールタイム row */}
+                              <div>
+                                <div className="flex items-center gap-0.5 mb-0.5">
+                                  <span className="text-[9px] text-zinc-500 leading-none">ゴールタイム</span>
+                                  {isNeedsSetup && race.video_goal_time_raw == null && (
+                                    <AlertTriangle className="h-2.5 w-2.5 text-amber-500 flex-shrink-0" />
+                                  )}
+                                </div>
+                                {hasVideo ? (
+                                  isEditingThis ? (
+                                    <input
+                                      ref={goalTimeInputRef}
+                                      autoFocus
+                                      value={editingGoalTime!.value}
+                                      onChange={(e) => setEditingGoalTime({ raceId: race.id, value: e.target.value })}
+                                      onBlur={() => handleGoalTimeCommit(race)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") { e.preventDefault(); handleGoalTimeCommit(race); }
+                                        if (e.key === "Escape") setEditingGoalTime(null);
+                                      }}
+                                      className="w-full text-[10px] font-mono bg-zinc-800 border border-amber-600 rounded px-1 py-0.5 text-amber-200 focus:outline-none"
+                                      placeholder="1:30.05"
+                                    />
+                                  ) : (
+                                    <div
+                                      className={`text-[10px] font-mono leading-none cursor-text hover:opacity-80 transition-opacity px-1 py-0.5 rounded ${
+                                        isNeedsSetup && race.video_goal_time_raw == null
+                                          ? "text-amber-400/70 hover:text-amber-300"
+                                          : "text-zinc-300 hover:text-white"
+                                      }`}
+                                      onClick={() => handleGoalTimeEditStart(race)}
+                                      title="クリックして編集"
+                                    >
+                                      {race.video_goal_time_raw != null
+                                        ? formatGoalTimeDisplay(race.video_goal_time_raw)
+                                        : <span className="text-zinc-600 text-[9px]">クリックして入力</span>}
+                                    </div>
+                                  )
+                                ) : (
+                                  <div className="text-[10px] font-mono text-zinc-600 px-1">-</div>
+                                )}
+                              </div>
+                              {/* 解析プリセット row */}
+                              <div>
+                                <div className="flex items-center gap-0.5 mb-0.5">
+                                  <span className="text-[9px] text-zinc-500 leading-none">解析プリセット</span>
+                                  {isNeedsSetup && !race.preset_id && (
+                                    <AlertTriangle className="h-2.5 w-2.5 text-amber-500 flex-shrink-0" />
+                                  )}
+                                </div>
+                                {hasVideo ? (
+                                  <select
+                                    value={race.preset_id || ""}
+                                    onChange={(e) => handlePresetChange(race, e.target.value)}
+                                    disabled={isSaving}
+                                    className={`w-full text-[10px] rounded px-1 py-0.5 cursor-pointer border focus:outline-none ${
+                                      isNeedsSetup && !race.preset_id
+                                        ? "bg-amber-950/50 border-amber-700/60 text-amber-300"
+                                        : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500"
+                                    }`}
+                                  >
+                                    <option value="">未選択</option>
+                                    {filteredPresets.map((p) => (
+                                      <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <div className="text-[10px] text-zinc-600 px-1">-</div>
+                                )}
+                              </div>
+                              {isSaving && (
+                                <div className="text-[8px] text-zinc-500 text-center">保存中...</div>
+                              )}
+                            </div>
+                          </TableCell>
+                        );
+                      })()}
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
                           {opBlocked ? (
@@ -885,6 +1084,44 @@ export default function RaceList() {
               <Button variant="outline" size="sm" onClick={() => setBulkConfirmOpen(false)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
               <Button size="sm" onClick={executeBulkUpdate} disabled={batchUpdateMutation.isPending} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
                 {batchUpdateMutation.isPending ? "変更中..." : "変更する"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {presetBulkOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-zinc-900 border border-amber-800/50 rounded-lg shadow-2xl w-[460px] max-w-[95vw] p-6">
+            <h2 className="text-sm font-semibold mb-1 text-amber-300">一括プリセット設定</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              選択した {videoSelectedIds.length} 件の動画に解析プリセットを一括設定します。<br />
+              既存のゴールタイムは保持されます。
+            </p>
+            <div className="mb-4">
+              <div className="text-xs font-medium text-muted-foreground mb-1.5">適用する解析プリセット</div>
+              <select
+                value={presetBulkPresetId}
+                onChange={(e) => setPresetBulkPresetId(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground cursor-pointer"
+              >
+                <option value="">選択してください</option>
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setPresetBulkOpen(false)} className="h-8 text-xs cursor-pointer">
+                キャンセル
+              </Button>
+              <Button
+                size="sm"
+                onClick={executePresetBulkUpdate}
+                disabled={!presetBulkPresetId || presetBulkSaving}
+                className="h-8 text-xs cursor-pointer bg-amber-700 hover:bg-amber-600 text-white border-0"
+              >
+                {presetBulkSaving ? "設定中..." : "一括設定する"}
               </Button>
             </div>
           </div>

@@ -71,6 +71,8 @@ export interface Race {
   /** @nullable */
   preset_name?: string | null;
   /** @nullable */
+  preset_id?: string | null;
+  /** @nullable */
   reanalysis_comment?: string | null;
   /** @nullable */
   locked_by?: string | null;

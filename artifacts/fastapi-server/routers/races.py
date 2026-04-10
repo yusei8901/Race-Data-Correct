@@ -104,7 +104,9 @@ LEFT JOIN LATERAL (
     ORDER BY changed_at DESC LIMIT 1
 ) rsh_fail ON true
 LEFT JOIN LATERAL (
-    SELECT ao.video_goal_time, vwp.name AS preset_name
+    SELECT ao.video_goal_time,
+           ao.venue_weather_preset_id::text AS preset_id,
+           vwp.name AS preset_name
     FROM analysis_option ao
     LEFT JOIN venue_weather_preset vwp ON vwp.id = ao.venue_weather_preset_id
     WHERE ao.race_id = r.id
@@ -220,6 +222,7 @@ def fmt_race(row: dict) -> dict:
         "video_display_status": VIDEO_STATUS_DISPLAY.get(row.get("video_raw_status") or "", "未完了"),
         "video_goal_time_raw": float(row["video_goal_time"]) if row.get("video_goal_time") is not None else None,
         "preset_name": row.get("preset_name"),
+        "preset_id": row.get("preset_id"),
         "updated_at": row["updated_at"],
         "created_at": row["created_at"],
     }
@@ -408,6 +411,45 @@ def batch_update_video(body: dict):
                 updated += 1
         conn.commit()
         return {"updated": updated}
+
+
+@router.patch("/races/bulk-update-preset")
+def bulk_update_preset(body: dict):
+    """Batch-apply a venue_weather_preset to multiple races' analysis_option and auto-update video status."""
+    race_ids = body.get("race_ids", [])
+    preset_id = body.get("venue_weather_preset_id")
+    if not race_ids or not preset_id:
+        return {"updated": 0}
+    updated = 0
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        for race_id in race_ids:
+            cur.execute(
+                "SELECT id, status FROM race_video WHERE race_id = %s::uuid ORDER BY created_at DESC LIMIT 1",
+                (race_id,),
+            )
+            video = cur.fetchone()
+            if not video or video["status"] in ("FINISHED", "INCOMPLETE"):
+                continue
+            video_id = video["id"]
+            cur.execute(
+                "SELECT video_goal_time, comment FROM analysis_option WHERE race_id = %s ORDER BY updated_at DESC LIMIT 1",
+                (race_id,),
+            )
+            existing = cur.fetchone()
+            goal_time = existing["video_goal_time"] if existing else None
+            comment = existing["comment"] if existing else None
+            cur.execute("DELETE FROM analysis_option WHERE race_id = %s", (race_id,))
+            cur.execute(
+                """INSERT INTO analysis_option
+                   (id, race_id, video_id, venue_weather_preset_id, video_goal_time, comment, created_at, updated_at)
+                   VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, NOW(), NOW())""",
+                (race_id, video_id, preset_id, goal_time, comment),
+            )
+            _auto_update_video_status(cur, video_id, goal_time, preset_id)
+            updated += 1
+        conn.commit()
+    return {"updated": updated}
 
 
 @router.get("/races/{race_id}")
@@ -902,6 +944,23 @@ def get_analysis_option(race_id: str):
         return row
 
 
+def _auto_update_video_status(cur, video_id: str, video_goal_time, preset_id) -> None:
+    """Auto-transition race_video.status based on goal_time + preset completeness."""
+    cur.execute("SELECT status FROM race_video WHERE id = %s", (video_id,))
+    row = cur.fetchone()
+    if not row:
+        return
+    current = row["status"]
+    if current in ("FINISHED", "INCOMPLETE"):
+        return
+    new_status = "STANDBY" if (video_goal_time is not None and preset_id) else "NEEDS_SETUP"
+    if new_status != current:
+        cur.execute(
+            "UPDATE race_video SET status = %s, updated_at = NOW() WHERE id = %s",
+            (new_status, video_id),
+        )
+
+
 @router.post("/races/{race_id}/analysis-option")
 def upsert_analysis_option(race_id: str, body: dict):
     video_goal_time = body.get("video_goal_time")
@@ -924,6 +983,7 @@ def upsert_analysis_option(race_id: str, body: dict):
                RETURNING id""",
             (race_id, video_id, preset_id, video_goal_time, comment),
         )
+        _auto_update_video_status(cur, video_id, video_goal_time, preset_id)
         conn.commit()
         return get_analysis_option(race_id)
 
