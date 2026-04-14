@@ -825,6 +825,7 @@ export default function DataCorrection() {
   });
   const [selectedBboxId, setSelectedBboxId] = useState<string | null>(null);
   const [newCapColorKey, setNewCapColorKey] = useState<number>(1);
+  const [newCapClassNum, setNewCapClassNum] = useState<number>(1);
   const [bboxParamsOpen, setBboxParamsOpen] = useState(false);
   const [bboxParams, setBboxParams] = useState<BboxParams>(DEFAULT_BBOX_PARAMS);
   const [presets, setPresets] = useState<BboxPreset[]>([]);
@@ -871,6 +872,13 @@ export default function DataCorrection() {
     () => computeCheckpoints(race?.distance ?? 2000, straight),
     [race?.distance, straight],
   );
+  const selectedCpType = useMemo<"start" | "interval" | "straight" | null>(() => {
+    if (!selectedCp) return null;
+    if (selectedCp === "5m") return "start";
+    if (pts200.some((p) => p.key === selectedCp)) return "interval";
+    if (ptsStr.some((p) => p.key === selectedCp)) return "straight";
+    return null;
+  }, [selectedCp, pts200, ptsStr]);
   const baseSec = race ? (race.distance / 1000) * 60 + 27 : 90;
   const effectiveVideoOffset = customVideoOffset ?? VIDEO_OFFSET;
   const effectiveBaseSec = customRaceDuration ?? baseSec;
@@ -1666,17 +1674,38 @@ export default function DataCorrection() {
             <div className="relative w-full overflow-hidden" style={{ aspectRatio: "16/9" }}>
               {/* Video background */}
               <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
-                {/* Simulated video background */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <Play className="h-12 w-12 text-zinc-700 mb-2" />
-                  <span className="text-xs text-zinc-600">レース動画</span>
-                </div>
+                {/* Sample frame image based on checkpoint type */}
+                {selectedCpType === "interval" && (
+                  <img
+                    src="/sample_400m.png"
+                    alt="小倉競馬場 残り400m付近"
+                    className="absolute inset-0 w-full h-full object-cover opacity-90"
+                    draggable={false}
+                  />
+                )}
+                {selectedCpType === "straight" && (
+                  <img
+                    src="/sample_200m.png"
+                    alt="小倉競馬場 残り200m付近"
+                    className="absolute inset-0 w-full h-full object-cover opacity-90"
+                    draggable={false}
+                  />
+                )}
+                {/* Fallback: no checkpoint or start */}
+                {!selectedCpType && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <Play className="h-12 w-12 text-zinc-700 mb-2" />
+                    <span className="text-xs text-zinc-600">レース動画</span>
+                  </div>
+                )}
 
                 {/* Selected checkpoint indicator */}
                 {selectedCp && (
                   <div className="absolute bottom-2 left-0 right-0 flex justify-center pointer-events-none">
                     <span className="bg-black/60 text-zinc-400 text-[10px] px-2 py-0.5 rounded">
                       {selectedCp === "5m" ? "5m地点(スタート)" : selectedCp}
+                      {selectedCpType === "interval" && <span className="ml-1 text-zinc-500">（200m毎）</span>}
+                      {selectedCpType === "straight" && <span className="ml-1 text-orange-400">（最終直線）</span>}
                     </span>
                   </div>
                 )}
@@ -1700,9 +1729,18 @@ export default function DataCorrection() {
                   selectedId={selectedBboxId}
                   onAnnotationChange={handleAnnotationChange}
                   onSelectId={setSelectedBboxId}
-                  newCapClass={CAP_COLORS[newCapColorKey]?.label.replace(/_\d+$/, "") ?? "class_white"}
+                  newCapClass={`${CAP_COLORS[newCapColorKey]?.label.replace(/_\d+$/, "") ?? "class_white"}_${newCapClassNum}`}
                   newCapColorKey={newCapColorKey}
+                  disabled={!isEditingMode}
                 />
+              )}
+              {/* Lock overlay when not in editing mode */}
+              {selectedCp && !isEditingMode && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                  <div className="bg-black/70 rounded-lg px-4 py-2 text-center">
+                    <span className="text-[11px] text-zinc-400">補正開始後にBBOX編集が可能です</span>
+                  </div>
+                </div>
               )}
 
               {/* Tool indicator badge */}
@@ -1917,8 +1955,16 @@ export default function DataCorrection() {
             <div className="flex-shrink-0 border-b border-zinc-700 bg-zinc-900 overflow-y-auto" style={{ maxHeight: "56%" }}>
               <div className="p-2 space-y-2">
 
+                {/* Read-only notice when not editing */}
+                {!isEditingMode && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/60 border border-zinc-700 rounded text-[10px] text-zinc-500">
+                    <span>🔒</span>
+                    <span>補正開始後にBBOX編集が可能になります（現在は閲覧モード）</span>
+                  </div>
+                )}
+
                 {/* Tool selector row */}
-                <div className="flex items-center gap-1 flex-wrap">
+                <div className={`flex items-center gap-1 flex-wrap ${!isEditingMode ? "opacity-40 pointer-events-none select-none" : ""}`}>
                   {([
                     { id: "select" as BboxTool, label: "選択", icon: <MousePointer2 className="h-3 w-3" /> },
                     { id: "add_bbox" as BboxTool, label: "BBOX追加", icon: <Square className="h-3 w-3" /> },
@@ -1936,17 +1982,31 @@ export default function DataCorrection() {
                     >{t.icon}{t.label}</button>
                   ))}
 
-                  {/* BBOX追加モード: 帽色選択 */}
+                  {/* BBOX追加モード: 帽色選択 + 番号 */}
                   {bboxTool === "add_bbox" && (
-                    <select
-                      value={newCapColorKey}
-                      onChange={(e) => setNewCapColorKey(Number(e.target.value))}
-                      className="ml-1 bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
-                    >
-                      {Object.entries(CAP_COLORS).map(([key, c]) => (
-                        <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
-                      ))}
-                    </select>
+                    <>
+                      <select
+                        value={newCapColorKey}
+                        onChange={(e) => { setNewCapColorKey(Number(e.target.value)); setNewCapClassNum(1); }}
+                        className="ml-1 bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
+                      >
+                        {Object.entries(CAP_COLORS).map(([key, c]) => (
+                          <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
+                        ))}
+                      </select>
+                      <div className="flex items-center gap-0.5 ml-0.5">
+                        <span className="text-[9px] text-zinc-500">_</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={9}
+                          value={newCapClassNum}
+                          onChange={(e) => setNewCapClassNum(Math.max(1, Math.min(9, Number(e.target.value))))}
+                          className="w-10 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-200 px-1 py-0.5 text-center"
+                        />
+                      </div>
+                      <span className="text-[9px] text-zinc-500 font-mono ml-0.5">{CAP_COLORS[newCapColorKey]?.label.replace(/_\d+$/, "")}_{ newCapClassNum}</span>
+                    </>
                   )}
                 </div>
 
@@ -1954,18 +2014,21 @@ export default function DataCorrection() {
                 {selectedBboxId && bboxTool === "select" && (() => {
                   const b = bboxAnnotation.bboxes.find((x) => x.id === selectedBboxId);
                   if (!b) return null;
+                  const currentNum = Number(b.cap_class.match(/_(\d+)$/)?.[1] ?? "1");
+                  const baseClass = b.cap_class.replace(/_\d+$/, "");
                   return (
-                    <div className="flex items-center gap-2 bg-zinc-800/60 rounded px-2 py-1 border border-cyan-800/50">
+                    <div className={`flex items-center gap-2 bg-zinc-800/60 rounded px-2 py-1 border border-cyan-800/50 ${!isEditingMode ? "opacity-50 pointer-events-none" : ""}`}>
                       <span className="text-[10px] text-zinc-400">BBOX:</span>
                       <span className="text-[10px] font-mono text-cyan-300">{b.cap_class}</span>
                       <select
                         value={b.cap_color_key}
                         onChange={(e) => {
                           const key = Number(e.target.value);
+                          const newClass = `${CAP_COLORS[key]?.label.replace(/_\d+$/, "") ?? baseClass}_${currentNum}`;
                           const newAnn = {
                             ...bboxAnnotation,
                             bboxes: bboxAnnotation.bboxes.map((x) =>
-                              x.id === b.id ? { ...x, cap_color_key: key, cap_class: CAP_COLORS[key]?.label.replace(/_\d+$/, "") ?? x.cap_class } : x
+                              x.id === b.id ? { ...x, cap_color_key: key, cap_class: newClass } : x
                             ),
                           };
                           handleAnnotationChange(newAnn);
@@ -1976,6 +2039,20 @@ export default function DataCorrection() {
                           <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
                         ))}
                       </select>
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-[9px] text-zinc-500">_</span>
+                        <input
+                          type="number" min={1} max={9}
+                          value={currentNum}
+                          onChange={(e) => {
+                            const n = Math.max(1, Math.min(9, Number(e.target.value)));
+                            const newClass = `${baseClass}_${n}`;
+                            const newAnn = { ...bboxAnnotation, bboxes: bboxAnnotation.bboxes.map((x) => x.id === b.id ? { ...x, cap_class: newClass } : x) };
+                            handleAnnotationChange(newAnn);
+                          }}
+                          className="w-10 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-200 px-1 py-0.5 text-center"
+                        />
+                      </div>
                       <button
                         onClick={handleDeleteBbox}
                         className="ml-auto flex items-center gap-0.5 text-[10px] text-red-400 hover:text-red-300 cursor-pointer"

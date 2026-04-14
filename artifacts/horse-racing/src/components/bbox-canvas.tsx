@@ -32,6 +32,7 @@ interface BboxCanvasProps {
   onSelectId: (id: string | null) => void;
   newCapClass: string;
   newCapColorKey: number;
+  disabled?: boolean;
 }
 
 export interface BboxCanvasHandle {
@@ -179,7 +180,7 @@ function drawAll(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const BboxCanvas = forwardRef<BboxCanvasHandle, BboxCanvasProps>(function BboxCanvas(
-  { tool, annotation, selectedId, onAnnotationChange, onSelectId, newCapClass, newCapColorKey },
+  { tool, annotation, selectedId, onAnnotationChange, onSelectId, newCapClass, newCapColorKey, disabled = false },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -276,6 +277,7 @@ const BboxCanvas = forwardRef<BboxCanvasHandle, BboxCanvasProps>(function BboxCa
 
   // ── Mouse handlers ─────────────────────────────────────────────────────────
   const onMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (disabled) return;
     const canvas = canvasRef.current; if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const W = canvas.width; const H = canvas.height;
@@ -528,8 +530,8 @@ const BboxCanvas = forwardRef<BboxCanvasHandle, BboxCanvasProps>(function BboxCa
   }, [tool, onAnnotationChange]);
 
   // Cursor style
-  const cursor =
-    tool === "add_bbox" ? "crosshair"
+  const cursor = disabled ? "default"
+    : tool === "add_bbox" ? "crosshair"
     : tool === "reference_line" ? "crosshair"
     : tool === "fence_marker" ? "cell"
     : "default";

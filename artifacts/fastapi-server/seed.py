@@ -41,7 +41,8 @@ def seed():
           race_video, race, race_event, race_category,
           official_horse_furlong_time, official_horse_reference,
           jra_race_reference, venue_weather_preset,
-          correction_memo_master, "user"
+          correction_memo_master, "user",
+          bbox_param_preset
         CASCADE
     """)
 
@@ -765,6 +766,186 @@ def seed():
                      _evtime, _eptime, _eofftime,
                      _avg_spd, _diff, _lat, _ai_cls),
                 )
+
+    # ── BBOX param presets ────────────────────────────────────────────────────
+    bbox_presets = [
+        {
+            "name": "小倉Bコース_カーブ_芝",
+            "venue_code": "kokura",
+            "section_type": "curve",
+            "course_variant": "B",
+            "surface_type": "芝",
+            "parameters": {
+                "furlong_distance": 200,
+                "direction_multiplier": -1,
+                "rail_spacing_m": 3.0,
+                "distance_scale_factor": 0.98,
+                "position_mode": "curve",
+                "lane_width_px": 45,
+                "track_hand": "right",
+                "lane_inner_threshold_m": 4,
+                "lane_outer_threshold_m": 8,
+            },
+        },
+        {
+            "name": "小倉Bコース_直線_芝",
+            "venue_code": "kokura",
+            "section_type": "straight",
+            "course_variant": "B",
+            "surface_type": "芝",
+            "parameters": {
+                "furlong_distance": 200,
+                "direction_multiplier": 1,
+                "rail_spacing_m": 3.0,
+                "distance_scale_factor": 1.0,
+                "position_mode": "straight",
+                "lane_width_px": 60,
+                "track_hand": "left",
+                "lane_inner_threshold_m": 5,
+                "lane_outer_threshold_m": 10,
+            },
+        },
+        {
+            "name": "中山_カーブ_芝",
+            "venue_code": "nakayama",
+            "section_type": "curve",
+            "course_variant": "A",
+            "surface_type": "芝",
+            "parameters": {
+                "furlong_distance": 200,
+                "direction_multiplier": -1,
+                "rail_spacing_m": 2.8,
+                "distance_scale_factor": 0.97,
+                "position_mode": "curve",
+                "lane_width_px": 42,
+                "track_hand": "right",
+                "lane_inner_threshold_m": 4,
+                "lane_outer_threshold_m": 8,
+            },
+        },
+    ]
+    for bp in bbox_presets:
+        cur.execute(
+            """INSERT INTO bbox_param_preset
+               (id, name, venue_code, section_type, course_variant, surface_type, parameters)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+            (str(uuid.uuid4()), bp["name"], bp.get("venue_code"), bp.get("section_type"),
+             bp.get("course_variant"), bp.get("surface_type"),
+             psycopg2.extras.Json(bp["parameters"])),
+        )
+
+    # ── BBOX annotations (sample data for CORRECTING races) ───────────────────
+    cur.execute("""
+        SELECT id, distance, surface_type FROM race
+        WHERE status IN ('CORRECTING', 'CORRECTED')
+        LIMIT 2
+    """)
+    _bbox_races = cur.fetchall()
+
+    # Sample bboxes for a 200m-interval checkpoint (curve scene)
+    _sample_bboxes_curve = [
+        {"id": str(uuid.uuid4()), "x": 0.52, "y": 0.30, "w": 0.046, "h": 0.072,
+         "cap_class": "class_red_1", "cap_color_key": 3},
+        {"id": str(uuid.uuid4()), "x": 0.58, "y": 0.32, "w": 0.042, "h": 0.068,
+         "cap_class": "class_blue_1", "cap_color_key": 4},
+        {"id": str(uuid.uuid4()), "x": 0.65, "y": 0.28, "w": 0.044, "h": 0.070,
+         "cap_class": "class_yellow_1", "cap_color_key": 5},
+        {"id": str(uuid.uuid4()), "x": 0.71, "y": 0.34, "w": 0.040, "h": 0.066,
+         "cap_class": "class_green_1", "cap_color_key": 6},
+        {"id": str(uuid.uuid4()), "x": 0.44, "y": 0.38, "w": 0.043, "h": 0.069,
+         "cap_class": "class_white_1", "cap_color_key": 1},
+        {"id": str(uuid.uuid4()), "x": 0.77, "y": 0.26, "w": 0.041, "h": 0.065,
+         "cap_class": "class_orange_1", "cap_color_key": 7},
+        {"id": str(uuid.uuid4()), "x": 0.60, "y": 0.44, "w": 0.044, "h": 0.070,
+         "cap_class": "class_pink_1", "cap_color_key": 8},
+        {"id": str(uuid.uuid4()), "x": 0.48, "y": 0.24, "w": 0.043, "h": 0.068,
+         "cap_class": "class_red_2", "cap_color_key": 3},
+    ]
+    # Reference line (horizontal across the curve)
+    _ref_line_curve = {"x1": 0.30, "y1": 0.42, "x2": 0.85, "y2": 0.18}
+    # Fence markers along the rail
+    _fence_markers_curve = [
+        {"x": 0.32, "y": 0.68}, {"x": 0.40, "y": 0.60},
+        {"x": 0.50, "y": 0.54}, {"x": 0.60, "y": 0.50},
+        {"x": 0.70, "y": 0.47},
+    ]
+    _params_curve = {
+        "furlong_distance": 200, "direction_multiplier": -1,
+        "rail_spacing_m": 3.0, "distance_scale_factor": 0.98,
+        "position_mode": "curve", "lane_width_px": 45,
+        "track_hand": "right", "lane_inner_threshold_m": 4,
+        "lane_outer_threshold_m": 8, "leader_official_time": "1:10.50",
+        "furlong_interval_time": "12.30",
+    }
+
+    # Sample bboxes for straight section
+    _sample_bboxes_straight = [
+        {"id": str(uuid.uuid4()), "x": 0.10, "y": 0.38, "w": 0.048, "h": 0.074,
+         "cap_class": "class_red_1", "cap_color_key": 3},
+        {"id": str(uuid.uuid4()), "x": 0.22, "y": 0.35, "w": 0.044, "h": 0.070,
+         "cap_class": "class_yellow_1", "cap_color_key": 5},
+        {"id": str(uuid.uuid4()), "x": 0.34, "y": 0.36, "w": 0.043, "h": 0.068,
+         "cap_class": "class_blue_1", "cap_color_key": 4},
+        {"id": str(uuid.uuid4()), "x": 0.46, "y": 0.34, "w": 0.042, "h": 0.067,
+         "cap_class": "class_white_1", "cap_color_key": 1},
+        {"id": str(uuid.uuid4()), "x": 0.57, "y": 0.37, "w": 0.042, "h": 0.067,
+         "cap_class": "class_green_1", "cap_color_key": 6},
+        {"id": str(uuid.uuid4()), "x": 0.67, "y": 0.36, "w": 0.041, "h": 0.066,
+         "cap_class": "class_pink_1", "cap_color_key": 8},
+    ]
+    _ref_line_straight = {"x1": 0.05, "y1": 0.52, "x2": 0.95, "y2": 0.48}
+    _fence_markers_straight = [
+        {"x": 0.08, "y": 0.72}, {"x": 0.24, "y": 0.70},
+        {"x": 0.40, "y": 0.69}, {"x": 0.56, "y": 0.68},
+    ]
+    _params_straight = {
+        "furlong_distance": 200, "direction_multiplier": 1,
+        "rail_spacing_m": 3.0, "distance_scale_factor": 1.0,
+        "position_mode": "straight", "lane_width_px": 60,
+        "track_hand": "left", "lane_inner_threshold_m": 5,
+        "lane_outer_threshold_m": 10, "leader_official_time": "",
+        "furlong_interval_time": "11.80",
+    }
+
+    for _br in _bbox_races:
+        _br_id = _br["id"]
+        _br_dist = _br["distance"]
+        # Determine a curve checkpoint (first 200m-interval point after start)
+        _curve_cp = "400m" if _br_dist >= 600 else "200m"
+        # Determine a straight checkpoint (last ~50m before goal)
+        _str_cp = f"{_br_dist - 50}m"
+
+        # Curve checkpoint annotation
+        cur.execute(
+            """INSERT INTO bbox_annotation
+               (id, race_id, checkpoint, bboxes, reference_line, fence_markers, parameters)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (race_id, checkpoint) DO UPDATE
+               SET bboxes=EXCLUDED.bboxes, reference_line=EXCLUDED.reference_line,
+                   fence_markers=EXCLUDED.fence_markers, parameters=EXCLUDED.parameters,
+                   updated_at=NOW()""",
+            (str(uuid.uuid4()), _br_id, _curve_cp,
+             psycopg2.extras.Json(_sample_bboxes_curve),
+             psycopg2.extras.Json(_ref_line_curve),
+             psycopg2.extras.Json(_fence_markers_curve),
+             psycopg2.extras.Json(_params_curve)),
+        )
+
+        # Straight checkpoint annotation
+        cur.execute(
+            """INSERT INTO bbox_annotation
+               (id, race_id, checkpoint, bboxes, reference_line, fence_markers, parameters)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (race_id, checkpoint) DO UPDATE
+               SET bboxes=EXCLUDED.bboxes, reference_line=EXCLUDED.reference_line,
+                   fence_markers=EXCLUDED.fence_markers, parameters=EXCLUDED.parameters,
+                   updated_at=NOW()""",
+            (str(uuid.uuid4()), _br_id, _str_cp,
+             psycopg2.extras.Json(_sample_bboxes_straight),
+             psycopg2.extras.Json(_ref_line_straight),
+             psycopg2.extras.Json(_fence_markers_straight),
+             psycopg2.extras.Json(_params_straight)),
+        )
 
     conn.commit()
     conn.close()
