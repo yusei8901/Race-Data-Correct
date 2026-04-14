@@ -842,32 +842,37 @@ def seed():
     """)
     _bbox_races = cur.fetchall()
 
-    # Sample bboxes for a 200m-interval checkpoint (curve scene)
+    # ── Curve scene (sample_400m.png) ────────────────────────────────────────
+    # Horses bunched in upper-right area going around the bend.
+    # Positions tuned to typical Japanese horse racing curve image layout.
     _sample_bboxes_curve = [
-        {"id": str(uuid.uuid4()), "x": 0.52, "y": 0.30, "w": 0.046, "h": 0.072,
-         "cap_class": "class_red_1", "cap_color_key": 3},
-        {"id": str(uuid.uuid4()), "x": 0.58, "y": 0.32, "w": 0.042, "h": 0.068,
-         "cap_class": "class_blue_1", "cap_color_key": 4},
-        {"id": str(uuid.uuid4()), "x": 0.65, "y": 0.28, "w": 0.044, "h": 0.070,
-         "cap_class": "class_yellow_1", "cap_color_key": 5},
-        {"id": str(uuid.uuid4()), "x": 0.71, "y": 0.34, "w": 0.040, "h": 0.066,
-         "cap_class": "class_green_1", "cap_color_key": 6},
-        {"id": str(uuid.uuid4()), "x": 0.44, "y": 0.38, "w": 0.043, "h": 0.069,
-         "cap_class": "class_white_1", "cap_color_key": 1},
-        {"id": str(uuid.uuid4()), "x": 0.77, "y": 0.26, "w": 0.041, "h": 0.065,
+        # Leading cluster — upper-right quadrant
+        {"id": str(uuid.uuid4()), "x": 0.745, "y": 0.235, "w": 0.048, "h": 0.090,
+         "cap_class": "class_red_1",    "cap_color_key": 3},   # 1着 (先頭)
+        {"id": str(uuid.uuid4()), "x": 0.693, "y": 0.255, "w": 0.046, "h": 0.086,
+         "cap_class": "class_blue_1",   "cap_color_key": 4},   # 2番手
+        {"id": str(uuid.uuid4()), "x": 0.648, "y": 0.270, "w": 0.046, "h": 0.085,
+         "cap_class": "class_yellow_1", "cap_color_key": 5},   # 3番手
+        # Mid-pack cluster — center-right
+        {"id": str(uuid.uuid4()), "x": 0.598, "y": 0.292, "w": 0.045, "h": 0.083,
+         "cap_class": "class_green_1",  "cap_color_key": 6},
+        {"id": str(uuid.uuid4()), "x": 0.548, "y": 0.316, "w": 0.045, "h": 0.082,
+         "cap_class": "class_white_1",  "cap_color_key": 1},
+        {"id": str(uuid.uuid4()), "x": 0.500, "y": 0.340, "w": 0.044, "h": 0.080,
          "cap_class": "class_orange_1", "cap_color_key": 7},
-        {"id": str(uuid.uuid4()), "x": 0.60, "y": 0.44, "w": 0.044, "h": 0.070,
-         "cap_class": "class_pink_1", "cap_color_key": 8},
-        {"id": str(uuid.uuid4()), "x": 0.48, "y": 0.24, "w": 0.043, "h": 0.068,
-         "cap_class": "class_red_2", "cap_color_key": 3},
+        # Rear group — center-left
+        {"id": str(uuid.uuid4()), "x": 0.450, "y": 0.362, "w": 0.044, "h": 0.080,
+         "cap_class": "class_pink_1",   "cap_color_key": 8},
+        {"id": str(uuid.uuid4()), "x": 0.400, "y": 0.388, "w": 0.044, "h": 0.079,
+         "cap_class": "class_red_2",    "cap_color_key": 3},
     ]
-    # Reference line (horizontal across the curve)
-    _ref_line_curve = {"x1": 0.30, "y1": 0.42, "x2": 0.85, "y2": 0.18}
-    # Fence markers along the rail
+    # Diagonal reference line across the pack (passing point line)
+    _ref_line_curve = {"x1": 0.22, "y1": 0.62, "x2": 0.88, "y2": 0.16}
+    # Fence markers along the inside rail (lower portion, left to right)
     _fence_markers_curve = [
-        {"x": 0.32, "y": 0.68}, {"x": 0.40, "y": 0.60},
-        {"x": 0.50, "y": 0.54}, {"x": 0.60, "y": 0.50},
-        {"x": 0.70, "y": 0.47},
+        {"x": 0.18, "y": 0.78}, {"x": 0.30, "y": 0.72},
+        {"x": 0.42, "y": 0.67}, {"x": 0.54, "y": 0.63},
+        {"x": 0.66, "y": 0.59}, {"x": 0.78, "y": 0.56},
     ]
     _params_curve = {
         "furlong_distance": 200, "direction_multiplier": -1,
@@ -878,25 +883,36 @@ def seed():
         "furlong_interval_time": "12.30",
     }
 
-    # Sample bboxes for straight section
+    # ── Straight scene (sample_200m.png) ─────────────────────────────────────
+    # Lead horse clearly ahead on the left; remaining horses spread rightward.
     _sample_bboxes_straight = [
-        {"id": str(uuid.uuid4()), "x": 0.10, "y": 0.38, "w": 0.048, "h": 0.074,
-         "cap_class": "class_red_1", "cap_color_key": 3},
-        {"id": str(uuid.uuid4()), "x": 0.22, "y": 0.35, "w": 0.044, "h": 0.070,
+        # 先頭馬 — far left, slightly ahead vertically
+        {"id": str(uuid.uuid4()), "x": 0.040, "y": 0.340, "w": 0.058, "h": 0.105,
+         "cap_class": "class_red_1",    "cap_color_key": 3},   # 先頭
+        # 追走集団
+        {"id": str(uuid.uuid4()), "x": 0.165, "y": 0.360, "w": 0.055, "h": 0.100,
          "cap_class": "class_yellow_1", "cap_color_key": 5},
-        {"id": str(uuid.uuid4()), "x": 0.34, "y": 0.36, "w": 0.043, "h": 0.068,
-         "cap_class": "class_blue_1", "cap_color_key": 4},
-        {"id": str(uuid.uuid4()), "x": 0.46, "y": 0.34, "w": 0.042, "h": 0.067,
-         "cap_class": "class_white_1", "cap_color_key": 1},
-        {"id": str(uuid.uuid4()), "x": 0.57, "y": 0.37, "w": 0.042, "h": 0.067,
-         "cap_class": "class_green_1", "cap_color_key": 6},
-        {"id": str(uuid.uuid4()), "x": 0.67, "y": 0.36, "w": 0.041, "h": 0.066,
-         "cap_class": "class_pink_1", "cap_color_key": 8},
+        {"id": str(uuid.uuid4()), "x": 0.270, "y": 0.370, "w": 0.054, "h": 0.098,
+         "cap_class": "class_blue_1",   "cap_color_key": 4},
+        {"id": str(uuid.uuid4()), "x": 0.370, "y": 0.375, "w": 0.053, "h": 0.097,
+         "cap_class": "class_white_1",  "cap_color_key": 1},
+        {"id": str(uuid.uuid4()), "x": 0.462, "y": 0.380, "w": 0.052, "h": 0.095,
+         "cap_class": "class_green_1",  "cap_color_key": 6},
+        {"id": str(uuid.uuid4()), "x": 0.555, "y": 0.385, "w": 0.051, "h": 0.094,
+         "cap_class": "class_orange_1", "cap_color_key": 7},
+        # 後続
+        {"id": str(uuid.uuid4()), "x": 0.645, "y": 0.390, "w": 0.050, "h": 0.093,
+         "cap_class": "class_pink_1",   "cap_color_key": 8},
+        {"id": str(uuid.uuid4()), "x": 0.730, "y": 0.395, "w": 0.050, "h": 0.092,
+         "cap_class": "class_black_1",  "cap_color_key": 2},
     ]
-    _ref_line_straight = {"x1": 0.05, "y1": 0.52, "x2": 0.95, "y2": 0.48}
+    # Nearly horizontal reference line across the straight
+    _ref_line_straight = {"x1": 0.02, "y1": 0.485, "x2": 0.96, "y2": 0.470}
+    # Fence markers along the inside rail (bottom of frame)
     _fence_markers_straight = [
-        {"x": 0.08, "y": 0.72}, {"x": 0.24, "y": 0.70},
-        {"x": 0.40, "y": 0.69}, {"x": 0.56, "y": 0.68},
+        {"x": 0.06, "y": 0.760}, {"x": 0.18, "y": 0.750},
+        {"x": 0.32, "y": 0.742}, {"x": 0.48, "y": 0.737},
+        {"x": 0.64, "y": 0.734}, {"x": 0.80, "y": 0.732},
     ]
     _params_straight = {
         "furlong_distance": 200, "direction_multiplier": 1,

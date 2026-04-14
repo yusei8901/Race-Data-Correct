@@ -39,11 +39,16 @@ export interface BboxCanvasHandle {
   redraw: () => void;
 }
 
-// ── CAP color map (gate 1–8) ──────────────────────────────────────────────────
+// ── CAP color map (gate 1–8) — high-visibility neon palette ─────────────────
 const CAP_STROKE: Record<number, string> = {
-  1: "#ffffff", 2: "#888888", 3: "#ef4444",
-  4: "#3b82f6", 5: "#facc15", 6: "#22c55e",
-  7: "#f97316", 8: "#ec4899",
+  1: "#f5f5f5",   // 白  — near-white
+  2: "#b0b0b0",   // 黒  — light gray (pure black invisible on dark bg)
+  3: "#ff2020",   // 赤  — vivid red
+  4: "#1e90ff",   // 青  — dodger blue
+  5: "#ffe000",   // 黄  — golden yellow
+  6: "#00e060",   // 緑  — neon green
+  7: "#ff7700",   // 橙  — vivid orange
+  8: "#ff40c0",   // 桃  — hot pink
 };
 
 const HANDLE_R = 6;
@@ -151,27 +156,41 @@ function drawAll(
     const bw = b.w * W; const bh = b.h * H;
     const stroke = CAP_STROKE[b.cap_color_key] ?? "#ffffff";
     const isSelected = b.id === selectedId;
+    const activeStroke = isSelected ? "#00e5ff" : stroke;
 
     ctx.save();
-    ctx.strokeStyle = isSelected ? "#00e5ff" : stroke;
-    ctx.lineWidth = isSelected ? 2.5 : 1.5;
+
+    // Dark shadow outline for contrast against any background
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.lineWidth = isSelected ? 5 : 4;
+    ctx.strokeRect(bx, by, bw, bh);
+
+    // Colored border
+    ctx.strokeStyle = activeStroke;
+    ctx.lineWidth = isSelected ? 2.5 : 2;
     ctx.strokeRect(bx, by, bw, bh);
 
     // Fill with translucent cap color
-    ctx.fillStyle = stroke + "22";
+    ctx.fillStyle = stroke + "30";
     ctx.fillRect(bx, by, bw, bh);
 
-    // Label top-left
-    ctx.fillStyle = isSelected ? "#00e5ff" : stroke;
+    // Label background pill
+    const label = b.cap_class.replace("class_", "");
     ctx.font = "bold 10px monospace";
-    ctx.fillText(b.cap_class.replace("class_", ""), bx + 3, by + 11);
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fillRect(bx + 2, by + 2, tw + 6, 14);
+
+    // Label text
+    ctx.fillStyle = activeStroke;
+    ctx.fillText(label, bx + 5, by + 13);
 
     // Resize handles (corners) when selected
     if (isSelected) {
       [[bx, by], [bx + bw, by], [bx, by + bh], [bx + bw, by + bh]].forEach(([hx, hy]) => {
         ctx.beginPath(); ctx.arc(hx, hy, HANDLE_R, 0, Math.PI * 2);
         ctx.fillStyle = "#00e5ff"; ctx.fill();
-        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5; ctx.stroke();
       });
     }
     ctx.restore();

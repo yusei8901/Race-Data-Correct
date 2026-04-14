@@ -861,6 +861,8 @@ export default function DataCorrection() {
   const [showOfficialPanel, setShowOfficialPanel] = useState(false);
   const [officialData, setOfficialData] = useState<OfficialResults | null>(null);
   const [officialLoading, setOfficialLoading] = useState(false);
+  const [officialSortKey, setOfficialSortKey] = useState<"finish_pos" | "gate_number" | "horse_number">("finish_pos");
+  const [officialSortAsc, setOfficialSortAsc] = useState(true);
 
   // Refs for BBOX
   const bboxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1840,73 +1842,102 @@ export default function DataCorrection() {
                       <>
                         {/* Horse results table */}
                         <div>
-                          <div className="text-[10px] text-amber-500 font-semibold mb-1.5 uppercase tracking-widest">確定成績</div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-[10px] border-collapse">
-                              <thead>
-                                <tr className="border-b border-zinc-800">
-                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal w-8">着順</th>
-                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal w-6">枠</th>
-                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal w-8">馬番</th>
-                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal">馬名</th>
-                                  <th className="text-right py-1 px-1.5 text-zinc-500 font-normal">上がり3F</th>
-                                  <th className="text-right py-1 px-1.5 text-zinc-500 font-normal">ゴールタイム</th>
-                                  <th className="text-right py-1 px-1.5 text-zinc-500 font-normal">着差</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {officialData.horses.map((h) => {
+                          <div className="text-[10px] text-amber-500 font-semibold mb-2 uppercase tracking-widest">確定成績</div>
+                          <table className="w-full text-[10px] border-collapse">
+                            <colgroup>
+                              <col style={{ width: "32px" }} />
+                              <col style={{ width: "26px" }} />
+                              <col style={{ width: "30px" }} />
+                              <col />
+                              <col style={{ width: "52px" }} />
+                              <col style={{ width: "56px" }} />
+                              <col style={{ width: "42px" }} />
+                            </colgroup>
+                            <thead>
+                              <tr className="border-b-2 border-zinc-700 bg-zinc-900/60">
+                                {(
+                                  [
+                                    { key: "finish_pos" as const, label: "着順" },
+                                    { key: "gate_number" as const, label: "枠番" },
+                                    { key: "horse_number" as const, label: "馬番" },
+                                  ] as const
+                                ).map(({ key, label }) => (
+                                  <th key={key} className="py-1.5 px-1 text-left">
+                                    <button
+                                      onClick={() => {
+                                        if (officialSortKey === key) setOfficialSortAsc((p) => !p);
+                                        else { setOfficialSortKey(key); setOfficialSortAsc(true); }
+                                      }}
+                                      className="flex items-center gap-0.5 text-zinc-400 hover:text-amber-300 transition-colors cursor-pointer whitespace-nowrap"
+                                    >
+                                      {label}
+                                      <span className="text-[8px] leading-none">
+                                        {officialSortKey === key ? (officialSortAsc ? "▲" : "▼") : "⇅"}
+                                      </span>
+                                    </button>
+                                  </th>
+                                ))}
+                                <th className="py-1.5 px-1 text-left text-zinc-500 font-normal">馬名</th>
+                                <th className="py-1.5 px-1 text-right text-zinc-500 font-normal">上り3F</th>
+                                <th className="py-1.5 px-1 text-right text-zinc-500 font-normal">タイム</th>
+                                <th className="py-1.5 px-1 text-right text-zinc-500 font-normal">着差</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...officialData.horses]
+                                .sort((a, b) => {
+                                  const av = a[officialSortKey] ?? 999;
+                                  const bv = b[officialSortKey] ?? 999;
+                                  return officialSortAsc ? (av as number) - (bv as number) : (bv as number) - (av as number);
+                                })
+                                .map((h) => {
                                   const isWinner = h.finish_pos === 1;
                                   const finSec = h.finish_time;
                                   const mm = finSec != null ? Math.floor(finSec / 60) : null;
                                   const ss = finSec != null ? (finSec % 60).toFixed(1) : null;
                                   const finStr = mm != null && ss != null ? `${mm}:${ss.padStart(4, "0")}` : "-";
-                                  const last3Str = h.last_3f != null ? h.last_3f.toFixed(2) : "-";
-                                  const marginSec = h.margin;
-                                  const marginStr = marginSec == null ? "-"
-                                    : marginSec < 0.12 ? "ハナ"
-                                    : marginSec < 0.28 ? "アタマ"
-                                    : marginSec < 0.45 ? "クビ"
-                                    : marginSec < 0.65 ? "½"
-                                    : marginSec < 0.88 ? "¾"
-                                    : marginSec < 1.15 ? "1"
-                                    : marginSec < 1.65 ? "1½"
-                                    : marginSec < 2.25 ? "2"
-                                    : marginSec < 3.25 ? "3"
-                                    : `${marginSec.toFixed(1)}`;
+                                  const last3Str = h.last_3f != null ? h.last_3f.toFixed(1) : "-";
+                                  const msec = h.margin;
+                                  const marginStr = msec == null ? "-"
+                                    : msec < 0.12 ? "ハナ"
+                                    : msec < 0.28 ? "アタマ"
+                                    : msec < 0.45 ? "クビ"
+                                    : msec < 0.65 ? "½"
+                                    : msec < 0.88 ? "3/4"
+                                    : msec < 1.15 ? "1"
+                                    : msec < 1.65 ? "1.1/2"
+                                    : msec < 2.25 ? "2"
+                                    : msec < 3.25 ? "3"
+                                    : `${msec.toFixed(1)}`;
                                   return (
-                                    <tr key={h.horse_number} className={`border-b border-zinc-900 ${isWinner ? "bg-amber-900/10" : "hover:bg-zinc-900/60"}`}>
-                                      <td className="py-1 px-1.5 font-mono">
+                                    <tr key={h.horse_number} className={`border-b border-zinc-800/80 ${isWinner ? "bg-amber-900/15" : "hover:bg-zinc-900/50"}`}>
+                                      <td className="py-1.5 px-1 font-mono">
                                         <span className={`font-bold ${isWinner ? "text-amber-400" : "text-zinc-300"}`}>
                                           {h.finish_pos ?? "-"}
                                         </span>
                                       </td>
-                                      <td className="py-1 px-1.5 font-mono text-zinc-400">{h.gate_number}</td>
-                                      <td className="py-1 px-1.5 font-mono text-zinc-300">{h.horse_number}</td>
-                                      <td className="py-1 px-1.5 text-zinc-200 truncate max-w-[100px]">{h.horse_name}</td>
-                                      <td className="py-1 px-1.5 text-right font-mono text-cyan-400">{last3Str}</td>
-                                      <td className={`py-1 px-1.5 text-right font-mono ${isWinner ? "text-amber-300 font-semibold" : "text-zinc-300"}`}>{finStr}</td>
-                                      <td className="py-1 px-1.5 text-right font-mono text-zinc-400">{isWinner ? "-" : marginStr}</td>
+                                      <td className="py-1.5 px-1 font-mono text-center text-zinc-400">{h.gate_number}</td>
+                                      <td className="py-1.5 px-1 font-mono text-center text-zinc-300">{h.horse_number}</td>
+                                      <td className="py-1.5 px-1 text-zinc-200 truncate">{h.horse_name}</td>
+                                      <td className="py-1.5 px-1 text-right font-mono text-cyan-400 tabular-nums">{last3Str}</td>
+                                      <td className={`py-1.5 px-1 text-right font-mono tabular-nums ${isWinner ? "text-amber-300 font-semibold" : "text-zinc-300"}`}>{finStr}</td>
+                                      <td className="py-1.5 px-1 text-right font-mono text-zinc-400 tabular-nums">{isWinner ? "—" : marginStr}</td>
                                     </tr>
                                   );
                                 })}
-                              </tbody>
-                            </table>
-                          </div>
+                            </tbody>
+                          </table>
                         </div>
 
-                        {/* Leader's furlong times */}
+                        {/* Furlong times */}
                         {officialData.leader_furlong_times.length > 0 && (
                           <div>
-                            <div className="text-[10px] text-amber-500 font-semibold mb-1.5 uppercase tracking-widest">
-                              先頭馬ハロンタイム（
-                              {officialData.horses.find((h) => h.finish_pos === 1)?.horse_name ?? "1着"}
-                            ）</div>
+                            <div className="text-[10px] text-amber-500 font-semibold mb-1.5 uppercase tracking-widest">ハロンタイム</div>
                             <div className="flex flex-wrap gap-1.5">
                               {officialData.leader_furlong_times.map((ft) => (
-                                <div key={ft.furlong_no} className="flex flex-col items-center bg-zinc-900 border border-zinc-800 rounded px-2 py-1 min-w-[46px]">
+                                <div key={ft.furlong_no} className="flex flex-col items-center bg-zinc-900 border border-zinc-800 rounded px-2 py-1 min-w-[44px]">
                                   <span className="text-[9px] text-zinc-600 mb-0.5">F{ft.furlong_no}</span>
-                                  <span className="text-[11px] font-mono font-semibold text-amber-300">{ft.time_sec.toFixed(2)}</span>
+                                  <span className="text-[11px] font-mono font-semibold text-amber-300 tabular-nums">{ft.time_sec.toFixed(2)}</span>
                                 </div>
                               ))}
                             </div>
@@ -2121,60 +2152,91 @@ export default function DataCorrection() {
             <div className="flex-shrink-0 border-b border-zinc-700 bg-zinc-900 overflow-y-auto" style={{ maxHeight: "56%" }}>
               <div className="p-2 space-y-2">
 
-                {/* Read-only notice when not editing */}
-                {!isEditingMode && (
-                  <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/60 border border-zinc-700 rounded text-[10px] text-zinc-500">
-                    <span>🔒</span>
-                    <span>補正開始後にBBOX編集が可能になります（現在は閲覧モード）</span>
+                {/* Section header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                    <span className="text-[10px] font-semibold text-zinc-300 tracking-wide">BBOX アノテーション</span>
+                    <span className="text-[9px] text-zinc-600 font-mono ml-1">
+                      {bboxAnnotation.bboxes.length}B
+                      {bboxAnnotation.reference_line ? " · 基準線" : ""}
+                      {bboxAnnotation.fence_markers.length > 0 ? ` · 柵×${bboxAnnotation.fence_markers.length}` : ""}
+                    </span>
                   </div>
-                )}
+                  {!isEditingMode && (
+                    <span className="flex items-center gap-1 text-[9px] text-zinc-600 bg-zinc-800/80 border border-zinc-700 rounded px-1.5 py-0.5">
+                      🔒 閲覧モード
+                    </span>
+                  )}
+                </div>
 
-                {/* Tool selector row */}
-                <div className={`flex items-center gap-1 flex-wrap ${!isEditingMode ? "opacity-40 pointer-events-none select-none" : ""}`}>
+                {/* Tool selector — card style */}
+                <div className={`grid grid-cols-4 gap-1 ${!isEditingMode ? "opacity-40 pointer-events-none select-none" : ""}`}>
                   {([
-                    { id: "select" as BboxTool, label: "選択", icon: <MousePointer2 className="h-3 w-3" /> },
-                    { id: "add_bbox" as BboxTool, label: "BBOX追加", icon: <Square className="h-3 w-3" /> },
-                    { id: "reference_line" as BboxTool, label: "基準線", icon: <Minus className="h-3 w-3" /> },
-                    { id: "fence_marker" as BboxTool, label: "柵マーカー", icon: <MapPin className="h-3 w-3" /> },
+                    {
+                      id: "select" as BboxTool, label: "選択", shortLabel: "SELECT",
+                      icon: <MousePointer2 className="h-4 w-4" />,
+                      activeClass: "bg-zinc-700 border-zinc-500 text-zinc-100",
+                      inactiveClass: "border-zinc-700 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300",
+                    },
+                    {
+                      id: "add_bbox" as BboxTool, label: "BBOX追加", shortLabel: "BBOX",
+                      icon: <Square className="h-4 w-4" />,
+                      activeClass: "bg-cyan-900/50 border-cyan-500 text-cyan-300",
+                      inactiveClass: "border-zinc-700 text-zinc-500 hover:border-cyan-800 hover:text-cyan-400",
+                    },
+                    {
+                      id: "reference_line" as BboxTool, label: "基準線", shortLabel: "LINE",
+                      icon: <Minus className="h-4 w-4" />,
+                      activeClass: "bg-yellow-900/40 border-yellow-500 text-yellow-300",
+                      inactiveClass: "border-zinc-700 text-zinc-500 hover:border-yellow-800 hover:text-yellow-400",
+                    },
+                    {
+                      id: "fence_marker" as BboxTool, label: "柵マーカー", shortLabel: "FENCE",
+                      icon: <MapPin className="h-4 w-4" />,
+                      activeClass: "bg-orange-900/40 border-orange-500 text-orange-300",
+                      inactiveClass: "border-zinc-700 text-zinc-500 hover:border-orange-800 hover:text-orange-400",
+                    },
                   ] as const).map((t) => (
                     <button
                       key={t.id}
                       onClick={() => setBboxTool(t.id)}
-                      className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border cursor-pointer transition-colors ${
-                        bboxTool === t.id
-                          ? "bg-primary/20 border-primary text-primary"
-                          : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                      className={`flex flex-col items-center gap-0.5 py-1.5 rounded border cursor-pointer transition-all text-center ${
+                        bboxTool === t.id ? t.activeClass : t.inactiveClass
                       }`}
-                    >{t.icon}{t.label}</button>
+                    >
+                      {t.icon}
+                      <span className="text-[9px] font-mono leading-none">{t.shortLabel}</span>
+                      <span className="text-[8px] leading-none opacity-70">{t.label}</span>
+                    </button>
                   ))}
-
-                  {/* BBOX追加モード: 帽色選択 + 番号 */}
-                  {bboxTool === "add_bbox" && (
-                    <>
-                      <select
-                        value={newCapColorKey}
-                        onChange={(e) => { setNewCapColorKey(Number(e.target.value)); setNewCapClassNum(1); }}
-                        className="ml-1 bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
-                      >
-                        {Object.entries(CAP_COLORS).map(([key, c]) => (
-                          <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
-                        ))}
-                      </select>
-                      <div className="flex items-center gap-0.5 ml-0.5">
-                        <span className="text-[9px] text-zinc-500">_</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={9}
-                          value={newCapClassNum}
-                          onChange={(e) => setNewCapClassNum(Math.max(1, Math.min(9, Number(e.target.value))))}
-                          className="w-10 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-200 px-1 py-0.5 text-center"
-                        />
-                      </div>
-                      <span className="text-[9px] text-zinc-500 font-mono ml-0.5">{CAP_COLORS[newCapColorKey]?.label.replace(/_\d+$/, "")}_{ newCapClassNum}</span>
-                    </>
-                  )}
                 </div>
+
+                {/* BBOX追加モード: 帽色選択 + 番号 */}
+                {isEditingMode && bboxTool === "add_bbox" && (
+                  <div className="flex items-center gap-2 bg-cyan-950/40 border border-cyan-800/40 rounded px-2 py-1.5">
+                    <span className="text-[9px] text-cyan-500 font-semibold">帽色:</span>
+                    <select
+                      value={newCapColorKey}
+                      onChange={(e) => { setNewCapColorKey(Number(e.target.value)); setNewCapClassNum(1); }}
+                      className="bg-zinc-800 border border-cyan-700/50 rounded text-[10px] text-zinc-200 px-1.5 py-0.5 cursor-pointer flex-1"
+                    >
+                      {Object.entries(CAP_COLORS).map(([key, c]) => (
+                        <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
+                      ))}
+                    </select>
+                    <span className="text-[9px] text-zinc-500">番号:</span>
+                    <input
+                      type="number" min={1} max={9}
+                      value={newCapClassNum}
+                      onChange={(e) => setNewCapClassNum(Math.max(1, Math.min(9, Number(e.target.value))))}
+                      className="w-10 bg-zinc-800 border border-cyan-700/50 rounded text-[10px] font-mono text-zinc-200 px-1 py-0.5 text-center"
+                    />
+                    <span className="text-[9px] text-cyan-400 font-mono bg-cyan-900/30 px-1.5 py-0.5 rounded border border-cyan-800/50">
+                      {CAP_COLORS[newCapColorKey]?.label.replace(/_\d+$/, "")}_{newCapClassNum}
+                    </span>
+                  </div>
+                )}
 
                 {/* Selected BBOX info */}
                 {selectedBboxId && bboxTool === "select" && (() => {
@@ -2183,65 +2245,80 @@ export default function DataCorrection() {
                   const currentNum = Number(b.cap_class.match(/_(\d+)$/)?.[1] ?? "1");
                   const baseClass = b.cap_class.replace(/_\d+$/, "");
                   return (
-                    <div className={`flex items-center gap-2 bg-zinc-800/60 rounded px-2 py-1 border border-cyan-800/50 ${!isEditingMode ? "opacity-50 pointer-events-none" : ""}`}>
-                      <span className="text-[10px] text-zinc-400">BBOX:</span>
-                      <span className="text-[10px] font-mono text-cyan-300">{b.cap_class}</span>
-                      <select
-                        value={b.cap_color_key}
-                        onChange={(e) => {
-                          const key = Number(e.target.value);
-                          const newClass = `${CAP_COLORS[key]?.label.replace(/_\d+$/, "") ?? baseClass}_${currentNum}`;
-                          const newAnn = {
-                            ...bboxAnnotation,
-                            bboxes: bboxAnnotation.bboxes.map((x) =>
-                              x.id === b.id ? { ...x, cap_color_key: key, cap_class: newClass } : x
-                            ),
-                          };
-                          handleAnnotationChange(newAnn);
-                        }}
-                        className="bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
-                      >
-                        {Object.entries(CAP_COLORS).map(([key, c]) => (
-                          <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
-                        ))}
-                      </select>
-                      <div className="flex items-center gap-0.5">
-                        <span className="text-[9px] text-zinc-500">_</span>
+                    <div className={`bg-zinc-800/80 rounded-lg border border-cyan-700/50 overflow-hidden ${!isEditingMode ? "opacity-50 pointer-events-none" : ""}`}>
+                      <div className="flex items-center justify-between px-2 py-1 bg-cyan-900/20 border-b border-cyan-800/30">
+                        <div className="flex items-center gap-1.5">
+                          <Square className="h-3 w-3 text-cyan-400" />
+                          <span className="text-[10px] font-semibold text-cyan-300">選択中 BBOX</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-cyan-400 bg-cyan-900/40 px-1.5 py-0.5 rounded">{b.cap_class}</span>
+                      </div>
+                      <div className="flex items-center gap-2 px-2 py-1.5">
+                        <span className="text-[9px] text-zinc-500">帽色:</span>
+                        <select
+                          value={b.cap_color_key}
+                          onChange={(e) => {
+                            const key = Number(e.target.value);
+                            const newClass = `${CAP_COLORS[key]?.label.replace(/_\d+$/, "") ?? baseClass}_${currentNum}`;
+                            handleAnnotationChange({
+                              ...bboxAnnotation,
+                              bboxes: bboxAnnotation.bboxes.map((x) =>
+                                x.id === b.id ? { ...x, cap_color_key: key, cap_class: newClass } : x
+                              ),
+                            });
+                          }}
+                          className="bg-zinc-700 border border-zinc-600 rounded text-[10px] text-zinc-200 px-1.5 py-0.5 cursor-pointer flex-1"
+                        >
+                          {Object.entries(CAP_COLORS).map(([key, c]) => (
+                            <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
+                          ))}
+                        </select>
+                        <span className="text-[9px] text-zinc-500">番号:</span>
                         <input
                           type="number" min={1} max={9}
                           value={currentNum}
                           onChange={(e) => {
                             const n = Math.max(1, Math.min(9, Number(e.target.value)));
                             const newClass = `${baseClass}_${n}`;
-                            const newAnn = { ...bboxAnnotation, bboxes: bboxAnnotation.bboxes.map((x) => x.id === b.id ? { ...x, cap_class: newClass } : x) };
-                            handleAnnotationChange(newAnn);
+                            handleAnnotationChange({ ...bboxAnnotation, bboxes: bboxAnnotation.bboxes.map((x) => x.id === b.id ? { ...x, cap_class: newClass } : x) });
                           }}
-                          className="w-10 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-200 px-1 py-0.5 text-center"
+                          className="w-10 bg-zinc-700 border border-zinc-600 rounded text-[10px] font-mono text-zinc-200 px-1 py-0.5 text-center"
                         />
+                        <button
+                          onClick={handleDeleteBbox}
+                          className="flex items-center gap-0.5 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/40 hover:border-red-700/50 cursor-pointer transition-colors"
+                        ><Trash2 className="h-3 w-3" />削除</button>
                       </div>
-                      <button
-                        onClick={handleDeleteBbox}
-                        className="ml-auto flex items-center gap-0.5 text-[10px] text-red-400 hover:text-red-300 cursor-pointer"
-                      ><Trash2 className="h-3 w-3" />削除</button>
                     </div>
                   );
                 })()}
 
-                {/* Reference line / fence marker status */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  {bboxAnnotation.reference_line && (
-                    <div className="flex items-center gap-1 bg-yellow-900/20 border border-yellow-800/40 rounded px-2 py-0.5">
-                      <span className="text-[10px] text-yellow-400">基準線 ✓</span>
-                      <button onClick={handleClearRefLine} className="text-[9px] text-zinc-500 hover:text-red-400 cursor-pointer ml-1">✕</button>
+                {/* Reference line / fence marker status badges */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {bboxAnnotation.reference_line ? (
+                    <div className="flex items-center gap-1 bg-yellow-900/25 border border-yellow-700/50 rounded-md px-2 py-1">
+                      <Minus className="h-3 w-3 text-yellow-400" />
+                      <span className="text-[10px] text-yellow-300 font-medium">基準線 設定済</span>
+                      <button onClick={handleClearRefLine} className="text-[9px] text-zinc-500 hover:text-red-400 cursor-pointer ml-1 leading-none">✕</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 bg-zinc-800/50 border border-zinc-700/50 rounded-md px-2 py-1">
+                      <Minus className="h-3 w-3 text-zinc-600" />
+                      <span className="text-[10px] text-zinc-600">基準線 未設定</span>
                     </div>
                   )}
-                  {bboxAnnotation.fence_markers.length > 0 && (
-                    <div className="flex items-center gap-1 bg-orange-900/20 border border-orange-800/40 rounded px-2 py-0.5">
-                      <span className="text-[10px] text-orange-400">柵マーカー {bboxAnnotation.fence_markers.length}点</span>
-                      <button onClick={handleClearFenceMarkers} className="text-[9px] text-zinc-500 hover:text-red-400 cursor-pointer ml-1">✕</button>
+                  {bboxAnnotation.fence_markers.length > 0 ? (
+                    <div className="flex items-center gap-1 bg-orange-900/25 border border-orange-700/50 rounded-md px-2 py-1">
+                      <MapPin className="h-3 w-3 text-orange-400" />
+                      <span className="text-[10px] text-orange-300 font-medium">柵 {bboxAnnotation.fence_markers.length}点</span>
+                      <button onClick={handleClearFenceMarkers} className="text-[9px] text-zinc-500 hover:text-red-400 cursor-pointer ml-1 leading-none">✕</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 bg-zinc-800/50 border border-zinc-700/50 rounded-md px-2 py-1">
+                      <MapPin className="h-3 w-3 text-zinc-600" />
+                      <span className="text-[10px] text-zinc-600">柵マーカー 未設定</span>
                     </div>
                   )}
-                  <span className="text-[9px] text-zinc-600">{bboxAnnotation.bboxes.length}BBOX</span>
                 </div>
 
                 {/* Params accordion */}
