@@ -4,9 +4,8 @@ import {
 import { useParams, useLocation } from "wouter";
 import {
   ArrowLeft, Play, Pause, ChevronFirst, ChevronLast,
-  History, CheckCircle2, Save, Clock, Minus, Plus,
-  ChevronLeft, ChevronRight, Trash2, RefreshCw, Square,
-  MousePointer2, AlertTriangle, X,
+  History, CheckCircle2, Save, Clock,
+  ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, X,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -47,7 +46,6 @@ const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = 
 };
 
 const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "その他"];
-const LANES = ["内", "中", "外"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
 
 const VENUE_ID_MAP: Record<string, string> = {
@@ -90,18 +88,6 @@ function formatMargin(margin: number | null | undefined, finishPos: number | nul
   if (margin < 5.5) return "5";
   return `${Math.round(margin)}`;
 }
-
-// ── Types ──────────────────────────────────────────────────────────────────
-interface BBox {
-  id: string;
-  horseNumber: number | null;
-  gateNumber: number | null;
-  x: number; y: number; w: number; h: number;
-}
-
-type DragHandle = "body" | "tl" | "tr" | "bl" | "br";
-
-type Keyframes = Record<string, Record<number, BBox[]>>;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function getStraight(race: Race): number {
@@ -153,57 +139,6 @@ function cpVideoTime(meter: number, distance: number, baseSec: number, videoOffs
   return videoOffset + baseSec * (meter / distance);
 }
 
-function interpolateBboxes(keyframes: Record<number, BBox[]>, frame: number): BBox[] {
-  const frameNums = Object.keys(keyframes).map(Number).sort((a, b) => a - b);
-  if (frameNums.length === 0) return [];
-  const prev = [...frameNums].reverse().find((f) => f <= frame);
-  const next = frameNums.find((f) => f > frame);
-  if (prev === undefined) return keyframes[frameNums[0]];
-  if (next === undefined) return keyframes[prev];
-  if (prev === frame) return keyframes[prev];
-  const t = (frame - prev) / (next - prev);
-  const prevBboxes = keyframes[prev];
-  const nextBboxes = keyframes[next];
-  return prevBboxes.map((pb) => {
-    const nb = nextBboxes.find((b) => b.id === pb.id);
-    if (!nb) return pb;
-    return {
-      ...pb,
-      x: pb.x + (nb.x - pb.x) * t,
-      y: pb.y + (nb.y - pb.y) * t,
-      w: pb.w + (nb.w - pb.w) * t,
-      h: pb.h + (nb.h - pb.h) * t,
-    };
-  });
-}
-
-function generateSampleBboxes(entries: any[], cpType: string): BBox[] {
-  const n = entries.length;
-  const boxW = 0.055;
-  const boxH = 0.16;
-  return entries.map((entry, i) => {
-    let x: number, y: number;
-    if (cpType === "start") {
-      x = 0.04 + (i / Math.max(n - 1, 1)) * 0.88;
-      y = 0.52;
-    } else if (cpType === "straight") {
-      x = 0.25 + (i / Math.max(n - 1, 1)) * 0.45;
-      y = 0.28 + (i % 3) * 0.08;
-    } else {
-      x = 0.08 + (i / Math.max(n - 1, 1)) * 0.75;
-      y = 0.40 + Math.sin(i * 0.8) * 0.07;
-    }
-    return {
-      id: `init-${entry.horse_number}`,
-      horseNumber: entry.horse_number as number,
-      gateNumber: entry.gate_number as number ?? null,
-      x: Math.max(0, Math.min(1 - boxW, x)),
-      y: Math.max(0, Math.min(1 - boxH, y)),
-      w: boxW,
-      h: boxH,
-    };
-  });
-}
 
 function AccBadge({ v }: { v?: number | null }) {
   if (v == null) return <span className="text-zinc-600">-</span>;
@@ -211,247 +146,14 @@ function AccBadge({ v }: { v?: number | null }) {
   return <span className={`font-mono text-xs ${color}`}>{v}%</span>;
 }
 
-function CapCircle({ gate }: { gate?: number | null }) {
+function CapCircle({ gate, label }: { gate?: number | null; label?: string }) {
   const c = gate != null ? CAP_COLORS[gate] : null;
   if (!c) return <span className="text-zinc-500 text-xs">-</span>;
+  const displayLabel = label ?? c.label;
   return (
-    <span className="text-[9px] font-mono text-zinc-300" title={c.label}>
-      {c.label}
+    <span className="text-[9px] font-mono text-zinc-300" title={displayLabel}>
+      {displayLabel}
     </span>
-  );
-}
-
-// ── BBOX Canvas ───────────────────────────────────────────────────────────────
-const HANDLE_R = 5;
-
-function BboxCanvas({
-  bboxes,
-  addPreview,
-  selectedId,
-  addMode,
-  isEditing,
-  onSelect,
-  onAdd,
-  onUpdate,
-  onDelete,
-}: {
-  bboxes: BBox[];
-  addPreview: { x: number; y: number; w: number; h: number } | null;
-  selectedId: string | null;
-  addMode: boolean;
-  isEditing: boolean;
-  onSelect: (id: string | null) => void;
-  onAdd: (b: Omit<BBox, "id">) => void;
-  onUpdate: (id: string, updates: Partial<Pick<BBox, "x" | "y" | "w" | "h">>) => void;
-  onDelete: (id: string) => void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 1, h: 1 });
-  const dragRef = useRef<{
-    type: "move" | "resize" | "add";
-    id?: string;
-    handle?: DragHandle;
-    startX: number;
-    startY: number;
-    origBox?: Pick<BBox, "x" | "y" | "w" | "h">;
-  } | null>(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setSize({ w: entry.contentRect.width, h: entry.contentRect.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const { w, h } = size;
-    canvas.width = w;
-    canvas.height = h;
-    ctx.clearRect(0, 0, w, h);
-
-    const drawBox = (
-      b: Pick<BBox, "x" | "y" | "w" | "h"> & { id?: string; horseNumber?: number | null; gateNumber?: number | null },
-      isSelected: boolean,
-      isPreview: boolean,
-    ) => {
-      const px = b.x * w, py = b.y * h, pw = b.w * w, ph = b.h * h;
-      const cap = b.gateNumber != null ? CAP_COLORS[b.gateNumber] : null;
-      const stroke = isPreview ? "#f97316" : isSelected ? "#f97316" : cap?.bg ?? "#ea580c";
-
-      ctx.setLineDash(isPreview ? [6, 3] : []);
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = isSelected || isPreview ? 2.5 : 1.5;
-      ctx.strokeRect(px, py, pw, ph);
-      ctx.setLineDash([]);
-
-      ctx.fillStyle = isSelected ? "rgba(249,115,22,0.12)" : "rgba(255,255,255,0.05)";
-      ctx.fillRect(px, py, pw, ph);
-
-      if (!isPreview) {
-        const label = b.horseNumber != null ? String(b.horseNumber) : "?";
-        const lw = 18, lh = 14;
-        ctx.fillStyle = cap?.bg ?? "#ea580c";
-        ctx.fillRect(px, py - lh, lw, lh);
-        ctx.fillStyle = cap?.text ?? "#fff";
-        ctx.font = "bold 10px monospace";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(label, px + lw / 2, py - lh / 2);
-      }
-
-      if (isSelected && isEditing && !isPreview) {
-        const corners: [number, number][] = [
-          [px, py], [px + pw, py], [px, py + ph], [px + pw, py + ph],
-        ];
-        for (const [cx, cy] of corners) {
-          ctx.fillStyle = "#f97316";
-          ctx.beginPath();
-          ctx.arc(cx, cy, HANDLE_R, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        }
-      }
-    };
-
-    for (const bbox of bboxes) {
-      drawBox(bbox, bbox.id === selectedId, false);
-    }
-    if (addPreview && addPreview.w > 0 && addPreview.h > 0) {
-      drawBox(addPreview, false, true);
-    }
-  }, [bboxes, addPreview, selectedId, size, isEditing]);
-
-  const toRel = (px: number, py: number) => ({ rx: px / size.w, ry: py / size.h });
-  const getPos = (e: React.MouseEvent) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    return { px: e.clientX - rect.left, py: e.clientY - rect.top };
-  };
-
-  const hitTest = (px: number, py: number): { id: string; handle: DragHandle } | null => {
-    const { w, h } = size;
-    if (selectedId) {
-      const sel = bboxes.find((b) => b.id === selectedId);
-      if (sel) {
-        const bx = sel.x * w, by = sel.y * h, bw = sel.w * w, bh = sel.h * h;
-        const corners: [number, number, DragHandle][] = [
-          [bx, by, "tl"], [bx + bw, by, "tr"], [bx, by + bh, "bl"], [bx + bw, by + bh, "br"],
-        ];
-        for (const [cx, cy, handle] of corners) {
-          if (Math.hypot(px - cx, py - cy) <= HANDLE_R + 4) return { id: sel.id, handle };
-        }
-      }
-    }
-    for (const bbox of [...bboxes].reverse()) {
-      const bx = bbox.x * w, by = bbox.y * h, bw = bbox.w * w, bh = bbox.h * h;
-      if (px >= bx && px <= bx + bw && py >= by && py <= by + bh) {
-        return { id: bbox.id, handle: "body" };
-      }
-    }
-    return null;
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const { px, py } = getPos(e);
-    if (addMode) {
-      const { rx, ry } = toRel(px, py);
-      dragRef.current = { type: "add", startX: px, startY: py, origBox: { x: rx, y: ry, w: 0, h: 0 } };
-      return;
-    }
-    const hit = hitTest(px, py);
-    if (!hit) { onSelect(null); return; }
-    onSelect(hit.id);
-    if (!isEditing) return;
-    const bbox = bboxes.find((b) => b.id === hit.id)!;
-    if (hit.handle === "body") {
-      dragRef.current = { type: "move", id: hit.id, startX: px, startY: py, origBox: { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } };
-    } else {
-      dragRef.current = { type: "resize", id: hit.id, handle: hit.handle, startX: px, startY: py, origBox: { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } };
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const { px, py } = getPos(e);
-    const dx = (px - d.startX) / size.w;
-    const dy = (py - d.startY) / size.h;
-
-    if (d.type === "add") {
-      const sx = d.startX / size.w, sy = d.startY / size.h;
-      const ex = px / size.w, ey = py / size.h;
-      const newPreview = {
-        x: Math.max(0, Math.min(sx, ex)),
-        y: Math.max(0, Math.min(sy, ey)),
-        w: Math.abs(ex - sx),
-        h: Math.abs(ey - sy),
-      };
-      d.origBox = newPreview;
-      (window as any).__bboxAddPreviewSetter?.(newPreview);
-      return;
-    }
-
-    if (d.type === "move" && d.id && d.origBox) {
-      const o = d.origBox;
-      onUpdate(d.id, {
-        x: Math.max(0, Math.min(1 - o.w, o.x + dx)),
-        y: Math.max(0, Math.min(1 - o.h, o.y + dy)),
-      });
-    }
-
-    if (d.type === "resize" && d.id && d.origBox) {
-      const o = d.origBox;
-      let { x, y, w, h } = o;
-      if (d.handle === "tl" || d.handle === "bl") { x = o.x + dx; w = o.w - dx; }
-      if (d.handle === "tr" || d.handle === "br") { w = o.w + dx; }
-      if (d.handle === "tl" || d.handle === "tr") { y = o.y + dy; h = o.h - dy; }
-      if (d.handle === "bl" || d.handle === "br") { h = o.h + dy; }
-      if (w > 0.02 && h > 0.02) onUpdate(d.id, { x, y, w, h });
-    }
-  };
-
-  const handleMouseUp = () => {
-    const d = dragRef.current;
-    if (d?.type === "add" && d.origBox && d.origBox.w > 0.015 && d.origBox.h > 0.015) {
-      onAdd({ horseNumber: null, gateNumber: null, ...d.origBox });
-    }
-    (window as any).__bboxAddPreviewSetter?.(null);
-    dragRef.current = null;
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
-      e.preventDefault();
-      onDelete(selectedId);
-    }
-  };
-
-  const cursor = addMode ? "crosshair" : isEditing ? "default" : "default";
-
-  return (
-    <div ref={containerRef} className="absolute inset-0">
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-        style={{ cursor }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onKeyDown={handleKeyDown}
-        tabIndex={-1}
-      />
-    </div>
   );
 }
 
@@ -1046,17 +748,6 @@ export default function DataCorrection() {
   const [videoTime, setVideoTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1.0);
-  // BBOX state
-  const [keyframes, setKeyframes] = useState<Keyframes>({});
-  const [selectedBboxId, setSelectedBboxId] = useState<string | null>(null);
-  const [addMode, setAddMode] = useState(false);
-  const [addPreview, setAddPreview] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-
-  // Expose setter to canvas via window (avoids prop drilling for mouse-move preview)
-  useEffect(() => {
-    (window as any).__bboxAddPreviewSetter = setAddPreview;
-    return () => { delete (window as any).__bboxAddPreviewSetter; };
-  }, []);
 
   // Local edits for right-panel fields
   const [localEdits, setLocalEdits] = useState<Record<string, Record<string, unknown>>>({});
@@ -1122,32 +813,6 @@ export default function DataCorrection() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isPlaying, playSpeed, totalVideoSec]);
 
-  // Current bboxes (interpolated)
-  const currentBboxes = useMemo(() => {
-    if (!selectedCp) return [];
-    const cpKf = keyframes[selectedCp] ?? {};
-    return interpolateBboxes(cpKf, currentFrame);
-  }, [keyframes, selectedCp, currentFrame]);
-
-  // Initialize sample bboxes when checkpoint selected and in editing mode
-  useEffect(() => {
-    if (!selectedCp || !entries || entries.length === 0 || !isEditingMode) return;
-    setKeyframes((prev) => {
-      if (Object.keys(prev[selectedCp] ?? {}).length > 0) return prev;
-      const cpType = ptsStr.some((p) => p.key === selectedCp) ? "straight"
-        : selectedCp === "5m" ? "start" : "200m";
-      const sample = generateSampleBboxes(entries, cpType);
-      return { ...prev, [selectedCp]: { 0: sample } };
-    });
-  }, [selectedCp, entries?.length, isEditingMode]);
-
-  // cpType
-  const cpType = useMemo(() => {
-    if (!selectedCp) return null;
-    if (selectedCp === "5m") return "start";
-    if (ptsStr.some((p) => p.key === selectedCp)) return "straight";
-    return "200m";
-  }, [selectedCp, ptsStr]);
 
   const numHorses = entries?.length ?? 14;
 
@@ -1300,9 +965,6 @@ export default function DataCorrection() {
     queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
     setIsEditingMode(false);
     setLocalEdits({});
-    setSelectedBboxId(null);
-    setAddMode(false);
-    setAddPreview(null);
     setConfirmDialog(null);
     toast({ title: "編集をキャンセルしました" });
   };
@@ -1448,161 +1110,12 @@ export default function DataCorrection() {
   // Checkpoint click
   const handleCpClick = (key: string, meter: number) => {
     setSelectedCp(key);
-    setSelectedBboxId(null);
     const vt = cpVideoTime(meter, race?.distance ?? 2000, effectiveBaseSec, effectiveVideoOffset) - effectiveVideoOffset;
     setVideoTime(Math.max(0, vt));
   };
 
-  // BBOX operations
-  const handleAddBbox = useCallback((b: Omit<BBox, "id">) => {
-    if (!selectedCp) return;
-    if (currentBboxes.length >= numHorses) {
-      toast({ title: `BBOX追加上限`, description: `最大${numHorses}個まで追加できます`, variant: "destructive" });
-      return;
-    }
-    const id = `bbox-${Date.now()}`;
-    const newBbox: BBox = { id, ...b };
-    setKeyframes((prev) => {
-      const cpKf = { ...(prev[selectedCp] ?? {}) };
-      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
-      cpKf[currentFrame] = [...existing, newBbox];
-      return { ...prev, [selectedCp]: cpKf };
-    });
-    setSelectedBboxId(id);
-    setAddMode(false);
-  }, [selectedCp, currentFrame]);
-
-  const handleUpdateBbox = useCallback((id: string, updates: Partial<Pick<BBox, "x" | "y" | "w" | "h">>) => {
-    if (!selectedCp) return;
-    setKeyframes((prev) => {
-      const cpKf = { ...(prev[selectedCp] ?? {}) };
-      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
-      cpKf[currentFrame] = existing.map((b) => b.id === id ? { ...b, ...updates } : b);
-      return { ...prev, [selectedCp]: cpKf };
-    });
-  }, [selectedCp, currentFrame]);
-
-  const handleDeleteBbox = useCallback((id: string) => {
-    if (!selectedCp) return;
-    setKeyframes((prev) => {
-      const cpKf = { ...(prev[selectedCp] ?? {}) };
-      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
-      cpKf[currentFrame] = existing.filter((b) => b.id !== id);
-      return { ...prev, [selectedCp]: cpKf };
-    });
-    setSelectedBboxId(null);
-  }, [selectedCp, currentFrame]);
-
-  const handleBboxHorseNumber = useCallback((id: string, num: number | null) => {
-    if (!selectedCp) return;
-    if (num != null && currentBboxes.some((b) => b.id !== id && b.horseNumber === num)) {
-      toast({ title: `馬番${num}は既に割り当て済みです`, variant: "destructive" });
-      return;
-    }
-    setKeyframes((prev) => {
-      const cpKf = { ...(prev[selectedCp] ?? {}) };
-      const existing = cpKf[currentFrame] ?? interpolateBboxes(cpKf, currentFrame);
-      cpKf[currentFrame] = existing.map((b) => {
-        if (b.id !== id) return b;
-        const entry = entries?.find((e) => e.horse_number === num);
-        return { ...b, horseNumber: num, gateNumber: entry?.gate_number ?? null };
-      });
-      return { ...prev, [selectedCp]: cpKf };
-    });
-  }, [selectedCp, currentFrame, currentBboxes, entries, toast]);
-
-  const handleSaveKeyframe = useCallback(() => {
-    if (!selectedCp) return;
-    setKeyframes((prev) => {
-      const cpKf = { ...(prev[selectedCp] ?? {}) };
-      cpKf[currentFrame] = currentBboxes;
-      return { ...prev, [selectedCp]: cpKf };
-    });
-    toast({ title: `フレーム ${currentFrame} をキーフレームとして保存しました` });
-  }, [selectedCp, currentFrame, currentBboxes, toast]);
-
-  // Recalculation — fills missing fields with random valid values
-  const handleRecalculate = useCallback(async () => {
-    if (!selectedCp || !passingOrders?.length) return;
-
-    const is200m = cpType === "start" || cpType === "200m";
-    const CAP_COLOR_MAP_FE: Record<number, string> = {
-      1: "白", 2: "黒", 3: "赤", 4: "青", 5: "黄", 6: "緑", 7: "橙", 8: "桃",
-    };
-    const LANE_OPTIONS = ["内", "中", "外"];
-
-    const validTimes = passingOrders.filter((o) => o.time_seconds != null).map((o) => o.time_seconds!);
-    const baseTime = validTimes.length > 0
-      ? validTimes.reduce((a, b) => a + b, 0) / validTimes.length
-      : 90;
-
-    const updates: { id: string; data: Record<string, unknown> }[] = [];
-    let missingTimeOffset = 0;
-
-    for (const order of passingOrders) {
-      const data: Record<string, unknown> = {};
-
-      if (order.time_seconds == null) {
-        data.time_seconds = parseFloat(
-          (baseTime + missingTimeOffset * 0.3 + Math.random() * 0.15).toFixed(2)
-        );
-        missingTimeOffset++;
-      }
-      if (order.color == null && order.gate_number != null) {
-        data.color = CAP_COLOR_MAP_FE[order.gate_number] ?? "白";
-      }
-      if (is200m && order.lane == null) {
-        data.lane = LANE_OPTIONS[Math.floor(Math.random() * 3)];
-      }
-      if (!is200m) {
-        const o = order as any;
-        if (o.absolute_speed == null) {
-          data.absolute_speed = parseFloat((55 + Math.random() * 15).toFixed(1));
-        }
-        if (o.speed_change == null) {
-          data.speed_change = parseFloat((-3 + Math.random() * 6).toFixed(1));
-        }
-        if (o.running_position == null) {
-          data.running_position = passingOrders.indexOf(order) + 1;
-        }
-      }
-
-      if (Object.keys(data).length > 0) {
-        updates.push({ id: order.id, data });
-      }
-    }
-
-    if (!updates.length) {
-      toast({ title: "補完する欠損データがありません" });
-      return;
-    }
-
-    for (const { id, data } of updates) {
-      await fetch(`${API}/races/${raceId}/analysis-result/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-    }
-    queryClient.invalidateQueries({
-      queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp }),
-    });
-    toast({ title: "欠損データを補完しました", description: `${updates.length}件を更新しました` });
-  }, [selectedCp, cpType, passingOrders, raceId, queryClient, toast]);
-
-  // Filter bboxes: hide horses whose time_seconds is null at current checkpoint
-  const bboxesForCanvas = useMemo(() => {
-    if (!passingOrders) return currentBboxes;
-    const withTime = new Set(
-      passingOrders.filter((o) => o.time_seconds != null).map((o) => o.horse_number)
-    );
-    return currentBboxes.filter((b) => b.horseNumber == null || withTime.has(b.horseNumber));
-  }, [currentBboxes, passingOrders]);
-
   const raceTimeFromVideo = videoTime - effectiveVideoOffset;
-  const selectedBbox = currentBboxes.find((b) => b.id === selectedBboxId) ?? null;
   const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち" || (raceStatus === "データ確定" && isAdmin);
-  const cpKeyframeCount = selectedCp ? Object.keys(keyframes[selectedCp] ?? {}).length : 0;
 
   // Duplicate horse number validation
   const hasDuplicateHorseNumbers = useMemo(() => {
@@ -1834,34 +1347,12 @@ export default function DataCorrection() {
               <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
                 {/* Simulated video background */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  {!isEditingMode && (
-                    <>
-                      <Play className="h-12 w-12 text-zinc-700 mb-2" />
-                      <span className="text-xs text-zinc-600">レース動画</span>
-                    </>
-                  )}
-                  {isEditingMode && currentBboxes.length === 0 && (
-                    <span className="text-xs text-zinc-600">地点を選択してBBOXを表示</span>
-                  )}
+                  <Play className="h-12 w-12 text-zinc-700 mb-2" />
+                  <span className="text-xs text-zinc-600">レース動画</span>
                 </div>
 
-                {/* BBOX Canvas */}
-                {isEditingMode && (
-                  <BboxCanvas
-                    bboxes={bboxesForCanvas}
-                    addPreview={addPreview}
-                    selectedId={selectedBboxId}
-                    addMode={addMode}
-                    isEditing={isEditingMode}
-                    onSelect={setSelectedBboxId}
-                    onAdd={handleAddBbox}
-                    onUpdate={handleUpdateBbox}
-                    onDelete={handleDeleteBbox}
-                  />
-                )}
-
                 {/* Selected checkpoint indicator */}
-                {selectedCp && !isEditingMode && (
+                {selectedCp && (
                   <div className="absolute bottom-2 left-0 right-0 flex justify-center pointer-events-none">
                     <span className="bg-black/60 text-zinc-400 text-[10px] px-2 py-0.5 rounded">
                       {selectedCp === "5m" ? "5m地点(スタート)" : selectedCp}
@@ -1878,11 +1369,6 @@ export default function DataCorrection() {
                     ? `-${fmtTime(Math.abs(raceTimeFromVideo))}`
                     : fmtTime(raceTimeFromVideo)}
                 </div>
-                {isEditingMode && (
-                  <div className="text-[9px] text-zinc-500 font-mono">
-                    F: {currentFrame} {cpKeyframeCount > 0 && <span className="text-primary">KF:{cpKeyframeCount}</span>}
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1997,85 +1483,6 @@ export default function DataCorrection() {
                 )}
               </div>
 
-              {/* BBOX toolbar row */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* BBOX toolbar — only in editing mode */}
-                {isEditingMode && selectedCp && (
-                  <div className="flex items-center gap-1 ml-auto">
-                    <button
-                      onClick={() => { setAddMode((m) => !m); setSelectedBboxId(null); }}
-                      title="BBOX追加"
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] cursor-pointer transition-colors ${
-                        addMode ? "bg-primary/20 border-primary text-primary" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
-                      }`}
-                    >
-                      <Square className="h-3 w-3" />追加
-                    </button>
-                    <button
-                      onClick={() => { if (selectedBboxId) handleDeleteBbox(selectedBboxId); }}
-                      disabled={!selectedBboxId}
-                      title="選択BBOX削除"
-                      className="flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:border-red-500 hover:text-red-400 text-[10px] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <Trash2 className="h-3 w-3" />削除
-                    </button>
-                    <button
-                      onClick={handleSaveKeyframe}
-                      title="キーフレーム保存"
-                      className="flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:border-blue-500 hover:text-blue-400 text-[10px] cursor-pointer"
-                    >
-                      <Save className="h-3 w-3" />KF
-                    </button>
-                    <button
-                      onClick={handleRecalculate}
-                      title="座標から通過タイムを再計算"
-                      className="flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:border-green-500 hover:text-green-400 text-[10px] cursor-pointer"
-                    >
-                      <RefreshCw className="h-3 w-3" />再計算
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Selected BBOX assignment panel */}
-              {isEditingMode && selectedBbox && (
-                <div className="flex items-center gap-2 px-2 py-1 bg-zinc-800/60 rounded border border-zinc-700/50">
-                  <MousePointer2 className="h-3 w-3 text-primary flex-shrink-0" />
-                  <span className="text-[10px] text-zinc-400">選択BBOX</span>
-                  <select
-                    value={selectedBbox.horseNumber ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      handleBboxHorseNumber(selectedBbox.id, val ? parseInt(val) : null);
-                    }}
-                    className="bg-zinc-900 border border-zinc-600 rounded text-[10px] px-1.5 py-0.5 cursor-pointer text-foreground"
-                  >
-                    <option value="">未割当</option>
-                    {Array.from({ length: numHorses }, (_, i) => (
-                      <option key={i + 1} value={i + 1}>{i + 1}番</option>
-                    ))}
-                  </select>
-                  {selectedBbox.gateNumber && (
-                    <span
-                      className="inline-flex w-5 h-5 rounded-sm items-center justify-center text-[9px] font-bold border border-white/20 flex-shrink-0"
-                      style={{
-                        backgroundColor: CAP_COLORS[selectedBbox.gateNumber]?.bg ?? "#555",
-                        color: CAP_COLORS[selectedBbox.gateNumber]?.text ?? "#fff",
-                      }}
-                    >
-                      {selectedBbox.gateNumber}
-                    </span>
-                  )}
-                  <span className="text-[9px] text-zinc-600 font-mono ml-auto">
-                    ({(selectedBbox.x * 100).toFixed(0)}%,{(selectedBbox.y * 100).toFixed(0)}%) {(selectedBbox.w * 100).toFixed(0)}×{(selectedBbox.h * 100).toFixed(0)}
-                  </span>
-                </div>
-              )}
-              {isEditingMode && addMode && !selectedBbox && (
-                <div className="text-[10px] text-primary/80 px-1 animate-pulse">
-                  ドラッグしてBBOXを追加してください
-                </div>
-              )}
             </div>
           </div>
 
@@ -2178,7 +1585,6 @@ export default function DataCorrection() {
                 </div>
               ) : (
                 <RightTable
-                  cpType={cpType!}
                   orders={displayOrders}
                   entries={entries ?? []}
                   numHorses={numHorses}
@@ -2315,9 +1721,8 @@ export default function DataCorrection() {
 
 // ── Right Table ────────────────────────────────────────────────────────────────
 function RightTable({
-  cpType, orders, entries, numHorses, isCorrectionMode, onEdit, duplicateHorseNumbers,
+  orders, entries, numHorses, isCorrectionMode, onEdit, duplicateHorseNumbers,
 }: {
-  cpType: "start" | "200m" | "straight";
   orders: any[];
   entries: any[];
   numHorses: number;
@@ -2349,6 +1754,21 @@ function RightTable({
   });
   const allRows = [...sortedOrders, ...phantomRows];
 
+  // Dynamic cap label: e.g. class_white_1, class_white_2 when same gate appears multiple times
+  const dynamicCapLabels = useMemo(() => {
+    const gateCounters: Record<number, number> = {};
+    const result: Record<string, string> = {};
+    for (const row of allRows) {
+      const gn = row.gate_number;
+      if (gn != null && CAP_COLORS[gn]) {
+        gateCounters[gn] = (gateCounters[gn] ?? 0) + 1;
+        const baseName = CAP_COLORS[gn].label.replace(/_\d+$/, "");
+        result[row.id] = `${baseName}_${gateCounters[gn]}`;
+      }
+    }
+    return result;
+  }, [allRows]);
+
   // Dense rank by time_seconds (1/100s precision, null → no rank, ties share rank)
   const timeRankMap = useMemo(() => {
     const withTime = allRows
@@ -2375,14 +1795,6 @@ function RightTable({
           <th className="p-1.5 text-center text-muted-foreground text-[10px]">帽色</th>
           <th className="p-1.5 text-left text-muted-foreground text-[10px]">馬名</th>
           <th className="p-1.5 text-right text-muted-foreground text-[10px]">通過タイム</th>
-          {cpType === "200m" && <th className="p-1.5 text-center text-muted-foreground text-[10px]">レーン</th>}
-          {cpType === "straight" && (
-            <>
-              <th className="p-1.5 text-right text-muted-foreground text-[10px]">推定速度</th>
-              <th className="p-1.5 text-right text-muted-foreground text-[10px]">推定速度変化</th>
-              <th className="p-1.5 text-center text-muted-foreground text-[10px]">走行位置</th>
-            </>
-          )}
           <th className="p-1.5 text-center text-muted-foreground text-[10px]">特記事項</th>
           <th className="p-1.5 text-center text-muted-foreground text-[10px]">信頼度</th>
         </tr>
@@ -2471,7 +1883,7 @@ function RightTable({
                 ) : !isPhantom && gn == null ? (
                   <span className="text-red-400 font-bold">欠損</span>
                 ) : (
-                  <CapCircle gate={gn} />
+                  <CapCircle gate={gn} label={dynamicCapLabels[row.id]} />
                 )}
               </td>
 
@@ -2508,84 +1920,6 @@ function RightTable({
                   <span className="text-red-400 font-bold">欠損</span>
                 ) : <span className="text-zinc-600">-</span>}
               </td>
-
-              {cpType === "200m" && (
-                <td className={`p-1.5 text-center ${row.lane == null && !isPhantom ? "bg-red-900/30" : ""}`}>
-                  {isCorrectionMode && !isPhantom ? (
-                    <select
-                      value={row.lane ?? "中"}
-                      onChange={(e) => onEdit(row.id, "lane", e.target.value)}
-                      className={`bg-zinc-800 border rounded text-[10px] px-1 py-0.5 cursor-pointer text-foreground ${row.lane == null ? "border-red-500" : "border-zinc-600"}`}
-                    >
-                      {LANES.map((l) => <option key={l} value={l}>{l}</option>)}
-                    </select>
-                  ) : (
-                    <span className={row.lane == null ? "text-red-400 font-bold" : "text-muted-foreground"}>
-                      {row.lane ?? "欠損"}
-                    </span>
-                  )}
-                </td>
-              )}
-
-              {cpType === "straight" && (
-                <>
-                  <td className="p-1.5 text-right font-mono text-[10px]">
-                    {isCorrectionMode && !isPhantom ? (
-                      <input
-                        type="number"
-                        step="0.1"
-                        defaultValue={row.absolute_speed ?? ""}
-                        onBlur={(e) => onEdit(row.id, "absolute_speed", e.target.value === "" ? null : parseFloat(e.target.value))}
-                        placeholder="欠損"
-                        className="w-14 bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground"
-                      />
-                    ) : row.absolute_speed != null ? (
-                      <span className="text-cyan-400">{row.absolute_speed.toFixed(1)}</span>
-                    ) : !isPhantom ? (
-                      <span className="text-red-400 font-bold">欠損</span>
-                    ) : <span className="text-zinc-600">-</span>}
-                  </td>
-                  <td className="p-1.5 text-right font-mono text-[10px]">
-                    {isCorrectionMode && !isPhantom ? (
-                      <input
-                        type="number"
-                        step="0.1"
-                        defaultValue={row.speed_change ?? ""}
-                        onBlur={(e) => onEdit(row.id, "speed_change", e.target.value === "" ? null : parseFloat(e.target.value))}
-                        placeholder="欠損"
-                        className="w-14 bg-zinc-800 border border-zinc-600 rounded text-[10px] px-1 py-0.5 text-right font-mono text-foreground"
-                      />
-                    ) : row.speed_change != null ? (
-                      <span className={row.speed_change >= 0 ? "text-green-400" : "text-red-400"}>
-                        {row.speed_change >= 0 ? "+" : ""}{row.speed_change.toFixed(1)}
-                      </span>
-                    ) : !isPhantom ? (
-                      <span className="text-red-400 font-bold">欠損</span>
-                    ) : <span className="text-zinc-600">-</span>}
-                  </td>
-                  <td className={`p-1.5 text-center ${!isPhantom && row.running_position == null ? "bg-red-900/30" : ""}`}>
-                    {isCorrectionMode && !isPhantom ? (
-                      <div className="flex items-center justify-center gap-0.5">
-                        <button
-                          onClick={() => onEdit(row.id, "running_position", Math.max(0, (row.running_position ?? 1) - 1))}
-                          className="w-4 h-4 flex items-center justify-center bg-zinc-700 rounded text-zinc-300 hover:bg-zinc-600 cursor-pointer text-[10px]"
-                        ><Minus className="h-2.5 w-2.5" /></button>
-                        <span className="w-6 text-center font-mono text-[10px]">{row.running_position ?? "-"}</span>
-                        <button
-                          onClick={() => onEdit(row.id, "running_position", (row.running_position ?? 0) + 1)}
-                          className="w-4 h-4 flex items-center justify-center bg-zinc-700 rounded text-zinc-300 hover:bg-zinc-600 cursor-pointer text-[10px]"
-                        ><Plus className="h-2.5 w-2.5" /></button>
-                      </div>
-                    ) : !isPhantom && row.running_position == null ? (
-                      <span className="text-red-400 font-bold">欠損</span>
-                    ) : (
-                      <span className="text-muted-foreground text-[10px]">
-                        {row.running_position != null ? `${row.running_position}頭目` : "-"}
-                      </span>
-                    )}
-                  </td>
-                </>
-              )}
 
               <td className="p-1.5 text-center">
                 {isCorrectionMode && !isPhantom ? (
