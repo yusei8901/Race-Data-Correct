@@ -466,6 +466,79 @@ def get_race(race_id: str):
         return fmt_race(row)
 
 
+@router.get("/races/{race_id}/official-results")
+def get_official_results(race_id: str):
+    """Return JRA official results for a race (公式データパネル用)."""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute(
+            """SELECT rlr.official_race_id
+               FROM race_linkage_result rlr
+               WHERE rlr.race_id = %s::uuid AND rlr.official_race_id IS NOT NULL
+               LIMIT 1""",
+            (race_id,),
+        )
+        linkage = cur.fetchone()
+        if not linkage:
+            return {"horses": [], "leader_furlong_times": [], "has_data": False}
+
+        official_race_id = linkage["official_race_id"]
+
+        cur.execute(
+            """SELECT ohr.horse_number,
+                      ohr.frame_number      AS gate_number,
+                      ohr.horse_name,
+                      ohr.finishing_order,
+                      ohr.finishing_time,
+                      ARRAY_AGG(ohft.furlong_no ORDER BY ohft.furlong_no) FILTER (WHERE ohft.furlong_no IS NOT NULL) AS furlong_nos,
+                      ARRAY_AGG(ohft.time_sec  ORDER BY ohft.furlong_no) FILTER (WHERE ohft.furlong_no IS NOT NULL) AS furlong_times
+               FROM official_horse_reference ohr
+               LEFT JOIN official_horse_furlong_time ohft
+                      ON ohft.official_horse_reference_id = ohr.id
+               WHERE ohr.official_race_id = %s
+               GROUP BY ohr.horse_number, ohr.frame_number, ohr.horse_name,
+                        ohr.finishing_order, ohr.finishing_time
+               ORDER BY ohr.finishing_order NULLS LAST, ohr.horse_number""",
+            (official_race_id,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return {"horses": [], "leader_furlong_times": [], "has_data": False}
+
+        winner_time = None
+        leader_furlong_nos = []
+        leader_furlong_times_raw = []
+        for row in rows:
+            if row["finishing_order"] == 1:
+                winner_time = row["finishing_time"]
+                leader_furlong_nos = row["furlong_nos"] or []
+                leader_furlong_times_raw = row["furlong_times"] or []
+                break
+
+        horses = []
+        for row in rows:
+            furt = [float(t) for t in (row["furlong_times"] or [])]
+            last_3f = round(sum(furt[-3:]), 2) if len(furt) >= 3 else (round(sum(furt), 2) if furt else None)
+            margin = None
+            if winner_time is not None and row["finishing_time"] is not None and row["finishing_order"] != 1:
+                margin = round(float(row["finishing_time"]) - float(winner_time), 2)
+            horses.append({
+                "finish_pos": row["finishing_order"],
+                "horse_number": row["horse_number"],
+                "gate_number": row["gate_number"],
+                "horse_name": row["horse_name"],
+                "finish_time": float(row["finishing_time"]) if row["finishing_time"] is not None else None,
+                "last_3f": last_3f,
+                "margin": margin,
+            })
+
+        leader_ft = [
+            {"furlong_no": int(fn), "time_sec": float(t)}
+            for fn, t in zip(leader_furlong_nos, leader_furlong_times_raw)
+        ]
+        return {"horses": horses, "leader_furlong_times": leader_ft, "has_data": True}
+
+
 @router.get("/races/{race_id}/entries")
 def get_race_entries(race_id: str):
     """Return horse entries for a race via race_linkage_result → official_horse_reference."""

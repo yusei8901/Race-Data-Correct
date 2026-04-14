@@ -8,6 +8,7 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, X,
   MousePointer2, Square, Minus, Plus, Trash2, MapPin,
   ChevronDown, ChevronUp, Calculator, CheckCheck, Database,
+  BookOpen,
 } from "lucide-react";
 import BboxCanvas from "@/components/bbox-canvas";
 import type { BboxAnnotation, BboxTool, BboxItem } from "@/components/bbox-canvas";
@@ -85,6 +86,22 @@ interface CalcResults {
   cap_to_time: Record<string, {
     estimated_time: number; delta_t: number | null; dist_m: number | null;
   }>;
+}
+
+interface OfficialHorse {
+  finish_pos: number | null;
+  horse_number: number;
+  gate_number: number;
+  horse_name: string;
+  finish_time: number | null;
+  last_3f: number | null;
+  margin: number | null;
+}
+
+interface OfficialResults {
+  horses: OfficialHorse[];
+  leader_furlong_times: { furlong_no: number; time_sec: number }[];
+  has_data: boolean;
 }
 
 const DEFAULT_BBOX_PARAMS: BboxParams = {
@@ -840,6 +857,11 @@ export default function DataCorrection() {
   const [presetCourseVariant, setPresetCourseVariant] = useState("");
   const [presetSurfaceType, setPresetSurfaceType] = useState("");
 
+  // Official data panel
+  const [showOfficialPanel, setShowOfficialPanel] = useState(false);
+  const [officialData, setOfficialData] = useState<OfficialResults | null>(null);
+  const [officialLoading, setOfficialLoading] = useState(false);
+
   // Refs for BBOX
   const bboxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bboxParamsRef = useRef<BboxParams>(DEFAULT_BBOX_PARAMS);
@@ -1148,6 +1170,23 @@ export default function DataCorrection() {
       toast({ title: "プリセット削除に失敗しました", variant: "destructive" });
     }
   }, [selectedPresetId, toast]);
+
+  // ── Official data panel ────────────────────────────────────────────────────
+  const handleOpenOfficialPanel = useCallback(async () => {
+    setShowOfficialPanel(true);
+    if (officialData) return; // already loaded
+    setOfficialLoading(true);
+    try {
+      const res = await fetch(`${API}/races/${raceId}/official-results`);
+      if (!res.ok) throw new Error("fetch failed");
+      const data: OfficialResults = await res.json();
+      setOfficialData(data);
+    } catch {
+      setOfficialData({ horses: [], leader_furlong_times: [], has_data: false });
+    } finally {
+      setOfficialLoading(false);
+    }
+  }, [raceId, officialData]);
 
   const numHorses = entries?.length ?? 14;
 
@@ -1510,6 +1549,14 @@ export default function DataCorrection() {
                   {raceLockedBy}が編集中
                 </Badge>
               )}
+              {/* 公式データボタン */}
+              <button
+                onClick={handleOpenOfficialPanel}
+                className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border border-amber-600/60 text-amber-400 bg-amber-900/20 hover:bg-amber-900/40 transition-colors cursor-pointer"
+              >
+                <BookOpen className="h-3 w-3" />
+                公式データ
+              </button>
             </>
           )}
         </div>
@@ -1751,6 +1798,125 @@ export default function DataCorrection() {
                   </span>
                 </div>
               )}
+
+              {/* 公式データ スライドインパネル */}
+              <div
+                className={`absolute top-0 bottom-0 left-0 z-30 flex flex-col transition-transform duration-300 ease-in-out ${showOfficialPanel ? "translate-x-0" : "-translate-x-full"}`}
+                style={{ width: "82%" }}
+              >
+                <div className="flex flex-col h-full bg-zinc-950/97 border-r border-amber-700/40 shadow-2xl overflow-hidden">
+                  {/* Panel header */}
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-amber-700/30 bg-zinc-900/80 flex-shrink-0">
+                    <div className="flex items-center gap-1.5">
+                      <BookOpen className="h-3.5 w-3.5 text-amber-400" />
+                      <span className="text-[11px] font-bold text-amber-300 tracking-wide">公式データ参照</span>
+                      {race && (
+                        <span className="text-[10px] text-zinc-500 ml-1">
+                          {race.venue} {race.race_number}R — {race.race_name}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShowOfficialPanel(false)}
+                      className="text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer p-0.5"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Panel body */}
+                  <div className="flex-1 overflow-y-auto p-2 space-y-3">
+                    {officialLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <RefreshCw className="h-4 w-4 text-amber-500 animate-spin mr-2" />
+                        <span className="text-xs text-zinc-500">読み込み中...</span>
+                      </div>
+                    ) : !officialData || !officialData.has_data ? (
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <Database className="h-6 w-6 text-zinc-700 mb-2" />
+                        <span className="text-xs text-zinc-600">公式データが紐付けられていません</span>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Horse results table */}
+                        <div>
+                          <div className="text-[10px] text-amber-500 font-semibold mb-1.5 uppercase tracking-widest">確定成績</div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-[10px] border-collapse">
+                              <thead>
+                                <tr className="border-b border-zinc-800">
+                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal w-8">着順</th>
+                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal w-6">枠</th>
+                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal w-8">馬番</th>
+                                  <th className="text-left py-1 px-1.5 text-zinc-500 font-normal">馬名</th>
+                                  <th className="text-right py-1 px-1.5 text-zinc-500 font-normal">上がり3F</th>
+                                  <th className="text-right py-1 px-1.5 text-zinc-500 font-normal">ゴールタイム</th>
+                                  <th className="text-right py-1 px-1.5 text-zinc-500 font-normal">着差</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {officialData.horses.map((h) => {
+                                  const isWinner = h.finish_pos === 1;
+                                  const finSec = h.finish_time;
+                                  const mm = finSec != null ? Math.floor(finSec / 60) : null;
+                                  const ss = finSec != null ? (finSec % 60).toFixed(1) : null;
+                                  const finStr = mm != null && ss != null ? `${mm}:${ss.padStart(4, "0")}` : "-";
+                                  const last3Str = h.last_3f != null ? h.last_3f.toFixed(2) : "-";
+                                  const marginSec = h.margin;
+                                  const marginStr = marginSec == null ? "-"
+                                    : marginSec < 0.12 ? "ハナ"
+                                    : marginSec < 0.28 ? "アタマ"
+                                    : marginSec < 0.45 ? "クビ"
+                                    : marginSec < 0.65 ? "½"
+                                    : marginSec < 0.88 ? "¾"
+                                    : marginSec < 1.15 ? "1"
+                                    : marginSec < 1.65 ? "1½"
+                                    : marginSec < 2.25 ? "2"
+                                    : marginSec < 3.25 ? "3"
+                                    : `${marginSec.toFixed(1)}`;
+                                  return (
+                                    <tr key={h.horse_number} className={`border-b border-zinc-900 ${isWinner ? "bg-amber-900/10" : "hover:bg-zinc-900/60"}`}>
+                                      <td className="py-1 px-1.5 font-mono">
+                                        <span className={`font-bold ${isWinner ? "text-amber-400" : "text-zinc-300"}`}>
+                                          {h.finish_pos ?? "-"}
+                                        </span>
+                                      </td>
+                                      <td className="py-1 px-1.5 font-mono text-zinc-400">{h.gate_number}</td>
+                                      <td className="py-1 px-1.5 font-mono text-zinc-300">{h.horse_number}</td>
+                                      <td className="py-1 px-1.5 text-zinc-200 truncate max-w-[100px]">{h.horse_name}</td>
+                                      <td className="py-1 px-1.5 text-right font-mono text-cyan-400">{last3Str}</td>
+                                      <td className={`py-1 px-1.5 text-right font-mono ${isWinner ? "text-amber-300 font-semibold" : "text-zinc-300"}`}>{finStr}</td>
+                                      <td className="py-1 px-1.5 text-right font-mono text-zinc-400">{isWinner ? "-" : marginStr}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        {/* Leader's furlong times */}
+                        {officialData.leader_furlong_times.length > 0 && (
+                          <div>
+                            <div className="text-[10px] text-amber-500 font-semibold mb-1.5 uppercase tracking-widest">
+                              先頭馬ハロンタイム（
+                              {officialData.horses.find((h) => h.finish_pos === 1)?.horse_name ?? "1着"}
+                            ）</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {officialData.leader_furlong_times.map((ft) => (
+                                <div key={ft.furlong_no} className="flex flex-col items-center bg-zinc-900 border border-zinc-800 rounded px-2 py-1 min-w-[46px]">
+                                  <span className="text-[9px] text-zinc-600 mb-0.5">F{ft.furlong_no}</span>
+                                  <span className="text-[11px] font-mono font-semibold text-amber-300">{ft.time_sec.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Controls */}
