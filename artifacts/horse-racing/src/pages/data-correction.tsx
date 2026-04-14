@@ -6,7 +6,11 @@ import {
   ArrowLeft, Play, Pause, ChevronFirst, ChevronLast,
   History, CheckCircle2, Save, Clock,
   ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, X,
+  MousePointer2, Square, Minus, Plus, Trash2, MapPin,
+  ChevronDown, ChevronUp, Calculator, CheckCheck, Database,
 } from "lucide-react";
+import BboxCanvas from "@/components/bbox-canvas";
+import type { BboxAnnotation, BboxTool, BboxItem } from "@/components/bbox-canvas";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetRace, getGetRaceQueryKey,
@@ -44,6 +48,68 @@ const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = 
   7: { bg: "#ea580c", text: "#000", label: "class_orange_1" },
   8: { bg: "#ec4899", text: "#000", label: "class_pink_1" },
 };
+
+// ── BBOX Types ───────────────────────────────────────────────────────────────
+interface BboxParams {
+  leader_official_time: string;   // formatted input e.g. "1:10.50"
+  furlong_interval_time: string;  // formatted input e.g. "12.50"
+  furlong_distance: number;
+  direction_multiplier: 1 | -1;
+  rail_spacing_m: number;
+  distance_scale_factor: number;
+  position_mode: "curve" | "straight";
+  lane_width_px: number;
+  track_hand: "right" | "left";
+  lane_inner_threshold_m: number;
+  lane_outer_threshold_m: number;
+}
+
+interface BboxPreset {
+  id: string;
+  name: string;
+  venue_code?: string;
+  section_type?: string;
+  course_variant?: string;
+  surface_type?: string;
+  parameters: Partial<BboxParams>;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CalcResults {
+  bbox_results: Record<string, {
+    cap_class: string; cap_color_key: number;
+    dist_px: number; dist_m: number | null;
+    delta_t: number | null; estimated_time: number | null;
+  }>;
+  cap_to_time: Record<string, {
+    estimated_time: number; delta_t: number | null; dist_m: number | null;
+  }>;
+}
+
+const DEFAULT_BBOX_PARAMS: BboxParams = {
+  leader_official_time: "",
+  furlong_interval_time: "",
+  furlong_distance: 200,
+  direction_multiplier: 1,
+  rail_spacing_m: 3.0,
+  distance_scale_factor: 1.0,
+  position_mode: "curve",
+  lane_width_px: 50,
+  track_hand: "right",
+  lane_inner_threshold_m: 5,
+  lane_outer_threshold_m: 15,
+};
+
+function parseBboxTimeInput(s: string): number | null {
+  const m1 = s.match(/^(\d+):(\d{2})\.(\d+)$/);
+  if (m1) return parseInt(m1[1]) * 60 + parseInt(m1[2]) + parseFloat(`0.${m1[3]}`);
+  const m2 = s.match(/^(\d+):(\d{2})$/);
+  if (m2) return parseInt(m2[1]) * 60 + parseInt(m2[2]);
+  const m3 = s.match(/^(\d+\.?\d*)$/);
+  if (m3) return parseFloat(m3[1]);
+  return null;
+}
 
 const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "その他"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
@@ -752,6 +818,32 @@ export default function DataCorrection() {
   // Local edits for right-panel fields
   const [localEdits, setLocalEdits] = useState<Record<string, Record<string, unknown>>>({});
 
+  // ── BBOX annotation state ──────────────────────────────────────────────────
+  const [bboxTool, setBboxTool] = useState<BboxTool>("select");
+  const [bboxAnnotation, setBboxAnnotation] = useState<BboxAnnotation>({
+    bboxes: [], reference_line: null, fence_markers: [],
+  });
+  const [selectedBboxId, setSelectedBboxId] = useState<string | null>(null);
+  const [newCapColorKey, setNewCapColorKey] = useState<number>(1);
+  const [bboxParamsOpen, setBboxParamsOpen] = useState(false);
+  const [bboxParams, setBboxParams] = useState<BboxParams>(DEFAULT_BBOX_PARAMS);
+  const [presets, setPresets] = useState<BboxPreset[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>("");
+  const [calcResults, setCalcResults] = useState<CalcResults | null>(null);
+  const [calcLoading, setCalcLoading] = useState(false);
+  const [applyLoading, setApplyLoading] = useState(false);
+  const [showSavePresetDialog, setShowSavePresetDialog] = useState(false);
+  const [presetNameInput, setPresetNameInput] = useState("");
+  const [presetVenueCode, setPresetVenueCode] = useState("");
+  const [presetSectionType, setPresetSectionType] = useState<"curve" | "straight">("curve");
+  const [presetCourseVariant, setPresetCourseVariant] = useState("");
+  const [presetSurfaceType, setPresetSurfaceType] = useState("");
+
+  // Refs for BBOX
+  const bboxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bboxParamsRef = useRef<BboxParams>(DEFAULT_BBOX_PARAMS);
+  bboxParamsRef.current = bboxParams;
+
   // Video timer
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Tracks which race IDs have already triggered auto-edit-mode (prevents re-trigger after cancel)
@@ -814,6 +906,241 @@ export default function DataCorrection() {
   }, [isPlaying, playSpeed, totalVideoSec]);
 
 
+  // Computed race state (moved early for BBOX handler access)
+  const raceStatus = race?.display_status ?? race?.status ?? "";
+  const raceLockedBy = race?.locked_by;
+  const currentUserName = isAdmin ? "管理者" : "ユーザー";
+  const isLockedByMe = raceLockedBy === currentUserName || !raceLockedBy;
+  const isLockedByOther = !!raceLockedBy && raceLockedBy !== currentUserName;
+
+  // ── BBOX: Load annotation when checkpoint changes ──────────────────────────
+  useEffect(() => {
+    if (!selectedCp || !raceId) {
+      setBboxAnnotation({ bboxes: [], reference_line: null, fence_markers: [] });
+      setSelectedBboxId(null);
+      setCalcResults(null);
+      return;
+    }
+    fetch(`${API}/races/${raceId}/bbox/${encodeURIComponent(selectedCp)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setBboxAnnotation({
+          bboxes: data.bboxes ?? [],
+          reference_line: data.reference_line ?? null,
+          fence_markers: data.fence_markers ?? [],
+        });
+        if (data.parameters && Object.keys(data.parameters).length > 0) {
+          setBboxParams((prev) => ({ ...prev, ...data.parameters }));
+        }
+        setSelectedBboxId(null);
+        setCalcResults(null);
+      })
+      .catch(() => {});
+  }, [selectedCp, raceId]);
+
+  // ── BBOX: Load presets on mount ─────────────────────────────────────────────
+  useEffect(() => {
+    fetch(`${API}/bbox-presets`)
+      .then((r) => r.json())
+      .then((data) => setPresets(data ?? []))
+      .catch(() => {});
+  }, []);
+
+  // ── BBOX: Keyboard delete ───────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedBboxId) {
+        const tag = (document.activeElement as HTMLElement)?.tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          setBboxAnnotation((prev) => {
+            const newAnn = { ...prev, bboxes: prev.bboxes.filter((b) => b.id !== selectedBboxId) };
+            saveBboxAnnotation(newAnn);
+            return newAnn;
+          });
+          setSelectedBboxId(null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedBboxId]); // eslint-disable-line
+
+  // ── BBOX: Save annotation (debounced) ──────────────────────────────────────
+  const saveBboxAnnotation = useCallback((ann: BboxAnnotation) => {
+    if (!selectedCp || !raceId) return;
+    if (bboxSaveTimerRef.current) clearTimeout(bboxSaveTimerRef.current);
+    bboxSaveTimerRef.current = setTimeout(() => {
+      fetch(`${API}/races/${raceId}/bbox/${encodeURIComponent(selectedCp)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bboxes: ann.bboxes,
+          reference_line: ann.reference_line,
+          fence_markers: ann.fence_markers,
+          parameters: bboxParamsRef.current,
+        }),
+      }).catch(() => {});
+    }, 1500);
+  }, [selectedCp, raceId]);
+
+  const handleAnnotationChange = useCallback((ann: BboxAnnotation) => {
+    setBboxAnnotation(ann);
+    saveBboxAnnotation(ann);
+  }, [saveBboxAnnotation]);
+
+  // ── BBOX: Save params when they change ─────────────────────────────────────
+  const handleBboxParamChange = useCallback(<K extends keyof BboxParams>(key: K, value: BboxParams[K]) => {
+    setBboxParams((prev) => {
+      const next = { ...prev, [key]: value };
+      bboxParamsRef.current = next;
+      if (!selectedCp || !raceId) return next;
+      if (bboxSaveTimerRef.current) clearTimeout(bboxSaveTimerRef.current);
+      bboxSaveTimerRef.current = setTimeout(() => {
+        fetch(`${API}/races/${raceId}/bbox/${encodeURIComponent(selectedCp)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bboxes: bboxAnnotation.bboxes,
+            reference_line: bboxAnnotation.reference_line,
+            fence_markers: bboxAnnotation.fence_markers,
+            parameters: next,
+          }),
+        }).catch(() => {});
+      }, 1500);
+      return next;
+    });
+  }, [selectedCp, raceId, bboxAnnotation]);
+
+  // ── BBOX: Delete selected bbox ─────────────────────────────────────────────
+  const handleDeleteBbox = useCallback(() => {
+    if (!selectedBboxId) return;
+    const newAnn = { ...bboxAnnotation, bboxes: bboxAnnotation.bboxes.filter((b) => b.id !== selectedBboxId) };
+    handleAnnotationChange(newAnn);
+    setSelectedBboxId(null);
+  }, [selectedBboxId, bboxAnnotation, handleAnnotationChange]);
+
+  // ── BBOX: Clear reference line ─────────────────────────────────────────────
+  const handleClearRefLine = useCallback(() => {
+    const newAnn = { ...bboxAnnotation, reference_line: null };
+    handleAnnotationChange(newAnn);
+  }, [bboxAnnotation, handleAnnotationChange]);
+
+  // ── BBOX: Clear fence markers ──────────────────────────────────────────────
+  const handleClearFenceMarkers = useCallback(() => {
+    const newAnn = { ...bboxAnnotation, fence_markers: [] };
+    handleAnnotationChange(newAnn);
+  }, [bboxAnnotation, handleAnnotationChange]);
+
+  // ── BBOX: Calculate estimated times ────────────────────────────────────────
+  const handleCalculate = useCallback(async () => {
+    if (!selectedCp) return;
+    setCalcLoading(true);
+    try {
+      const p = bboxParamsRef.current;
+      const leaderSec = parseBboxTimeInput(p.leader_official_time);
+      const intervalSec = parseBboxTimeInput(p.furlong_interval_time);
+      const res = await fetch(`${API}/races/${raceId}/bbox/${encodeURIComponent(selectedCp)}/calculate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bboxes: bboxAnnotation.bboxes,
+          reference_line: bboxAnnotation.reference_line,
+          fence_markers: bboxAnnotation.fence_markers,
+          parameters: {
+            ...p,
+            leader_official_time: leaderSec,
+            furlong_interval_time: intervalSec,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Calculate failed");
+      const data: CalcResults = await res.json();
+      setCalcResults(data);
+    } catch {
+      toast({ title: "推定タイム算出に失敗しました", variant: "destructive" });
+    }
+    setCalcLoading(false);
+  }, [selectedCp, raceId, bboxAnnotation, toast]);
+
+  // ── BBOX: Apply estimated times to passing orders ─────────────────────────
+  const handleApplyEstimatedTimes = useCallback(async () => {
+    if (!calcResults?.cap_to_time || !selectedCp) return;
+    setApplyLoading(true);
+    try {
+      const res = await fetch(`${API}/races/${raceId}/bbox/${encodeURIComponent(selectedCp)}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cap_to_time: calcResults.cap_to_time }),
+      });
+      if (!res.ok) throw new Error("Apply failed");
+      const data = await res.json();
+      await fetch(`${API}/races/${raceId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_name: currentUserName,
+          action_type: "BBOX推定タイム反映",
+          description: `${selectedCp}: ${data.count}頭の通過タイムをBBOX推定値で更新しました`,
+        }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetPassingOrdersQueryKey(raceId, {}) });
+      toast({ title: `${data.count}頭の通過タイムを更新しました` });
+      setCalcResults(null);
+    } catch {
+      toast({ title: "通過タイムの反映に失敗しました", variant: "destructive" });
+    }
+    setApplyLoading(false);
+  }, [calcResults, selectedCp, raceId, currentUserName, queryClient, toast]);
+
+  // ── BBOX: Load preset ──────────────────────────────────────────────────────
+  const handleLoadPreset = useCallback((presetId: string) => {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) return;
+    setSelectedPresetId(presetId);
+    setBboxParams((prev) => ({ ...prev, ...preset.parameters }));
+  }, [presets]);
+
+  // ── BBOX: Save as new preset ───────────────────────────────────────────────
+  const handleSavePreset = useCallback(async () => {
+    if (!presetNameInput.trim()) return;
+    try {
+      const res = await fetch(`${API}/bbox-presets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: presetNameInput.trim(),
+          venue_code: presetVenueCode || null,
+          section_type: presetSectionType || null,
+          course_variant: presetCourseVariant || null,
+          surface_type: presetSurfaceType || null,
+          parameters: bboxParamsRef.current,
+        }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      const newPreset: BboxPreset = await res.json();
+      setPresets((prev) => [...prev, newPreset]);
+      setSelectedPresetId(newPreset.id);
+      setShowSavePresetDialog(false);
+      setPresetNameInput("");
+      toast({ title: "プリセットを保存しました" });
+    } catch {
+      toast({ title: "プリセット保存に失敗しました", variant: "destructive" });
+    }
+  }, [presetNameInput, presetVenueCode, presetSectionType, presetCourseVariant, presetSurfaceType, toast]);
+
+  // ── BBOX: Delete preset ────────────────────────────────────────────────────
+  const handleDeletePreset = useCallback(async () => {
+    if (!selectedPresetId) return;
+    try {
+      await fetch(`${API}/bbox-presets/${selectedPresetId}`, { method: "DELETE" });
+      setPresets((prev) => prev.filter((p) => p.id !== selectedPresetId));
+      setSelectedPresetId("");
+      toast({ title: "プリセットを削除しました" });
+    } catch {
+      toast({ title: "プリセット削除に失敗しました", variant: "destructive" });
+    }
+  }, [selectedPresetId, toast]);
+
   const numHorses = entries?.length ?? 14;
 
   // Display orders with local edits applied
@@ -838,12 +1165,6 @@ export default function DataCorrection() {
     }
     setLocalEdits({});
   }, [localEdits, raceId]);
-
-  const currentUserName = isAdmin ? "管理者" : "ユーザー";
-  const raceLockedBy = race?.locked_by;
-  const isLockedByMe = raceLockedBy === currentUserName || !raceLockedBy;
-  const isLockedByOther = !!raceLockedBy && raceLockedBy !== currentUserName;
-  const raceStatus = race?.display_status ?? race?.status ?? "";
 
   useEffect(() => {
     if (!race?.id) return;
@@ -1370,6 +1691,28 @@ export default function DataCorrection() {
                     : fmtTime(raceTimeFromVideo)}
                 </div>
               </div>
+
+              {/* BBOX Canvas overlay — only shown when checkpoint is selected */}
+              {selectedCp && (
+                <BboxCanvas
+                  tool={bboxTool}
+                  annotation={bboxAnnotation}
+                  selectedId={selectedBboxId}
+                  onAnnotationChange={handleAnnotationChange}
+                  onSelectId={setSelectedBboxId}
+                  newCapClass={CAP_COLORS[newCapColorKey]?.label.replace(/_\d+$/, "") ?? "class_white"}
+                  newCapColorKey={newCapColorKey}
+                />
+              )}
+
+              {/* Tool indicator badge */}
+              {selectedCp && bboxTool !== "select" && (
+                <div className="absolute top-1.5 left-1.5 bg-black/75 rounded px-1.5 py-0.5 pointer-events-none z-20">
+                  <span className="text-[9px] text-primary font-mono">
+                    {bboxTool === "add_bbox" ? "🔲 BBOX追加" : bboxTool === "reference_line" ? "📏 基準線" : "📍 柵マーカー"}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Controls */}
@@ -1568,6 +1911,412 @@ export default function DataCorrection() {
               </div>
             )}
           </div>
+
+          {/* ── BBOX Tools Panel ───────────────────────────────────────────── */}
+          {selectedCp && (
+            <div className="flex-shrink-0 border-b border-zinc-700 bg-zinc-900 overflow-y-auto" style={{ maxHeight: "56%" }}>
+              <div className="p-2 space-y-2">
+
+                {/* Tool selector row */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {([
+                    { id: "select" as BboxTool, label: "選択", icon: <MousePointer2 className="h-3 w-3" /> },
+                    { id: "add_bbox" as BboxTool, label: "BBOX追加", icon: <Square className="h-3 w-3" /> },
+                    { id: "reference_line" as BboxTool, label: "基準線", icon: <Minus className="h-3 w-3" /> },
+                    { id: "fence_marker" as BboxTool, label: "柵マーカー", icon: <MapPin className="h-3 w-3" /> },
+                  ] as const).map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setBboxTool(t.id)}
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border cursor-pointer transition-colors ${
+                        bboxTool === t.id
+                          ? "bg-primary/20 border-primary text-primary"
+                          : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                      }`}
+                    >{t.icon}{t.label}</button>
+                  ))}
+
+                  {/* BBOX追加モード: 帽色選択 */}
+                  {bboxTool === "add_bbox" && (
+                    <select
+                      value={newCapColorKey}
+                      onChange={(e) => setNewCapColorKey(Number(e.target.value))}
+                      className="ml-1 bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
+                    >
+                      {Object.entries(CAP_COLORS).map(([key, c]) => (
+                        <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {/* Selected BBOX info */}
+                {selectedBboxId && bboxTool === "select" && (() => {
+                  const b = bboxAnnotation.bboxes.find((x) => x.id === selectedBboxId);
+                  if (!b) return null;
+                  return (
+                    <div className="flex items-center gap-2 bg-zinc-800/60 rounded px-2 py-1 border border-cyan-800/50">
+                      <span className="text-[10px] text-zinc-400">BBOX:</span>
+                      <span className="text-[10px] font-mono text-cyan-300">{b.cap_class}</span>
+                      <select
+                        value={b.cap_color_key}
+                        onChange={(e) => {
+                          const key = Number(e.target.value);
+                          const newAnn = {
+                            ...bboxAnnotation,
+                            bboxes: bboxAnnotation.bboxes.map((x) =>
+                              x.id === b.id ? { ...x, cap_color_key: key, cap_class: CAP_COLORS[key]?.label.replace(/_\d+$/, "") ?? x.cap_class } : x
+                            ),
+                          };
+                          handleAnnotationChange(newAnn);
+                        }}
+                        className="bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
+                      >
+                        {Object.entries(CAP_COLORS).map(([key, c]) => (
+                          <option key={key} value={key}>{c.label.replace(/_\d+$/, "")}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={handleDeleteBbox}
+                        className="ml-auto flex items-center gap-0.5 text-[10px] text-red-400 hover:text-red-300 cursor-pointer"
+                      ><Trash2 className="h-3 w-3" />削除</button>
+                    </div>
+                  );
+                })()}
+
+                {/* Reference line / fence marker status */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {bboxAnnotation.reference_line && (
+                    <div className="flex items-center gap-1 bg-yellow-900/20 border border-yellow-800/40 rounded px-2 py-0.5">
+                      <span className="text-[10px] text-yellow-400">基準線 ✓</span>
+                      <button onClick={handleClearRefLine} className="text-[9px] text-zinc-500 hover:text-red-400 cursor-pointer ml-1">✕</button>
+                    </div>
+                  )}
+                  {bboxAnnotation.fence_markers.length > 0 && (
+                    <div className="flex items-center gap-1 bg-orange-900/20 border border-orange-800/40 rounded px-2 py-0.5">
+                      <span className="text-[10px] text-orange-400">柵マーカー {bboxAnnotation.fence_markers.length}点</span>
+                      <button onClick={handleClearFenceMarkers} className="text-[9px] text-zinc-500 hover:text-red-400 cursor-pointer ml-1">✕</button>
+                    </div>
+                  )}
+                  <span className="text-[9px] text-zinc-600">{bboxAnnotation.bboxes.length}BBOX</span>
+                </div>
+
+                {/* Params accordion */}
+                <div className="border border-zinc-700 rounded overflow-hidden">
+                  <button
+                    onClick={() => setBboxParamsOpen((p) => !p)}
+                    className="w-full flex items-center justify-between px-2 py-1 bg-zinc-800 text-[10px] text-zinc-300 cursor-pointer hover:bg-zinc-700"
+                  >
+                    <span className="font-medium">推定タイムパラメータ</span>
+                    {bboxParamsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
+                  {bboxParamsOpen && (
+                    <div className="p-2 space-y-2 bg-zinc-900/50">
+                      {/* Leader time + interval time */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[9px] text-zinc-500 mb-0.5">先頭馬公式通過タイム</div>
+                          <input
+                            type="text"
+                            value={bboxParams.leader_official_time}
+                            onChange={(e) => handleBboxParamChange("leader_official_time", e.target.value)}
+                            placeholder="例: 1:10.50"
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[9px] text-zinc-500 mb-0.5">区間タイム(秒)</div>
+                          <input
+                            type="text"
+                            value={bboxParams.furlong_interval_time}
+                            onChange={(e) => handleBboxParamChange("furlong_interval_time", e.target.value)}
+                            placeholder="例: 12.50"
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Furlong distance + direction */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[9px] text-zinc-500 mb-0.5">区間距離(m)</div>
+                          <input
+                            type="number"
+                            value={bboxParams.furlong_distance}
+                            onChange={(e) => handleBboxParamChange("furlong_distance", Number(e.target.value))}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[9px] text-zinc-500 mb-0.5">進行方向</div>
+                          <div className="flex gap-1">
+                            {([1, -1] as const).map((v) => (
+                              <button
+                                key={v}
+                                onClick={() => handleBboxParamChange("direction_multiplier", v)}
+                                className={`flex-1 px-1 py-0.5 rounded text-[10px] border cursor-pointer ${
+                                  bboxParams.direction_multiplier === v ? "bg-primary/20 border-primary text-primary" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                                }`}
+                              >{v === 1 ? "→左" : "←右"}</button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Rail spacing + scale factor */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[9px] text-zinc-500 mb-0.5">柵支柱間隔(m)</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={bboxParams.rail_spacing_m}
+                            onChange={(e) => handleBboxParamChange("rail_spacing_m", Number(e.target.value))}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[9px] text-zinc-500 mb-0.5">距離補正係数</div>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={bboxParams.distance_scale_factor}
+                            onChange={(e) => handleBboxParamChange("distance_scale_factor", Number(e.target.value))}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Position mode */}
+                      <div>
+                        <div className="text-[9px] text-zinc-500 mb-0.5">位置算出モード</div>
+                        <div className="flex gap-1">
+                          {(["curve", "straight"] as const).map((m) => (
+                            <button
+                              key={m}
+                              onClick={() => handleBboxParamChange("position_mode", m)}
+                              className={`flex-1 px-1 py-0.5 rounded text-[10px] border cursor-pointer ${
+                                bboxParams.position_mode === m ? "bg-primary/20 border-primary text-primary" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                              }`}
+                            >{m === "curve" ? "カーブ" : "直線"}</button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Straight-mode params */}
+                      {bboxParams.position_mode === "straight" && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <div className="text-[9px] text-zinc-500 mb-0.5">レーン幅(px)</div>
+                            <input
+                              type="number"
+                              value={bboxParams.lane_width_px}
+                              onChange={(e) => handleBboxParamChange("lane_width_px", Number(e.target.value))}
+                              className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-zinc-500 mb-0.5">コース方向</div>
+                            <div className="flex gap-1">
+                              {(["right", "left"] as const).map((v) => (
+                                <button
+                                  key={v}
+                                  onClick={() => handleBboxParamChange("track_hand", v)}
+                                  className={`flex-1 px-1 py-0.5 rounded text-[10px] border cursor-pointer ${
+                                    bboxParams.track_hand === v ? "bg-primary/20 border-primary text-primary" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                                  }`}
+                                >{v === "right" ? "右回り" : "左回り"}</button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Curve-mode params */}
+                      {bboxParams.position_mode === "curve" && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <div className="text-[9px] text-zinc-500 mb-0.5">内→中境界(m)</div>
+                            <input
+                              type="number"
+                              step="0.5"
+                              value={bboxParams.lane_inner_threshold_m}
+                              onChange={(e) => handleBboxParamChange("lane_inner_threshold_m", Number(e.target.value))}
+                              className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-zinc-500 mb-0.5">中→外境界(m)</div>
+                            <input
+                              type="number"
+                              step="0.5"
+                              value={bboxParams.lane_outer_threshold_m}
+                              onChange={(e) => handleBboxParamChange("lane_outer_threshold_m", Number(e.target.value))}
+                              className="w-full bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono text-zinc-200 focus:border-primary focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Preset management */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  <select
+                    value={selectedPresetId}
+                    onChange={(e) => handleLoadPreset(e.target.value)}
+                    className="flex-1 min-w-0 bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1.5 py-0.5 cursor-pointer"
+                  >
+                    <option value="">— プリセット選択 —</option>
+                    {presets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}{p.section_type ? ` (${p.section_type === "curve" ? "カーブ" : "直線"})` : ""}{p.surface_type ? ` ${p.surface_type}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setShowSavePresetDialog(true)}
+                    className="px-2 py-0.5 rounded text-[10px] border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 cursor-pointer whitespace-nowrap"
+                  ><Plus className="h-2.5 w-2.5 inline" /> 保存</button>
+                  {selectedPresetId && (
+                    <button
+                      onClick={handleDeletePreset}
+                      className="px-2 py-0.5 rounded text-[10px] border border-red-800 text-red-400 hover:bg-red-900/20 cursor-pointer whitespace-nowrap"
+                    ><Trash2 className="h-2.5 w-2.5 inline" /> 削除</button>
+                  )}
+                </div>
+
+                {/* Save preset dialog (inline) */}
+                {showSavePresetDialog && (
+                  <div className="border border-zinc-600 rounded bg-zinc-800 p-2 space-y-1.5">
+                    <div className="text-[10px] font-medium text-zinc-300">プリセットとして保存</div>
+                    <input
+                      type="text"
+                      value={presetNameInput}
+                      onChange={(e) => setPresetNameInput(e.target.value)}
+                      placeholder="プリセット名"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] text-zinc-200 focus:border-primary focus:outline-none"
+                    />
+                    <div className="grid grid-cols-2 gap-1">
+                      <input
+                        type="text"
+                        value={presetVenueCode}
+                        onChange={(e) => setPresetVenueCode(e.target.value)}
+                        placeholder="競馬場コード"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] text-zinc-200 focus:border-primary focus:outline-none"
+                      />
+                      <select
+                        value={presetSurfaceType}
+                        onChange={(e) => setPresetSurfaceType(e.target.value)}
+                        className="bg-zinc-900 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
+                      >
+                        <option value="">馬場種別</option>
+                        <option value="芝">芝</option>
+                        <option value="ダート">ダート</option>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <select
+                        value={presetSectionType}
+                        onChange={(e) => setPresetSectionType(e.target.value as "curve" | "straight")}
+                        className="bg-zinc-900 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5 cursor-pointer"
+                      >
+                        <option value="curve">カーブ</option>
+                        <option value="straight">直線</option>
+                      </select>
+                      <input
+                        type="text"
+                        value={presetCourseVariant}
+                        onChange={(e) => setPresetCourseVariant(e.target.value)}
+                        placeholder="コース (A/B)"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] text-zinc-200 focus:border-primary focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex gap-1 justify-end">
+                      <button
+                        onClick={() => setShowSavePresetDialog(false)}
+                        className="px-2 py-0.5 rounded text-[10px] border border-zinc-700 text-zinc-400 cursor-pointer"
+                      >キャンセル</button>
+                      <button
+                        onClick={handleSavePreset}
+                        disabled={!presetNameInput.trim()}
+                        className="px-2 py-0.5 rounded text-[10px] bg-primary text-white cursor-pointer disabled:opacity-40"
+                      >保存</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Calculate button */}
+                <div className="flex gap-1.5">
+                  <Button
+                    size="sm"
+                    onClick={handleCalculate}
+                    disabled={calcLoading || bboxAnnotation.bboxes.length === 0 || !bboxAnnotation.reference_line}
+                    className="flex-1 h-7 text-[10px] gap-1 bg-indigo-700 hover:bg-indigo-600 cursor-pointer"
+                  >
+                    <Calculator className="h-3 w-3" />
+                    {calcLoading ? "算出中..." : "推定通過タイム算出"}
+                  </Button>
+                  {calcResults && (
+                    <Button
+                      size="sm"
+                      onClick={handleApplyEstimatedTimes}
+                      disabled={applyLoading}
+                      className="flex-1 h-7 text-[10px] gap-1 bg-green-700 hover:bg-green-600 cursor-pointer"
+                    >
+                      <CheckCheck className="h-3 w-3" />
+                      {applyLoading ? "反映中..." : "通過タイムに反映"}
+                    </Button>
+                  )}
+                </div>
+
+                {/* Calculation results preview */}
+                {calcResults && Object.keys(calcResults.cap_to_time).length > 0 && (
+                  <div className="border border-indigo-800/50 rounded overflow-hidden">
+                    <div className="bg-indigo-900/30 px-2 py-0.5 text-[10px] font-medium text-indigo-300 flex items-center gap-1">
+                      <Database className="h-3 w-3" />推定通過タイム
+                    </div>
+                    <table className="w-full text-[9px]">
+                      <thead className="bg-zinc-800">
+                        <tr>
+                          <th className="px-1.5 py-0.5 text-left text-zinc-500">帽色</th>
+                          <th className="px-1.5 py-0.5 text-right text-zinc-500">距離差(m)</th>
+                          <th className="px-1.5 py-0.5 text-right text-zinc-500">タイム差(s)</th>
+                          <th className="px-1.5 py-0.5 text-right text-zinc-500">推定タイム</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(calcResults.cap_to_time).map(([gateStr, info]) => {
+                          const gate = Number(gateStr);
+                          const color = CAP_COLORS[gate];
+                          return (
+                            <tr key={gateStr} className="border-t border-zinc-800">
+                              <td className="px-1.5 py-0.5">
+                                <span className="font-mono text-[9px]" style={{ color: color?.bg ?? "#fff" }}>
+                                  {color?.label.replace(/_\d+$/, "") ?? `gate${gate}`}
+                                </span>
+                              </td>
+                              <td className="px-1.5 py-0.5 text-right font-mono text-zinc-300">
+                                {info.dist_m != null ? info.dist_m.toFixed(2) : "-"}
+                              </td>
+                              <td className="px-1.5 py-0.5 text-right font-mono text-zinc-300">
+                                {info.delta_t != null ? `+${info.delta_t.toFixed(3)}` : "-"}
+                              </td>
+                              <td className="px-1.5 py-0.5 text-right font-mono text-cyan-300 font-medium">
+                                {fmtTime(info.estimated_time)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          )}
 
           {!selectedCp ? (
             <div className="flex-1 flex items-center justify-center">
