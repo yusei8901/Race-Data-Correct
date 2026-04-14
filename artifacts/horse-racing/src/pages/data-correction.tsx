@@ -4,7 +4,7 @@ import {
 import { useParams, useLocation } from "wouter";
 import {
   ArrowLeft, Play, Pause, ChevronFirst, ChevronLast,
-  History, CheckCircle2, Save, Clock, Minus, Plus, Ruler,
+  History, CheckCircle2, Save, Clock, Minus, Plus,
   ChevronLeft, ChevronRight, Trash2, RefreshCw, Square,
   MousePointer2, AlertTriangle, X,
 } from "lucide-react";
@@ -36,14 +36,14 @@ const STRAIGHT_MAP: Record<string, number> = {
 };
 
 const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = {
-  1: { bg: "#ffffff", text: "#000", label: "白" },
-  2: { bg: "#111111", text: "#fff", label: "黒" },
-  3: { bg: "#dc2626", text: "#fff", label: "赤" },
-  4: { bg: "#2563eb", text: "#fff", label: "青" },
-  5: { bg: "#facc15", text: "#000", label: "黄" },
-  6: { bg: "#16a34a", text: "#fff", label: "緑" },
-  7: { bg: "#ea580c", text: "#000", label: "橙" },
-  8: { bg: "#ec4899", text: "#000", label: "桃" },
+  1: { bg: "#ffffff", text: "#000", label: "class_white_1" },
+  2: { bg: "#111111", text: "#fff", label: "class_black_1" },
+  3: { bg: "#dc2626", text: "#fff", label: "class_red_1" },
+  4: { bg: "#2563eb", text: "#fff", label: "class_blue_1" },
+  5: { bg: "#facc15", text: "#000", label: "class_yellow_1" },
+  6: { bg: "#16a34a", text: "#fff", label: "class_green_1" },
+  7: { bg: "#ea580c", text: "#000", label: "class_orange_1" },
+  8: { bg: "#ec4899", text: "#000", label: "class_pink_1" },
 };
 
 const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "その他"];
@@ -215,12 +215,8 @@ function CapCircle({ gate }: { gate?: number | null }) {
   const c = gate != null ? CAP_COLORS[gate] : null;
   if (!c) return <span className="text-zinc-500 text-xs">-</span>;
   return (
-    <span
-      className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border border-white/20"
-      style={{ backgroundColor: c.bg, color: c.text }}
-      title={c.label}
-    >
-      {c.label[0]}
+    <span className="text-[9px] font-mono text-zinc-300" title={c.label}>
+      {c.label}
     </span>
   );
 }
@@ -1034,13 +1030,11 @@ export default function DataCorrection() {
   const [confirmDialog, setConfirmDialog] = useState<
     "save" | "complete" | "cancel" | "forceUnlock" | "confirm" | "matchingFailure" | "correctionRequest" | "statusDetail" | "bindAnalysis" | "analysisOption" | null
   >(null);
-  const [leftView, setLeftView] = useState<"furlong" | "entries" | "both">("both");
   const [selectedCp, setSelectedCp] = useState<string | null>(null);
 
   // Edit mode: purely local; resets when leaving the page
   const [isEditingMode, setIsEditingMode] = useState(false);
   const [savingTemp, setSavingTemp] = useState(false);
-  const [entrySortBy, setEntrySortBy] = useState<"horse_number" | "finish_position">("horse_number");
 
   // Editable start/goal times (video offset + race duration in seconds)
   const [customVideoOffset, setCustomVideoOffset] = useState<number | null>(null);
@@ -1052,13 +1046,6 @@ export default function DataCorrection() {
   const [videoTime, setVideoTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1.0);
-  const [rulerEnabled, setRulerEnabled] = useState(false);
-  const [rulerY, setRulerY] = useState(50);
-  const [rulerAngle, setRulerAngle] = useState(0);
-  const [vrulerEnabled, setVrulerEnabled] = useState(false);
-  const [vrulerX, setVrulerX] = useState(50);
-  const [vrulerAngle, setVrulerAngle] = useState(0);
-
   // BBOX state
   const [keyframes, setKeyframes] = useState<Keyframes>({});
   const [selectedBboxId, setSelectedBboxId] = useState<string | null>(null);
@@ -1163,7 +1150,6 @@ export default function DataCorrection() {
   }, [selectedCp, ptsStr]);
 
   const numHorses = entries?.length ?? 14;
-  const furlongSplits = (entries?.[0] as any)?.furlong_splits ?? [];
 
   // Display orders with local edits applied
   const displayOrders = useMemo(() => {
@@ -1836,128 +1822,8 @@ export default function DataCorrection() {
       {/* 3-column body */}
       <div className="flex-1 flex overflow-hidden min-h-0">
 
-        {/* LEFT: JRA公式データ (22%) */}
-        <div className="w-[22%] min-w-[200px] border-r border-border flex flex-col bg-card/40">
-
-          {/* Race info card (moved from header) */}
-          {race && (
-            <div className="px-2.5 py-2 border-b border-border/60 bg-zinc-900/60 flex-shrink-0">
-              <div className="text-[10px] font-bold text-foreground mb-1 truncate">
-                {race.venue} {race.race_number}R {race.race_name}
-              </div>
-              <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-                <span className="text-[9px] text-zinc-400">{race.distance}m · {race.direction || "右回り"}</span>
-                <span className={`text-[9px] font-semibold ${race.surface_type === "芝" ? "text-green-400" : "text-amber-400"}`}>{race.surface_type || "-"}</span>
-                <span className="text-[9px] text-zinc-400">馬場: {race.condition || "-"}</span>
-                <span className="text-[9px] text-zinc-400">天候: {race.weather || "-"}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="px-3 py-1.5 border-b border-border bg-card flex items-center justify-between flex-shrink-0">
-            <span className="text-[11px] font-semibold text-muted-foreground">JRA公式データ</span>
-            <div className="flex items-center gap-0.5">
-              {(["furlong", "both", "entries"] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setLeftView(v)}
-                  className={`px-1.5 py-0.5 text-[10px] rounded cursor-pointer transition-colors ${
-                    leftView === v ? "bg-primary text-white" : "bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {v === "furlong" ? "ハロン" : v === "entries" ? "出走馬" : "両方"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            {(leftView === "furlong" || leftView === "both") && (
-              <div className="p-2 border-b border-border/50">
-                <div className="text-[10px] text-muted-foreground mb-1.5 font-medium">ハロンタイム</div>
-                {furlongSplits.length > 0 ? (
-                  <div className="grid grid-cols-4 gap-0.5">
-                    {furlongSplits.map((t: number, i: number) => (
-                      <div key={i} className="bg-zinc-800 rounded px-1 py-0.5 text-center text-[10px] font-mono text-zinc-200">
-                        {t.toFixed(1)}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-muted-foreground text-center py-2">データなし</div>
-                )}
-              </div>
-            )}
-
-            {(leftView === "entries" || leftView === "both") && (
-              <div>
-                <div className="flex items-center gap-0.5 px-1.5 py-1 bg-muted/30 border-b border-border/50">
-                  <span className="text-[9px] text-zinc-500 mr-1">並替:</span>
-                  {([["horse_number", "馬番"], ["finish_position", "着順"]] as const).map(([key, label]) => (
-                    <button
-                      key={key}
-                      onClick={() => setEntrySortBy(key)}
-                      className={`px-1.5 py-0.5 text-[9px] rounded cursor-pointer transition-colors ${
-                        entrySortBy === key ? "bg-primary text-white" : "bg-zinc-700 text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >{label}</button>
-                  ))}
-                </div>
-                <table className="w-full text-[10px]">
-                  <thead className="bg-muted/60 sticky top-0 z-10">
-                    <tr>
-                      <th className="p-1 text-center text-muted-foreground">馬<br/>番</th>
-                      <th className="p-1 text-center text-muted-foreground">枠</th>
-                      <th className="p-1 text-left text-muted-foreground">馬名</th>
-                      <th className="p-1 text-right text-muted-foreground">着<br/>順</th>
-                      <th className="p-1 text-right text-muted-foreground">タイム</th>
-                      <th className="p-1 text-right text-muted-foreground">着差</th>
-                      <th className="p-1 text-right text-muted-foreground">3F</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...(entries ?? [])].sort((a, b) => {
-                      if (entrySortBy === "finish_position") {
-                        const ap = (a as any).finish_position ?? 999;
-                        const bp = (b as any).finish_position ?? 999;
-                        return ap - bp;
-                      }
-                      return a.horse_number - b.horse_number;
-                    }).map((e) => {
-                      const gn = e.gate_number ?? 1;
-                      const cap = CAP_COLORS[gn] ?? CAP_COLORS[1];
-                      const ft = (e as any).finish_time;
-                      const min = ft ? Math.floor(ft / 60) : null;
-                      const sec = ft ? (ft % 60).toFixed(1) : null;
-                      const timeStr = (min !== null && sec !== null) ? `${min}:${sec.padStart(4, "0")}` : "-";
-                      const marginStr = formatMargin((e as any).margin, (e as any).finish_position);
-                      return (
-                        <tr key={e.id} className="border-t border-border/30 hover:bg-muted/20">
-                          <td className="p-1 text-center font-mono font-bold">{e.horse_number}</td>
-                          <td className="p-1 text-center">
-                            <span
-                              className="inline-flex w-4 h-4 rounded-sm items-center justify-center text-[9px] font-bold border border-white/20"
-                              style={{ backgroundColor: cap.bg, color: cap.text }}
-                            >{gn}</span>
-                          </td>
-                          <td className="p-1 truncate max-w-[60px]" title={e.horse_name}>{e.horse_name}</td>
-                          <td className="p-1 text-right font-mono font-bold">{(e as any).finish_position ?? "-"}</td>
-                          <td className="p-1 text-right font-mono text-muted-foreground">{timeStr}</td>
-                          <td className="p-1 text-right font-mono text-muted-foreground">{marginStr}</td>
-                          <td className="p-1 text-right font-mono text-muted-foreground">{(e as any).last_3f != null ? (e as any).last_3f.toFixed(1) : "-"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-          </div>
-        </div>
-
-        {/* MIDDLE: Video + section buttons (38%) */}
-        <div className="w-[38%] flex flex-col border-r border-border overflow-hidden">
+        {/* MIDDLE: Video + section buttons */}
+        <div className="flex-1 flex flex-col border-r border-border overflow-hidden">
 
           {/* Video area */}
           <div className="flex-shrink-0 bg-zinc-950">
@@ -2003,44 +1869,6 @@ export default function DataCorrection() {
                   </div>
                 )}
               </div>
-
-              {/* Horizontal ruler (横棒) */}
-              {rulerEnabled && (
-                <div
-                  className="absolute left-0 right-0 pointer-events-none z-10"
-                  style={{ top: `${rulerY}%`, overflow: "visible" }}
-                >
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: "-200%",
-                      right: "-200%",
-                      borderTop: "2px solid rgba(249, 115, 22, 0.85)",
-                      transform: `rotate(${rulerAngle}deg)`,
-                      transformOrigin: "center 0",
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Vertical ruler (縦棒) */}
-              {vrulerEnabled && (
-                <div
-                  className="absolute top-0 bottom-0 pointer-events-none z-10"
-                  style={{ left: `${vrulerX}%`, overflow: "visible" }}
-                >
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "-200%",
-                      bottom: "-200%",
-                      borderLeft: "2px solid rgba(59, 130, 246, 0.85)",
-                      transform: `rotate(${vrulerAngle}deg)`,
-                      transformOrigin: "center center",
-                    }}
-                  />
-                </div>
-              )}
 
               {/* Time overlay */}
               <div className="absolute top-1.5 right-1.5 bg-black/75 rounded px-1.5 py-0.5 pointer-events-none z-20">
@@ -2169,73 +1997,8 @@ export default function DataCorrection() {
                 )}
               </div>
 
-              {/* Ruler + BBOX toolbar row */}
+              {/* BBOX toolbar row */}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Horizontal ruler (横棒) */}
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rulerEnabled}
-                    onChange={(e) => setRulerEnabled(e.target.checked)}
-                    className="cursor-pointer accent-orange-500"
-                  />
-                  <Ruler className="h-3 w-3 text-zinc-400" />
-                  <span className="text-[10px] text-zinc-400">横棒</span>
-                </label>
-                {rulerEnabled && (
-                  <>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] text-zinc-500">位置</span>
-                      <input
-                        type="range" min={0} max={100} value={rulerY}
-                        onChange={(e) => setRulerY(parseInt(e.target.value))}
-                        className="w-16 h-1 accent-orange-500 cursor-pointer"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] text-zinc-500">角度</span>
-                      <input
-                        type="range" min={-45} max={45} value={rulerAngle}
-                        onChange={(e) => setRulerAngle(parseInt(e.target.value))}
-                        className="w-16 h-1 accent-orange-500 cursor-pointer"
-                      />
-                      <span className="text-[9px] text-zinc-500 w-6">{rulerAngle}°</span>
-                    </div>
-                  </>
-                )}
-
-                {/* Vertical ruler (縦棒) */}
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={vrulerEnabled}
-                    onChange={(e) => setVrulerEnabled(e.target.checked)}
-                    className="cursor-pointer accent-blue-500"
-                  />
-                  <span className="text-[10px] text-zinc-400">縦棒</span>
-                </label>
-                {vrulerEnabled && (
-                  <>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] text-zinc-500">位置</span>
-                      <input
-                        type="range" min={0} max={100} value={vrulerX}
-                        onChange={(e) => setVrulerX(parseInt(e.target.value))}
-                        className="w-16 h-1 accent-blue-500 cursor-pointer"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] text-zinc-500">角度</span>
-                      <input
-                        type="range" min={-45} max={45} value={vrulerAngle}
-                        onChange={(e) => setVrulerAngle(parseInt(e.target.value))}
-                        className="w-16 h-1 accent-blue-500 cursor-pointer"
-                      />
-                      <span className="text-[9px] text-zinc-500 w-6">{vrulerAngle}°</span>
-                    </div>
-                  </>
-                )}
-
                 {/* BBOX toolbar — only in editing mode */}
                 {isEditingMode && selectedCp && (
                   <div className="flex items-center gap-1 ml-auto">
