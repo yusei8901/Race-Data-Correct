@@ -781,7 +781,7 @@ export default function RaceList() {
                     <TableRow key={race.id} className={`hover:bg-muted/30 ${isChecked ? "bg-primary/5" : ""}`}>
                       <TableCell className="text-xs text-center font-medium">{race.venue}</TableCell>
                       <TableCell className="text-xs text-center font-bold">{race.race_number}R</TableCell>
-                      <TableCell className="text-xs text-left font-medium text-foreground truncate px-2" title={race.race_name}>
+                      <TableCell className="text-xs font-medium text-foreground truncate px-2 text-left pl-[20px]" title={race.race_name}>
                         {race.race_name || "-"}
                       </TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{getCourse(race)}</TableCell>
