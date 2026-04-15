@@ -719,10 +719,10 @@ export default function RaceList() {
             <TableHeader className="bg-muted/50 sticky top-0 z-10 backdrop-blur">
               <TableRow>
                 <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
-                <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
-                <TableHead style={{ width: "14%" }} className="text-center text-xs">レース名</TableHead>
+                <TableHead style={{ width: "6%" }} className="text-center text-xs">R</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-left text-xs">レース名</TableHead>
                 <TableHead style={{ width: "8%" }} className="text-center text-xs">コース</TableHead>
-                <TableHead style={{ width: "5%" }} className="text-center text-xs">距離</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-center text-xs">距離</TableHead>
                 <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 {isAdmin && (
                   <TableHead style={{ width: "3%" }} className="text-center">
@@ -781,7 +781,7 @@ export default function RaceList() {
                     <TableRow key={race.id} className={`hover:bg-muted/30 ${isChecked ? "bg-primary/5" : ""}`}>
                       <TableCell className="text-xs text-center font-medium">{race.venue}</TableCell>
                       <TableCell className="text-xs text-center font-bold">{race.race_number}R</TableCell>
-                      <TableCell className="text-xs font-medium text-foreground truncate px-2 text-left pl-[20px]" title={race.race_name}>
+                      <TableCell className="text-xs font-medium text-foreground truncate px-2 text-left" title={race.race_name}>
                         {race.race_name || "-"}
                       </TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{getCourse(race)}</TableCell>

@@ -1,0 +1,120 @@
+タイトル
+競馬データ補正アプリ：ステータスマスタ管理への移行とUI・一括操作機能の刷新
+
+コンテキスト
+競馬データ補正アプリのステータス管理を正規化し、race_statuses テーブルを使用したマスタ管理に移行します。これに伴い、フロントエンドの絞り込み機能、一覧テーブルのカラム、およびステータス一括変更ロジックを全面的に更新してください。
+
+1. データベーススキーマの変更と初期データ
+ステータスを「大区分（マスタ）」と「詳細イベント（トランザクション）」に分離して管理します。以下の構成でテーブルを作成・変更してください。
+
+race_statuses テーブル (Master)
+
+id: Integer (PK)
+
+status_code: String (ユニーク)
+
+display_name: String (表示名)
+
+tab_group: String (フロントの絞り込み用グループ名)
+
+投入データ (Seed) - race_statuses
+
+WAITING, 解析待機中, 待機中
+
+ANALYZING, 解析中, 待機中
+
+ANALYZED, 要補正, 要補正
+
+IN_REVIEW, レビュー待ち, 管理者対応待ち
+
+NEEDS_ATTENTION, 管理者対応, 管理者対応待ち
+
+CONFIRMED, データ確定, データ確定
+
+races テーブルの変更
+
+既存のstatusカラムを削除し、status_id (FK to race_statuses.id) を追加。
+
+event カラム (String/Enum): 状態の詳細を保持します。以下の値のみを許容してください。
+
+EDITING (補正中)
+
+REVISION_REQUESTED (修正要請)
+
+ANALYSIS_FAILED (解析失敗)
+
+MATCH_FAILED (突合失敗)
+
+ANALYSIS_REQUESTED (再解析要請)
+
+※該当しない場合は null
+
+detail カラム (Text): 修正要請のコメントや、エラーの理由などを保持します（nullable）。
+
+2. バックエンド：ロジックと型の修正 (FastAPI)
+StatusとEventのマッピング（重要）: status_code と event の関係は以下を想定しています。Pydanticモデルや更新ロジックで適切にハンドリングしてください。
+
+WAITING / ANALYZING / IN_REVIEW / CONFIRMED → eventは原則 null
+
+ANALYZED → eventは null, EDITING, REVISION_REQUESTED のいずれか
+
+NEEDS_ATTENTION → eventは ANALYSIS_FAILED, MATCH_FAILED, ANALYSIS_REQUESTED のいずれか
+
+一括更新機能: 複数のレースを選択してステータスを変更する機能を、新しい status_id と event の組み合わせに対応させてください。
+
+EDITINGロック解除: status_codeがANALYZEDかつeventがEDITINGのデータのうち、updated_at から30分経過したものは自動的に event = null に戻すバッチ的ロジック（または取得時の動的リセットロジック）を実装してください。
+
+APIレスポンス: レース一覧取得APIは、race_statuses テーブルをJOINして全ての情報を返すようにしてください。
+
+3. フロントエンド：絞り込み機能の刷新 (React)
+race-list.tsx の絞り込みボタンを以下の2段構成に変更してください。
+
+大枠メイン（タブ）: tab_group に基づいて絞り込み。
+
+すべて / データ確定 / 要補正 / 待機中 / 管理者対応待ち
+
+詳細の絞り込み（フィルター）: 選択中のタブに応じて、status_code または event に基づいて絞り込み。
+
+データ確定：なし
+
+要補正タブ：補正中(event: EDITING), 修正要請(event: REVISION_REQUESTED)
+
+待機中タブ：解析待機中(status_code: WAITING), 解析中(status_code: ANALYZING)
+
+管理者対応待ちタブ：レビュー待ち(status_code: IN_REVIEW), 解析失敗(event: ANALYSIS_FAILED), 突合失敗(event: MATCH_FAILED), 再解析要請(event: ANALYSIS_REQUESTED)
+
+4. フロントエンド：一覧テーブルの更新
+レース一覧テーブルのカラムを以下に変更してください。「解析オプション」に関するカラムと機能は完全に削除してください。
+
+表示カラム:
+
+チェックボックス
+
+競馬場
+
+R (ラウンド)
+
+レース名
+
+コース
+
+距離
+
+動画 (リンク/アイコン)
+
+ステータス (race_statuses.display_name)
+
+詳細 (event カラムの内容を日本語化して表示。nullの場合は「-」)
+
+内容 (detail カラムの内容を表示)
+
+担当者
+
+更新時間
+
+操作 (編集/再解析ボタンなど。CONFIRMED状態の場合は管理者にのみ編集導線を出すなど適切に制御)
+
+5. 注意事項
+既存のコードと新しいマスタ設計で型定義の不整合が起きないよう、TypeScriptのインターフェースとPydanticモデルを丁寧に更新してください。
+
+不明点、または既存の機能と競合して判断がつかない箇所があれば、勝手に進めず、必ず作業を止めて疑問点を出力してください。
