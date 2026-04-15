@@ -83,21 +83,21 @@ function getDerivedStatus(race: Race): DerivedStatus {
 
 function getStatusBadgeProps(status: DerivedStatus) {
   switch (status) {
-    // 待機中グループ → zinc
-    case "解析待機中": return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700",     label: "解析待機中" };
-    case "解析中":     return { className: "bg-zinc-800/70 text-zinc-300 border-zinc-600",     label: "解析中" };
+    // 待機中グループ → cyan（水色）
+    case "解析待機中": return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-700",    label: "解析待機中" };
+    case "解析中":     return { className: "bg-cyan-900/50 text-cyan-300 border-cyan-600",    label: "解析中" };
     // 要補正グループ → amber
-    case "要補正":     return { className: "bg-amber-900/40 text-amber-300 border-amber-700",  label: "要補正" };
-    case "補正中":     return { className: "bg-amber-900/50 text-amber-300 border-amber-700",  label: "補正中" };
-    case "修正要請":   return { className: "bg-amber-900/50 text-amber-300 border-amber-700",  label: "修正要請" };
+    case "要補正":     return { className: "bg-amber-900/40 text-amber-300 border-amber-700", label: "要補正" };
+    case "補正中":     return { className: "bg-amber-900/50 text-amber-300 border-amber-700", label: "補正中" };
+    case "修正要請":   return { className: "bg-amber-900/50 text-amber-300 border-amber-700", label: "修正要請" };
     // データ確定グループ → green
-    case "データ確定": return { className: "bg-green-900/40 text-green-400 border-green-800",  label: "データ確定" };
-    // 管理者対応グループ → orange
-    case "レビュー待ち": return { className: "bg-orange-900/40 text-orange-400 border-orange-700", label: "レビュー待ち" };
-    case "解析失敗":   return { className: "bg-orange-900/50 text-orange-400 border-orange-700", label: "解析失敗" };
-    case "突合失敗":   return { className: "bg-orange-900/50 text-orange-400 border-orange-700", label: "突合失敗" };
-    case "再解析要請": return { className: "bg-orange-900/50 text-orange-400 border-orange-700", label: "再解析要請" };
-    case "管理者対応": return { className: "bg-orange-900/30 text-orange-400 border-orange-800", label: "管理者対応" };
+    case "データ確定": return { className: "bg-green-900/40 text-green-400 border-green-800", label: "データ確定" };
+    // 管理者対応グループ → red（赤）
+    case "レビュー待ち": return { className: "bg-red-900/40 text-red-400 border-red-700",    label: "レビュー待ち" };
+    case "解析失敗":   return { className: "bg-red-900/50 text-red-400 border-red-700",       label: "解析失敗" };
+    case "突合失敗":   return { className: "bg-red-900/50 text-red-400 border-red-700",       label: "突合失敗" };
+    case "再解析要請": return { className: "bg-red-900/50 text-red-400 border-red-700",       label: "再解析要請" };
+    case "管理者対応": return { className: "bg-red-900/30 text-red-400 border-red-800",       label: "管理者対応" };
     default:           return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
   }
 }
@@ -105,11 +105,11 @@ function getStatusBadgeProps(status: DerivedStatus) {
 // ステータス列: status_codeベースのバッジ色（タブ色と統一）
 function getStatusCodeBadgeClass(statusCode: string | null | undefined): string {
   switch (statusCode) {
-    case "WAITING":         return "bg-zinc-800/60 text-zinc-400 border-zinc-700";
-    case "ANALYZING":       return "bg-zinc-800/70 text-zinc-300 border-zinc-600";
+    case "WAITING":         return "bg-cyan-900/40 text-cyan-400 border-cyan-700";
+    case "ANALYZING":       return "bg-cyan-900/50 text-cyan-300 border-cyan-600";
     case "ANALYZED":        return "bg-amber-900/40 text-amber-300 border-amber-700";
-    case "IN_REVIEW":       return "bg-orange-900/40 text-orange-400 border-orange-700";
-    case "NEEDS_ATTENTION": return "bg-orange-900/50 text-orange-400 border-orange-700";
+    case "IN_REVIEW":       return "bg-red-900/40 text-red-400 border-red-700";
+    case "NEEDS_ATTENTION": return "bg-red-900/50 text-red-400 border-red-700";
     case "CONFIRMED":       return "bg-green-900/40 text-green-400 border-green-800";
     default:                return "bg-muted text-muted-foreground border-border";
   }
@@ -273,27 +273,27 @@ const TABS: TabDef[] = [
   {
     key: "待機中",
     label: "待機中",
-    colorClass: "text-zinc-400",
-    activeClass: "bg-zinc-800/70 border-zinc-600/70 text-zinc-200 shadow-[0_0_8px_rgba(161,161,170,0.18)]",
-    badgeActiveClass: "bg-zinc-600/50 text-zinc-200",
+    colorClass: "text-cyan-400",
+    activeClass: "bg-cyan-900/35 border-cyan-500/70 text-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.25)]",
+    badgeActiveClass: "bg-cyan-600/50 text-cyan-100",
     matchFn: (r) => r.tab_group === "待機中",
     subFilters: [
-      { key: "解析待機中", label: "解析待機中", colorClass: "text-zinc-400", activeClass: "bg-zinc-700/60 border-zinc-500/70 text-zinc-200", matchFn: (r) => r.status_code === "WAITING" },
-      { key: "解析中",    label: "解析中",    colorClass: "text-zinc-400",  activeClass: "bg-zinc-700/60 border-zinc-500/70 text-zinc-200",  matchFn: (r) => r.status_code === "ANALYZING" },
+      { key: "解析待機中", label: "解析待機中", colorClass: "text-cyan-400", activeClass: "bg-cyan-900/50 border-cyan-500/70 text-cyan-200", matchFn: (r) => r.status_code === "WAITING" },
+      { key: "解析中",    label: "解析中",    colorClass: "text-cyan-400",  activeClass: "bg-cyan-900/50 border-cyan-500/70 text-cyan-200",  matchFn: (r) => r.status_code === "ANALYZING" },
     ],
   },
   {
     key: "管理者対応待ち",
     label: "管理者対応",
-    colorClass: "text-orange-400",
-    activeClass: "bg-orange-900/35 border-orange-500/70 text-orange-200 shadow-[0_0_12px_rgba(249,115,22,0.35)]",
-    badgeActiveClass: "bg-orange-600/50 text-orange-100",
+    colorClass: "text-red-400",
+    activeClass: "bg-red-900/35 border-red-500/70 text-red-200 shadow-[0_0_12px_rgba(239,68,68,0.35)]",
+    badgeActiveClass: "bg-red-600/50 text-red-100",
     matchFn: (r) => r.tab_group === "管理者対応待ち",
     subFilters: [
-      { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.status_code === "IN_REVIEW" },
-      { key: "解析失敗",    label: "解析失敗",    colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.event === "ANALYSIS_FAILED" },
-      { key: "突合失敗",    label: "突合失敗",    colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.event === "MATCH_FAILED" },
-      { key: "再解析要請",  label: "再解析要請",  colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
+      { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-red-400", activeClass: "bg-red-900/50 border-red-500/70 text-red-200", matchFn: (r) => r.status_code === "IN_REVIEW" },
+      { key: "解析失敗",    label: "解析失敗",    colorClass: "text-red-400",   activeClass: "bg-red-900/50 border-red-500/70 text-red-200", matchFn: (r) => r.event === "ANALYSIS_FAILED" },
+      { key: "突合失敗",    label: "突合失敗",    colorClass: "text-red-400",   activeClass: "bg-red-900/50 border-red-500/70 text-red-200", matchFn: (r) => r.event === "MATCH_FAILED" },
+      { key: "再解析要請",  label: "再解析要請",  colorClass: "text-red-400",   activeClass: "bg-red-900/50 border-red-500/70 text-red-200", matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
     ],
   },
 ];
@@ -751,7 +751,7 @@ export default function RaceList() {
           {TABS.map((tab) => {
             const count = tabCounts[tab.key] ?? 0;
             const isActive = tabFilter === tab.key;
-            const hasAlert = tab.key === "管理者対応待ち" && count > 0;
+            const hasOrangeDot = (tab.key === "管理者対応待ち" || tab.key === "要補正") && count > 0;
             return (
               <button
                 key={tab.key}
@@ -763,17 +763,17 @@ export default function RaceList() {
                 className={`relative flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold border transition-all duration-150 cursor-pointer whitespace-nowrap ${
                   isActive
                     ? tab.activeClass
-                    : `border-zinc-700/50 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 hover:border-zinc-600 ${hasAlert ? "border-orange-800/60 text-orange-500/70" : ""}`
+                    : `border-zinc-700/50 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 hover:border-zinc-600 ${hasOrangeDot ? "border-orange-800/60 text-orange-500/70" : ""}`
                 }`}
               >
-                {hasAlert && !isActive && (
+                {hasOrangeDot && !isActive && (
                   <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.8)]" />
                 )}
                 <span>{tab.label}</span>
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center transition-all ${
                   isActive
                     ? tab.badgeActiveClass
-                    : hasAlert
+                    : hasOrangeDot
                       ? "bg-orange-900/60 text-orange-300"
                       : "bg-zinc-800 text-zinc-500"
                 }`}>
@@ -881,11 +881,11 @@ export default function RaceList() {
                   </TableHead>
                 )}
                 <TableHead style={{ width: "9%" }} className="text-xs">ステータス</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-xs">詳細</TableHead>
-                <TableHead style={{ width: "9%" }} className="text-xs">内容</TableHead>
-                <TableHead style={{ width: "6%" }} className="text-xs">担当者</TableHead>
+                <TableHead style={{ width: "8%" }} className="text-xs">詳細</TableHead>
+                <TableHead style={{ width: "18%" }} className="text-xs">内容</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-xs">担当者</TableHead>
                 <TableHead style={{ width: "4%" }} className="text-xs">更新</TableHead>
-                <TableHead style={{ width: isAdmin ? "25%" : "30%" }} className="text-center text-xs">操作</TableHead>
+                <TableHead style={{ width: isAdmin ? "16%" : "21%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -957,13 +957,22 @@ export default function RaceList() {
                           {race.display_name || badgeProps.label}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      <TableCell className="text-xs text-white whitespace-nowrap">
                         {getEventLabel(race.event)}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[160px]">
-                        <span className="block truncate" title={race.detail ?? undefined}>
-                          {race.detail || "-"}
-                        </span>
+                      <TableCell className="text-xs max-w-[180px] py-1.5">
+                        {race.detail ? (
+                          <div className="relative group/detail">
+                            <span className="block text-white leading-snug line-clamp-2 cursor-default">
+                              {race.detail}
+                            </span>
+                            <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover/detail:block bg-zinc-800 border border-zinc-600 rounded-md p-2.5 text-xs text-white shadow-xl w-[320px] whitespace-normal leading-relaxed pointer-events-none">
+                              {race.detail}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-zinc-500">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
