@@ -3,6 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { raceEventTable } from "./race_event";
 import { usersTable } from "./users";
+import { raceStatusesTable } from "./race_statuses";
 
 export const raceTable = pgTable("race", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -15,7 +16,9 @@ export const raceTable = pgTable("race", {
   direction: varchar("direction", { length: 20 }),
   weather: varchar("weather", { length: 20 }),
   trackCondition: varchar("track_condition", { length: 20 }),
-  status: varchar("status", { length: 30 }).notNull().default("PENDING"),
+  statusId: integer("status_id").notNull().references(() => raceStatusesTable.id),
+  event: varchar("event", { length: 30 }),
+  detail: varchar("detail", { length: 500 }),
   currentAnalysisResultId: uuid("current_analysis_result_id"),
   currentCorrectionSessionId: uuid("current_correction_session_id"),
   correctedBy: uuid("corrected_by").references(() => usersTable.id, { onDelete: "set null" }),

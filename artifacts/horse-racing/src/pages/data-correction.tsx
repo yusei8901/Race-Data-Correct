@@ -609,13 +609,13 @@ function AnalysisOptionDialog({
 
         <div className="flex gap-2 justify-between">
           <div className="flex gap-2">
-            {isAdmin && raceStatus !== "未処理" && (
+            {isAdmin && raceStatus !== "解析待機中" && (
               <Button size="sm" onClick={onReanalyze} disabled={saving || fetching}
                 className="h-8 text-xs cursor-pointer gap-1.5 bg-red-800 hover:bg-red-700 text-white border-0">
                 <RefreshCw className="h-3 w-3" />再解析
               </Button>
             )}
-            {!isAdmin && raceStatus !== "未処理" && (
+            {!isAdmin && raceStatus !== "解析待機中" && (
               showReanalysisForm ? (
                 <Button size="sm" onClick={handleReanalysisRequest}
                   disabled={saving || fetching || (reanalysisReason === "その他" && !comment.trim())}
@@ -1485,7 +1485,7 @@ export default function DataCorrection() {
   };
 
   const raceTimeFromVideo = videoTime - effectiveVideoOffset;
-  const canStartCorrection = raceStatus === "待機中" || raceStatus === "修正要請" || raceStatus === "レビュー待ち" || (raceStatus === "データ確定" && isAdmin);
+  const canStartCorrection = raceStatus === "要補正" || raceStatus === "修正要請" || raceStatus === "レビュー待ち" || (raceStatus === "データ確定" && isAdmin);
 
   // Duplicate horse number validation
   const hasDuplicateHorseNumbers = useMemo(() => {
@@ -1527,7 +1527,8 @@ export default function DataCorrection() {
                   variant="outline"
                   className={`text-[10px] cursor-pointer ${
                     raceStatus === "補正中" ? "border-cyan-700 text-cyan-400 bg-cyan-900/20"
-                    : raceStatus === "待機中" ? "border-cyan-700 text-cyan-300 bg-cyan-900/10"
+                    : raceStatus === "要補正" ? "border-amber-700 text-amber-300 bg-amber-900/10"
+                    : raceStatus === "解析待機中" ? "border-zinc-700 text-zinc-400 bg-zinc-900/10"
                     : raceStatus === "レビュー待ち" ? "border-purple-700 text-purple-400 bg-purple-900/20"
                     : raceStatus === "修正要請" ? "border-orange-700 text-orange-400 bg-orange-900/20"
                     : raceStatus === "データ確定" ? "border-green-700 text-green-400 bg-green-900/20"

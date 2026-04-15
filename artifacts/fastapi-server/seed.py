@@ -452,13 +452,29 @@ def seed():
             event_id = get_or_create_event(race_date, venue, rtype)
 
             race_id = str(uuid.uuid4())
+            # Map old-style status to new status_code + event
+            OLD_TO_NEW = {
+                "PENDING":            ("WAITING",         None),
+                "ANALYZING":          ("ANALYZING",       None),
+                "ANALYSIS_FAILED":    ("NEEDS_ATTENTION", "ANALYSIS_FAILED"),
+                "ANALYZED":           ("ANALYZED",        None),
+                "MATCH_FAILED":       ("NEEDS_ATTENTION", "MATCH_FAILED"),
+                "CORRECTING":         ("ANALYZED",        "EDITING"),
+                "CORRECTED":          ("IN_REVIEW",       None),
+                "REVISION_REQUESTED": ("ANALYZED",        "REVISION_REQUESTED"),
+                "CONFIRMED":          ("CONFIRMED",       None),
+                "ANALYSIS_REQUESTED": ("NEEDS_ATTENTION", "ANALYSIS_REQUESTED"),
+            }
+            sc, ev = OLD_TO_NEW.get(status, ("WAITING", None))
             cur.execute(
                 """INSERT INTO race
                    (id, event_id, race_number, race_name, start_time, surface_type,
-                    distance, direction, weather, track_condition, status)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    distance, direction, weather, track_condition,
+                    status_id, event)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           (SELECT id FROM race_statuses WHERE status_code = %s), %s)""",
                 (race_id, event_id, rnum, rname, stime, surface,
-                 dist, direction, weather, cond, status),
+                 dist, direction, weather, cond, sc, ev),
             )
 
             # race_video: UNLINKED or LINKED
@@ -610,13 +626,28 @@ def seed():
         vc = VENUE_CODE_MAP[venue]
         eid = get_or_create_event(race_date_test, venue, rtype)
         race_id = str(uuid.uuid4())
+        OLD_TO_NEW_TP = {
+            "PENDING":            ("WAITING",         None),
+            "ANALYZING":          ("ANALYZING",       None),
+            "ANALYSIS_FAILED":    ("NEEDS_ATTENTION", "ANALYSIS_FAILED"),
+            "ANALYZED":           ("ANALYZED",        None),
+            "MATCH_FAILED":       ("NEEDS_ATTENTION", "MATCH_FAILED"),
+            "CORRECTING":         ("ANALYZED",        "EDITING"),
+            "CORRECTED":          ("IN_REVIEW",       None),
+            "REVISION_REQUESTED": ("ANALYZED",        "REVISION_REQUESTED"),
+            "CONFIRMED":          ("CONFIRMED",       None),
+            "ANALYSIS_REQUESTED": ("NEEDS_ATTENTION", "ANALYSIS_REQUESTED"),
+        }
+        sc_tp, ev_tp = OLD_TO_NEW_TP.get(race_status, ("WAITING", None))
         cur.execute(
             """INSERT INTO race
                (id, event_id, race_number, race_name, start_time, surface_type,
-                distance, direction, weather, track_condition, status)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                distance, direction, weather, track_condition,
+                status_id, event)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                       (SELECT id FROM race_statuses WHERE status_code = %s), %s)""",
             (race_id, eid, rnum, rname, stime, surface,
-             dist, direction, weather, cond, race_status),
+             dist, direction, weather, cond, sc_tp, ev_tp),
         )
         video_id = str(uuid.uuid4())
         sp = f"gs://furlong-bucket/{race_date_test.replace('-','')}/{vc}_{rnum:02d}.mp4"

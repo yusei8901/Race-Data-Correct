@@ -479,16 +479,58 @@ components:
           type: ["string", "null"]
         start_time:
           type: ["string", "null"]
+        status_code:
+          type: string
+          description: "WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED"
+        status_id:
+          type: integer
+        tab_group:
+          type: string
+          description: "待機中 | 要補正 | 管理者対応待ち | データ確定"
+        event:
+          type: ["string", "null"]
+          description: "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED"
+        detail:
+          type: ["string", "null"]
+        display_status:
+          type: string
+          description: "解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定"
         status:
           type: string
-          description: "未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"
-        video_status:
-          type: ["string", "null"]
+          description: "Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED"
         video_url:
           type: ["string", "null"]
-        analysis_status:
-          type: ["string", "null"]
         assigned_user:
+          type: ["string", "null"]
+        locked_by:
+          type: ["string", "null"]
+        video_raw_status:
+          type: ["string", "null"]
+          description: "UNLINKED | LINKED"
+        video_display_status:
+          type: ["string", "null"]
+          description: "未連携 | 連携済み"
+        confirmed_at:
+          type: ["string", "null"]
+        confirmed_by:
+          type: ["string", "null"]
+        correction_request_comment:
+          type: ["string", "null"]
+        reanalysis_reason:
+          type: ["string", "null"]
+        reanalysis_comment:
+          type: ["string", "null"]
+        analysis_failure_reason:
+          type: ["string", "null"]
+        video_goal_time_raw:
+          type: ["number", "null"]
+        preset_name:
+          type: ["string", "null"]
+        preset_id:
+          type: ["string", "null"]
+        race_id_num:
+          type: ["integer", "null"]
+        venue_code:
           type: ["string", "null"]
         updated_at:
           type: string
@@ -503,6 +545,10 @@ components:
         - race_name
         - surface_type
         - distance
+        - status_code
+        - status_id
+        - tab_group
+        - display_status
         - status
         - updated_at
         - created_at
@@ -524,11 +570,15 @@ components:
           type: array
           items:
             type: string
-        status:
+        status_code:
           type: string
+          description: "WAITING | ANALYZED | IN_REVIEW | CONFIRMED"
+        event:
+          type: ["string", "null"]
+          description: "EDITING | REVISION_REQUESTED | null"
       required:
         - race_ids
-        - status
+        - status_code
 
     BatchUpdateResult:
       type: object
@@ -543,13 +593,23 @@ components:
       properties:
         total:
           type: integer
-        completed:
-          type: integer
-        in_progress:
+        confirmed:
           type: integer
         needs_correction:
           type: integer
-        review:
+        waiting:
+          type: integer
+        admin_pending:
+          type: integer
+        editing:
+          type: integer
+        revision_requested:
+          type: integer
+        analysis_failed:
+          type: integer
+        match_failed:
+          type: integer
+        analysis_requested:
           type: integer
         by_venue:
           type: array
@@ -565,10 +625,10 @@ components:
               - count
       required:
         - total
-        - completed
-        - in_progress
+        - confirmed
         - needs_correction
-        - review
+        - waiting
+        - admin_pending
         - by_venue
 
     RaceEntry:

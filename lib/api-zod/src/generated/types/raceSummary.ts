@@ -9,9 +9,14 @@ import type { RaceSummaryByVenueItem } from "./raceSummaryByVenueItem";
 
 export interface RaceSummary {
   total: number;
-  completed: number;
-  in_progress: number;
+  confirmed: number;
   needs_correction: number;
-  review: number;
+  waiting: number;
+  admin_pending: number;
+  editing?: number;
+  revision_requested?: number;
+  analysis_failed?: number;
+  match_failed?: number;
+  analysis_requested?: number;
   by_venue: RaceSummaryByVenueItem[];
 }

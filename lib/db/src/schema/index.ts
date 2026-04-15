@@ -1,5 +1,6 @@
 export * from "./race_category";
 export * from "./race_event";
+export * from "./race_statuses";
 export * from "./race";
 export * from "./race_video";
 export * from "./venue_weather_preset";

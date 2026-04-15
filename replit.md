@@ -63,20 +63,27 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 ### Analysis options
 - `analysis_option` — Per-race analysis params (race×video unique). FK → race, race_video, venue_weather_preset
 
-## English Status Codes (race.status) — 10 display statuses
+## New Status System (race_statuses master table + event field)
 
-| Code | Display (JP) | Note |
-|---|---|---|
-| PENDING | 未処理 | GCSに動画配置済み、解析未実行 |
-| ANALYZING | 解析中 | 解析ジョブ実行中 |
-| ANALYSIS_FAILED | 解析失敗 | 解析ジョブがエラー終了 |
-| ANALYZED | 待機中 | 解析完了、補正未実施 |
-| MATCH_FAILED | 突合失敗 | 公式データ突合に失敗 |
-| CORRECTING | 補正中 | データ補正画面で編集中 |
-| CORRECTED | レビュー待ち | 補正完了、データ確定待ち（提出） |
-| REVISION_REQUESTED | 修正要請 | 管理者差し戻し |
-| CONFIRMED | データ確定 | 確定済み（confirmed_by=user.id, confirmed_at） |
-| ANALYSIS_REQUESTED | 再解析要請 | 再解析要請がされた状態 |
+`race` now has `status_id` (FK → race_statuses), `event` (nullable varchar), `detail` (text).
+`race_statuses` has 6 rows: WAITING, ANALYZING, ANALYZED, IN_REVIEW, NEEDS_ATTENTION, CONFIRMED.
+`display_status` is computed server-side from `status_code + event`.
+
+| status_code | event | display_status (JP) | tab_group |
+|---|---|---|---|
+| WAITING | null | 解析待機中 | 待機中 |
+| ANALYZING | null | 解析中 | 待機中 |
+| ANALYZED | null | 要補正 | 要補正 |
+| ANALYZED | EDITING | 補正中 | 要補正 |
+| ANALYZED | REVISION_REQUESTED | 修正要請 | 要補正 |
+| IN_REVIEW | null | レビュー待ち | 管理者対応待ち |
+| NEEDS_ATTENTION | ANALYSIS_FAILED | 解析失敗 | 管理者対応待ち |
+| NEEDS_ATTENTION | MATCH_FAILED | 突合失敗 | 管理者対応待ち |
+| NEEDS_ATTENTION | ANALYSIS_REQUESTED | 再解析要請 | 管理者対応待ち |
+| CONFIRMED | null | データ確定 | データ確定 |
+
+Race list uses 5-tab system: 総レース / データ確定 / 要補正 / 待機中 / 管理者対応待ち.
+Each tab with subFilters (except 総レース/データ確定) shows detailed event-level filters.
 
 ## FastAPI Routes (all prefixed `/fastapi`) — PENDING migration to new schema (Task #5)
 
@@ -115,7 +122,7 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 
 ## Conditional Buttons by Status/Role
 
-- 待機中: 補正開始 (all users)
+- 要補正: 補正開始 (all users)
 - 補正中 (own lock): 一時保存, 補正完了, キャンセル; 突合申請/再解析申請 (editing mode only)
 - 補正中 (other lock): 強制ロック解除 (admin only)
 - レビュー待ち: データ確定 (admin, green), 修正要請 (admin)

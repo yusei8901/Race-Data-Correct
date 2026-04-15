@@ -38,13 +38,48 @@ export const GetRacesResponseItem = zod.object({
   weather: zod.string().nullish(),
   condition: zod.string().nullish(),
   start_time: zod.string().nullish(),
+  status_code: zod
+    .string()
+    .describe(
+      "WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED",
+    ),
+  status_id: zod.number(),
+  tab_group: zod
+    .string()
+    .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  event: zod
+    .string()
+    .nullish()
+    .describe(
+      "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED",
+    ),
+  detail: zod.string().nullish(),
+  display_status: zod
+    .string()
+    .describe(
+      "解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定",
+    ),
   status: zod
     .string()
-    .describe("未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"),
-  video_status: zod.string().nullish(),
+    .describe(
+      "Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED",
+    ),
   video_url: zod.string().nullish(),
-  analysis_status: zod.string().nullish(),
   assigned_user: zod.string().nullish(),
+  locked_by: zod.string().nullish(),
+  video_raw_status: zod.string().nullish().describe("UNLINKED | LINKED"),
+  video_display_status: zod.string().nullish().describe("未連携 | 連携済み"),
+  confirmed_at: zod.string().nullish(),
+  confirmed_by: zod.string().nullish(),
+  correction_request_comment: zod.string().nullish(),
+  reanalysis_reason: zod.string().nullish(),
+  reanalysis_comment: zod.string().nullish(),
+  analysis_failure_reason: zod.string().nullish(),
+  video_goal_time_raw: zod.number().nullish(),
+  preset_name: zod.string().nullish(),
+  preset_id: zod.string().nullish(),
+  race_id_num: zod.number().nullish(),
+  venue_code: zod.string().nullish(),
   updated_at: zod.string(),
   created_at: zod.string(),
 });
@@ -55,7 +90,10 @@ export const GetRacesResponse = zod.array(GetRacesResponseItem);
  */
 export const BatchUpdateRacesBody = zod.object({
   race_ids: zod.array(zod.string()),
-  status: zod.string(),
+  status_code: zod
+    .string()
+    .describe("WAITING | ANALYZED | IN_REVIEW | CONFIRMED"),
+  event: zod.string().nullish().describe("EDITING | REVISION_REQUESTED | null"),
 });
 
 export const BatchUpdateRacesResponse = zod.object({
@@ -71,10 +109,15 @@ export const GetRaceSummaryQueryParams = zod.object({
 
 export const GetRaceSummaryResponse = zod.object({
   total: zod.number(),
-  completed: zod.number(),
-  in_progress: zod.number(),
+  confirmed: zod.number(),
   needs_correction: zod.number(),
-  review: zod.number(),
+  waiting: zod.number(),
+  admin_pending: zod.number(),
+  editing: zod.number().optional(),
+  revision_requested: zod.number().optional(),
+  analysis_failed: zod.number().optional(),
+  match_failed: zod.number().optional(),
+  analysis_requested: zod.number().optional(),
   by_venue: zod.array(
     zod.object({
       venue: zod.string(),
@@ -103,13 +146,48 @@ export const GetRaceResponse = zod.object({
   weather: zod.string().nullish(),
   condition: zod.string().nullish(),
   start_time: zod.string().nullish(),
+  status_code: zod
+    .string()
+    .describe(
+      "WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED",
+    ),
+  status_id: zod.number(),
+  tab_group: zod
+    .string()
+    .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  event: zod
+    .string()
+    .nullish()
+    .describe(
+      "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED",
+    ),
+  detail: zod.string().nullish(),
+  display_status: zod
+    .string()
+    .describe(
+      "解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定",
+    ),
   status: zod
     .string()
-    .describe("未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"),
-  video_status: zod.string().nullish(),
+    .describe(
+      "Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED",
+    ),
   video_url: zod.string().nullish(),
-  analysis_status: zod.string().nullish(),
   assigned_user: zod.string().nullish(),
+  locked_by: zod.string().nullish(),
+  video_raw_status: zod.string().nullish().describe("UNLINKED | LINKED"),
+  video_display_status: zod.string().nullish().describe("未連携 | 連携済み"),
+  confirmed_at: zod.string().nullish(),
+  confirmed_by: zod.string().nullish(),
+  correction_request_comment: zod.string().nullish(),
+  reanalysis_reason: zod.string().nullish(),
+  reanalysis_comment: zod.string().nullish(),
+  analysis_failure_reason: zod.string().nullish(),
+  video_goal_time_raw: zod.number().nullish(),
+  preset_name: zod.string().nullish(),
+  preset_id: zod.string().nullish(),
+  race_id_num: zod.number().nullish(),
+  venue_code: zod.string().nullish(),
   updated_at: zod.string(),
   created_at: zod.string(),
 });
@@ -140,13 +218,48 @@ export const UpdateRaceResponse = zod.object({
   weather: zod.string().nullish(),
   condition: zod.string().nullish(),
   start_time: zod.string().nullish(),
+  status_code: zod
+    .string()
+    .describe(
+      "WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED",
+    ),
+  status_id: zod.number(),
+  tab_group: zod
+    .string()
+    .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  event: zod
+    .string()
+    .nullish()
+    .describe(
+      "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED",
+    ),
+  detail: zod.string().nullish(),
+  display_status: zod
+    .string()
+    .describe(
+      "解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定",
+    ),
   status: zod
     .string()
-    .describe("未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"),
-  video_status: zod.string().nullish(),
+    .describe(
+      "Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED",
+    ),
   video_url: zod.string().nullish(),
-  analysis_status: zod.string().nullish(),
   assigned_user: zod.string().nullish(),
+  locked_by: zod.string().nullish(),
+  video_raw_status: zod.string().nullish().describe("UNLINKED | LINKED"),
+  video_display_status: zod.string().nullish().describe("未連携 | 連携済み"),
+  confirmed_at: zod.string().nullish(),
+  confirmed_by: zod.string().nullish(),
+  correction_request_comment: zod.string().nullish(),
+  reanalysis_reason: zod.string().nullish(),
+  reanalysis_comment: zod.string().nullish(),
+  analysis_failure_reason: zod.string().nullish(),
+  video_goal_time_raw: zod.number().nullish(),
+  preset_name: zod.string().nullish(),
+  preset_id: zod.string().nullish(),
+  race_id_num: zod.number().nullish(),
+  venue_code: zod.string().nullish(),
   updated_at: zod.string(),
   created_at: zod.string(),
 });
@@ -182,13 +295,48 @@ export const StartCorrectionResponse = zod.object({
   weather: zod.string().nullish(),
   condition: zod.string().nullish(),
   start_time: zod.string().nullish(),
+  status_code: zod
+    .string()
+    .describe(
+      "WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED",
+    ),
+  status_id: zod.number(),
+  tab_group: zod
+    .string()
+    .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  event: zod
+    .string()
+    .nullish()
+    .describe(
+      "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED",
+    ),
+  detail: zod.string().nullish(),
+  display_status: zod
+    .string()
+    .describe(
+      "解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定",
+    ),
   status: zod
     .string()
-    .describe("未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"),
-  video_status: zod.string().nullish(),
+    .describe(
+      "Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED",
+    ),
   video_url: zod.string().nullish(),
-  analysis_status: zod.string().nullish(),
   assigned_user: zod.string().nullish(),
+  locked_by: zod.string().nullish(),
+  video_raw_status: zod.string().nullish().describe("UNLINKED | LINKED"),
+  video_display_status: zod.string().nullish().describe("未連携 | 連携済み"),
+  confirmed_at: zod.string().nullish(),
+  confirmed_by: zod.string().nullish(),
+  correction_request_comment: zod.string().nullish(),
+  reanalysis_reason: zod.string().nullish(),
+  reanalysis_comment: zod.string().nullish(),
+  analysis_failure_reason: zod.string().nullish(),
+  video_goal_time_raw: zod.number().nullish(),
+  preset_name: zod.string().nullish(),
+  preset_id: zod.string().nullish(),
+  race_id_num: zod.number().nullish(),
+  venue_code: zod.string().nullish(),
   updated_at: zod.string(),
   created_at: zod.string(),
 });
@@ -213,13 +361,48 @@ export const CompleteCorrectionResponse = zod.object({
   weather: zod.string().nullish(),
   condition: zod.string().nullish(),
   start_time: zod.string().nullish(),
+  status_code: zod
+    .string()
+    .describe(
+      "WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED",
+    ),
+  status_id: zod.number(),
+  tab_group: zod
+    .string()
+    .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  event: zod
+    .string()
+    .nullish()
+    .describe(
+      "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED",
+    ),
+  detail: zod.string().nullish(),
+  display_status: zod
+    .string()
+    .describe(
+      "解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定",
+    ),
   status: zod
     .string()
-    .describe("未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー"),
-  video_status: zod.string().nullish(),
+    .describe(
+      "Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED",
+    ),
   video_url: zod.string().nullish(),
-  analysis_status: zod.string().nullish(),
   assigned_user: zod.string().nullish(),
+  locked_by: zod.string().nullish(),
+  video_raw_status: zod.string().nullish().describe("UNLINKED | LINKED"),
+  video_display_status: zod.string().nullish().describe("未連携 | 連携済み"),
+  confirmed_at: zod.string().nullish(),
+  confirmed_by: zod.string().nullish(),
+  correction_request_comment: zod.string().nullish(),
+  reanalysis_reason: zod.string().nullish(),
+  reanalysis_comment: zod.string().nullish(),
+  analysis_failure_reason: zod.string().nullish(),
+  video_goal_time_raw: zod.number().nullish(),
+  preset_name: zod.string().nullish(),
+  preset_id: zod.string().nullish(),
+  race_id_num: zod.number().nullish(),
+  venue_code: zod.string().nullish(),
   updated_at: zod.string(),
   created_at: zod.string(),
 });

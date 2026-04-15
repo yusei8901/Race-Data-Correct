@@ -25,16 +25,60 @@ export interface Race {
   condition?: string | null;
   /** @nullable */
   start_time?: string | null;
-  /** 未処理 | 補正中 | データ補正 | 補正完了 | 修正要求 | レビュー */
-  status: string;
+  /** WAITING | ANALYZING | ANALYZED | IN_REVIEW | NEEDS_ATTENTION | CONFIRMED */
+  status_code: string;
+  status_id: number;
+  /** 待機中 | 要補正 | 管理者対応待ち | データ確定 */
+  tab_group: string;
+  /**
+   * EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED
+   * @nullable
+   */
+  event?: string | null;
   /** @nullable */
-  video_status?: string | null;
+  detail?: string | null;
+  /** 解析待機中 | 解析中 | 要補正 | 補正中 | 修正要請 | レビュー待ち | 解析失敗 | 突合失敗 | 再解析要請 | データ確定 */
+  display_status: string;
+  /** Backward-compat: PENDING | ANALYZING | ANALYSIS_FAILED | ANALYZED | MATCH_FAILED | CORRECTING | CORRECTED | REVISION_REQUESTED | CONFIRMED | ANALYSIS_REQUESTED */
+  status: string;
   /** @nullable */
   video_url?: string | null;
   /** @nullable */
-  analysis_status?: string | null;
-  /** @nullable */
   assigned_user?: string | null;
+  /** @nullable */
+  locked_by?: string | null;
+  /**
+   * UNLINKED | LINKED
+   * @nullable
+   */
+  video_raw_status?: string | null;
+  /**
+   * 未連携 | 連携済み
+   * @nullable
+   */
+  video_display_status?: string | null;
+  /** @nullable */
+  confirmed_at?: string | null;
+  /** @nullable */
+  confirmed_by?: string | null;
+  /** @nullable */
+  correction_request_comment?: string | null;
+  /** @nullable */
+  reanalysis_reason?: string | null;
+  /** @nullable */
+  reanalysis_comment?: string | null;
+  /** @nullable */
+  analysis_failure_reason?: string | null;
+  /** @nullable */
+  video_goal_time_raw?: number | null;
+  /** @nullable */
+  preset_name?: string | null;
+  /** @nullable */
+  preset_id?: string | null;
+  /** @nullable */
+  race_id_num?: number | null;
+  /** @nullable */
+  venue_code?: string | null;
   updated_at: string;
   created_at: string;
 }

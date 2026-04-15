@@ -6,36 +6,66 @@ import datetime
 
 router = APIRouter(prefix="/fastapi")
 
-# ── Status display mapping ──────────────────────────────────────────────────
+# ── Status display helpers ───────────────────────────────────────
 
-# English DB code → (video_col_status, analysis_col_status, display_status)
-# Used only when video_raw == "LINKED"
-STATUS_DISPLAY = {
-    "PENDING":            ("連携済み", "",          "未処理"),
-    "ANALYZING":          ("連携済み", "解析中",     "解析中"),
-    "ANALYSIS_FAILED":    ("連携済み", "解析失敗",   "解析失敗"),
-    "ANALYZED":           ("連携済み", "完了",       "待機中"),
-    "MATCH_FAILED":       ("連携済み", "突合失敗",   "突合失敗"),
-    "CORRECTING":         ("連携済み", "完了",       "補正中"),
-    "CORRECTED":          ("連携済み", "完了",       "レビュー待ち"),
-    "REVISION_REQUESTED": ("連携済み", "完了",       "修正要請"),
-    "CONFIRMED":          ("連携済み", "完了",       "データ確定"),
-    "ANALYSIS_REQUESTED": ("連携済み", "再解析要請", "再解析要請"),
+EVENT_DISPLAY: dict = {
+    "EDITING":            "補正中",
+    "REVISION_REQUESTED": "修正要請",
+    "ANALYSIS_FAILED":    "解析失敗",
+    "MATCH_FAILED":       "突合失敗",
+    "ANALYSIS_REQUESTED": "再解析要請",
+}
+
+STATUS_CODE_DISPLAY: dict = {
+    "WAITING":         "解析待機中",
+    "ANALYZING":       "解析中",
+    "ANALYZED":        "要補正",
+    "IN_REVIEW":       "レビュー待ち",
+    "NEEDS_ATTENTION": "管理者対応",
+    "CONFIRMED":       "データ確定",
 }
 
 
-def compute_display_status(english_status: str, video_raw: str, prev_status: Optional[str]) -> tuple:
-    """Return (video_status, analysis_status, display_status).
-    If video is UNLINKED, race is always '未処理' regardless of DB status.
-    ANALYZED and beyond require video to be LINKED first.
-    """
-    if video_raw != "LINKED":
-        return ("未連携", "", "未処理")
-    vid, ana, ds = STATUS_DISPLAY.get(english_status, ("連携済み", "", "未処理"))
-    return vid, ana, ds
+def get_display_status(status_code: str, event: Optional[str]) -> str:
+    if event and event in EVENT_DISPLAY:
+        return EVENT_DISPLAY[event]
+    return STATUS_CODE_DISPLAY.get(status_code, status_code)
 
 
-# ── Shared race query ───────────────────────────────────────────────────────
+def get_compat_status(status_code: str, event: Optional[str]) -> str:
+    """Old-style status string for backward compat."""
+    if status_code == "WAITING":         return "PENDING"
+    if status_code == "ANALYZING":       return "ANALYZING"
+    if status_code == "ANALYZED":
+        if event == "EDITING":            return "CORRECTING"
+        if event == "REVISION_REQUESTED": return "REVISION_REQUESTED"
+        return "ANALYZED"
+    if status_code == "IN_REVIEW":       return "CORRECTED"
+    if status_code == "NEEDS_ATTENTION":
+        if event == "ANALYSIS_FAILED":    return "ANALYSIS_FAILED"
+        if event == "MATCH_FAILED":       return "MATCH_FAILED"
+        if event == "ANALYSIS_REQUESTED": return "ANALYSIS_REQUESTED"
+        return "ANALYSIS_FAILED"
+    if status_code == "CONFIRMED":       return "CONFIRMED"
+    return "PENDING"
+
+
+def _set_status(cur, race_id: str, status_code: str, event: Optional[str] = None,
+                detail: Optional[str] = None) -> Optional[dict]:
+    cur.execute(
+        """UPDATE race
+           SET status_id = (SELECT id FROM race_statuses WHERE status_code = %s),
+               event = %s,
+               detail = %s,
+               updated_at = NOW()
+           WHERE id = %s
+           RETURNING id""",
+        (status_code, event, detail, race_id),
+    )
+    return cur.fetchone()
+
+
+# ── Shared race query ───────────────────────────────────────
 
 RACE_QUERY = """
 SELECT
@@ -52,7 +82,12 @@ SELECT
     r.weather,
     r.track_condition            AS condition,
     r.start_time::text           AS start_time,
-    r.status                     AS english_status,
+    rs.status_code,
+    rs.display_name              AS status_display_name,
+    rs.tab_group,
+    r.status_id,
+    r.event,
+    r.detail,
     r.confirmed_at::text         AS confirmed_at,
     r.confirmed_by::text         AS confirmed_by,
     r.updated_at::text,
@@ -60,7 +95,6 @@ SELECT
     rv.vid_status                AS video_raw_status,
     cs.locked_by_name,
     cs.session_started_at,
-    rsh_prev.prev_status,
     rsh_rev.correction_request_comment,
     rsh_rea.reanalysis_reason,
     rsh_rea.reanalysis_comment,
@@ -73,6 +107,7 @@ SELECT
 FROM race r
 JOIN race_event re ON r.event_id = re.id
 JOIN race_category rc ON re.category_id = rc.id
+JOIN race_statuses rs ON rs.id = r.status_id
 LEFT JOIN LATERAL (
     SELECT status AS vid_status
     FROM race_video
@@ -86,12 +121,6 @@ LEFT JOIN LATERAL (
     WHERE cs2.race_id = r.id AND cs2.status = 'IN_PROGRESS'
     ORDER BY cs2.started_at DESC LIMIT 1
 ) cs ON true
-LEFT JOIN LATERAL (
-    SELECT status AS prev_status
-    FROM race_status_history
-    WHERE race_id = r.id AND status != 'CORRECTING'
-    ORDER BY changed_at DESC LIMIT 1
-) rsh_prev ON (r.status = 'CORRECTING')
 LEFT JOIN LATERAL (
     SELECT metadata->>'correction_request_comment' AS correction_request_comment
     FROM race_status_history
@@ -161,11 +190,12 @@ def compute_race_id_num(race_date: Optional[str], venue_code: Optional[str],
 
 
 def fmt_race(row: dict) -> dict:
-    english_status = row.get("english_status") or "PENDING"
+    status_code = row.get("status_code") or "WAITING"
+    event = row.get("event")
     video_raw = row.get("video_raw_status") or ""
-    prev_status = row.get("prev_status")
 
-    vid, ana, ds = compute_display_status(english_status, video_raw, prev_status)
+    ds = get_display_status(status_code, event)
+    compat_status = get_compat_status(status_code, event)
 
     # 30-minute auto-release: if locked but session > 30min old, treat as unlocked
     locked_by = row.get("locked_by_name")
@@ -209,13 +239,16 @@ def fmt_race(row: dict) -> dict:
         "condition": row.get("condition"),
         "start_time": row.get("start_time"),
         "race_id_num": race_id_num,
-        # English status for API logic
-        "status": english_status,
-        # Japanese display label for UI
+        # New status fields
+        "status_code": status_code,
+        "status_id": row.get("status_id"),
+        "tab_group": row.get("tab_group"),
+        "event": event,
+        "detail": row.get("detail"),
+        # Backward-compat status (maps new model back to old codes)
+        "status": compat_status,
         "display_status": ds,
-        "video_status": vid,
         "video_url": None,
-        "analysis_status": ana,
         "assigned_user": locked_by,
         "locked_by": locked_by,
         "locked_at": None,
@@ -225,8 +258,8 @@ def fmt_race(row: dict) -> dict:
         "reanalysis_reason": row.get("reanalysis_reason"),
         "reanalysis_comment": row.get("reanalysis_comment"),
         "analysis_failure_reason": row.get("analysis_failure_reason"),
-        "video_raw_status": row.get("video_raw_status"),
-        "video_display_status": VIDEO_STATUS_DISPLAY.get(row.get("video_raw_status") or "", "未連携"),
+        "video_raw_status": video_raw,
+        "video_display_status": VIDEO_STATUS_DISPLAY.get(video_raw, "未連携"),
         "video_goal_time_raw": float(row["video_goal_time"]) if row.get("video_goal_time") is not None else None,
         "preset_name": row.get("preset_name"),
         "preset_id": row.get("preset_id"),
@@ -286,13 +319,19 @@ def get_race_summary(date: Optional[str] = Query(None)):
         cur.execute(
             f"""SELECT
                     COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE r.status = 'CONFIRMED')           AS completed,
-                    COUNT(*) FILTER (WHERE r.status = 'CORRECTING')          AS in_progress,
-                    COUNT(*) FILTER (WHERE r.status = 'REVISION_REQUESTED')  AS needs_correction,
-                    COUNT(*) FILTER (WHERE r.status = 'CORRECTED')           AS review
+                    COUNT(*) FILTER (WHERE rs.status_code = 'CONFIRMED')       AS confirmed,
+                    COUNT(*) FILTER (WHERE rs.status_code = 'ANALYZED')        AS needs_correction,
+                    COUNT(*) FILTER (WHERE rs.tab_group = '待機中')                 AS waiting,
+                    COUNT(*) FILTER (WHERE rs.tab_group = '管理者対応待ち')         AS admin_pending,
+                    COUNT(*) FILTER (WHERE r.event = 'EDITING')                AS editing,
+                    COUNT(*) FILTER (WHERE r.event = 'REVISION_REQUESTED')     AS revision_requested,
+                    COUNT(*) FILTER (WHERE r.event = 'ANALYSIS_FAILED')        AS analysis_failed,
+                    COUNT(*) FILTER (WHERE r.event = 'MATCH_FAILED')           AS match_failed,
+                    COUNT(*) FILTER (WHERE r.event = 'ANALYSIS_REQUESTED')     AS analysis_requested
                 FROM race r
                 JOIN race_event re ON r.event_id = re.id
                 JOIN race_category rc ON re.category_id = rc.id
+                JOIN race_statuses rs ON rs.id = r.status_id
                 {where_sql}""",
             params,
         )
@@ -302,6 +341,7 @@ def get_race_summary(date: Optional[str] = Query(None)):
                 FROM race r
                 JOIN race_event re ON r.event_id = re.id
                 JOIN race_category rc ON re.category_id = rc.id
+                JOIN race_statuses rs ON rs.id = r.status_id
                 {where_sql}
                 GROUP BY re.venue_name
                 ORDER BY re.venue_name""",
@@ -310,13 +350,17 @@ def get_race_summary(date: Optional[str] = Query(None)):
         by_venue = cur.fetchall()
         return {
             "total": row["total"] if row else 0,
-            "completed": row["completed"] if row else 0,
-            "in_progress": row["in_progress"] if row else 0,
+            "confirmed": row["confirmed"] if row else 0,
             "needs_correction": row["needs_correction"] if row else 0,
-            "review": row["review"] if row else 0,
+            "waiting": row["waiting"] if row else 0,
+            "admin_pending": row["admin_pending"] if row else 0,
+            "editing": row["editing"] if row else 0,
+            "revision_requested": row["revision_requested"] if row else 0,
+            "analysis_failed": row["analysis_failed"] if row else 0,
+            "match_failed": row["match_failed"] if row else 0,
+            "analysis_requested": row["analysis_requested"] if row else 0,
             "by_venue": by_venue,
         }
-
 
 @router.get("/races")
 def get_races(
@@ -345,14 +389,8 @@ def get_races(
         return [fmt_race(r) for r in cur.fetchall()]
 
 
-DISPLAY_TO_DB_STATUS = {
-    "待機中": "ANALYZED",
-    "補正中": "CORRECTING",
-    "レビュー待ち": "CORRECTED",
-    "修正要請": "REVISION_REQUESTED",
-    "データ確定": "CONFIRMED",
-    "再解析要請": "ANALYSIS_REQUESTED",
-}
+# status_code -> tab_group display (for batch update validation)
+BATCH_ALLOWED_STATUS_CODES = {"WAITING", "ANALYZED", "IN_REVIEW", "CONFIRMED"}
 
 
 @router.patch("/races/batch-update")
@@ -360,34 +398,33 @@ def batch_update_races(body: dict):
     race_ids = body.get("race_ids", [])
     if not race_ids:
         return {"updated": 0}
-    ALLOWED_STATUSES = {"ANALYZED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED", "ANALYSIS_REQUESTED"}
-    new_status = body.get("status")
-    if new_status and new_status in DISPLAY_TO_DB_STATUS:
-        new_status = DISPLAY_TO_DB_STATUS[new_status]
-    if new_status and new_status not in ALLOWED_STATUSES:
-        raise HTTPException(status_code=400, detail=f"Status '{new_status}' is not allowed for batch update")
-    set_parts = ["updated_at = NOW()"]
-    params: list = []
-    if new_status:
-        set_parts.append("status = %s")
-        params.append(new_status)
-    params.append(race_ids)
+    new_status_code = body.get("status_code")
+    new_event = body.get("event")
+    if new_status_code and new_status_code not in BATCH_ALLOWED_STATUS_CODES:
+        raise HTTPException(status_code=400, detail=f"status_code '{new_status_code}' is not allowed for batch update")
+    if not new_status_code:
+        return {"updated": 0}
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            f"UPDATE race SET {', '.join(set_parts)} WHERE id = ANY(%s::uuid[]) RETURNING id::text",
-            params,
+            """UPDATE race
+               SET status_id = (SELECT id FROM race_statuses WHERE status_code = %s),
+                   event = %s,
+                   updated_at = NOW()
+               WHERE id = ANY(%s::uuid[])
+               RETURNING id::text""",
+            (new_status_code, new_event, race_ids),
         )
         updated_rows = [r["id"] for r in cur.fetchall()]
-        if new_status and updated_rows:
+        if updated_rows:
             user_id = _get_sys_user(cur)
+            history_label = new_event or new_status_code
             for race_id in updated_rows:
-                _write_history(cur, race_id, new_status, user_id, {"batch_update": True})
+                _write_history(cur, race_id, history_label, user_id, {"batch_update": True})
                 _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                             None, {"status": new_status, "batch": True})
+                             None, {"status_code": new_status_code, "event": new_event, "batch": True})
         conn.commit()
         return {"updated": len(updated_rows)}
-
 
 VIDEO_ALLOWED_STATUSES = {"UNLINKED", "LINKED"}
 
@@ -644,13 +681,21 @@ def add_race_history(race_id: str, body: dict):
 
 @router.patch("/races/{race_id}")
 def update_race(race_id: str, body: dict):
-    allowed = {"status", "race_number", "event_id"}
+    allowed = {"race_number", "event_id"}
     updates = {k: v for k, v in body.items() if k in allowed and v is not None}
     set_parts = ["updated_at = NOW()"]
     params: list = []
     for col, val in updates.items():
         set_parts.append(f"{col} = %s")
         params.append(val)
+    # Support new-style status update
+    new_status_code = body.get("status_code")
+    new_event = body.get("event")
+    if new_status_code:
+        set_parts.append("status_id = (SELECT id FROM race_statuses WHERE status_code = %s)")
+        params.append(new_status_code)
+        set_parts.append("event = %s")
+        params.append(new_event)
     params.append(race_id)
     with get_db() as conn:
         cur = dict_cursor(conn)
@@ -660,23 +705,20 @@ def update_race(race_id: str, body: dict):
         conn.commit()
     return get_race(race_id)
 
-
 @router.post("/races/{race_id}/complete-analysis")
 def complete_analysis(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id, event FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
-        cur.execute(
-            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        if not _set_status(cur, race_id, "ANALYZED"):
+            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZED", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "ANALYZED"})
+                     {"status_id": old["status_id"]}, {"status_code": "ANALYZED"})
         conn.commit()
     return get_race(race_id)
 
@@ -685,18 +727,16 @@ def complete_analysis(race_id: str):
 def reanalyze_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
-        cur.execute(
-            "UPDATE race SET status = 'ANALYZING', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        if not _set_status(cur, race_id, "ANALYZING"):
+            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZING", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "ANALYZING"})
+                     {"status_id": old["status_id"]}, {"status_code": "ANALYZING"})
         conn.commit()
     return get_race(race_id)
 
@@ -707,19 +747,17 @@ def reanalysis_request(race_id: str, body: dict):
     comment = body.get("comment")
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
-        cur.execute(
-            "UPDATE race SET status = 'ANALYSIS_REQUESTED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        if not _set_status(cur, race_id, "NEEDS_ATTENTION", "ANALYSIS_REQUESTED"):
+            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYSIS_REQUESTED", user_id,
                        {"reanalysis_reason": reason, "reanalysis_comment": comment})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "ANALYSIS_REQUESTED", "reason": reason})
+                     {"status_id": old["status_id"]}, {"status_code": "NEEDS_ATTENTION", "event": "ANALYSIS_REQUESTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -728,18 +766,16 @@ def reanalysis_request(race_id: str, body: dict):
 def matching_failure(race_id: str, body: dict):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
-        cur.execute(
-            "UPDATE race SET status = 'MATCH_FAILED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        if not _set_status(cur, race_id, "NEEDS_ATTENTION", "MATCH_FAILED"):
+            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "MATCH_FAILED", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "MATCH_FAILED"})
+                     {"status_id": old["status_id"]}, {"status_code": "NEEDS_ATTENTION", "event": "MATCH_FAILED"})
         conn.commit()
     return get_race(race_id)
 
@@ -749,19 +785,17 @@ def correction_request(race_id: str, body: dict):
     comment = body.get("comment", "")
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
-        cur.execute(
-            "UPDATE race SET status = 'REVISION_REQUESTED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        if not _set_status(cur, race_id, "ANALYZED", "REVISION_REQUESTED"):
+            raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "REVISION_REQUESTED", user_id,
                        {"correction_request_comment": comment})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "REVISION_REQUESTED"})
+                     {"status_id": old["status_id"]}, {"status_code": "ANALYZED", "event": "REVISION_REQUESTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -770,25 +804,27 @@ def correction_request(race_id: str, body: dict):
 def confirm_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
         cur.execute(
             """UPDATE race
-               SET status = 'CONFIRMED', confirmed_at = NOW(), confirmed_by = %s, updated_at = NOW()
+               SET status_id = (SELECT id FROM race_statuses WHERE status_code = 'CONFIRMED'),
+                   event = NULL,
+                   confirmed_at = NOW(), confirmed_by = %s, updated_at = NOW()
                WHERE id = %s""",
             (user_id, race_id),
         )
         _write_history(cur, race_id, "CONFIRMED", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "CONFIRMED"})
+                     {"status_id": old["status_id"]}, {"status_code": "CONFIRMED"})
         conn.commit()
     return get_race(race_id)
 
 
-# ── Correction session endpoints ────────────────────────────────────────────
+# ── Correction session endpoints ────────────────────────────────────────────────────────
 
 @router.post("/races/{race_id}/corrections/start")
 def start_correction(race_id: str, body: dict):
@@ -824,22 +860,21 @@ def start_correction(race_id: str, body: dict):
         user_id = _get_user_by_name(cur, user_name)
 
         # Check race exists
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id, event FROM race WHERE id = %s", (race_id,))
         race_row = cur.fetchone()
         if not race_row:
             raise HTTPException(status_code=404, detail="Race not found")
 
-        old_status = race_row["status"]
+        old_status_id = race_row["status_id"]
+        old_event = race_row["event"]
 
-        # Write CORRECTING history
-        cur.execute(
-            "UPDATE race SET status = 'CORRECTING', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
-        _write_history(cur, race_id, "CORRECTING", user_id,
-                       {"prev_status": old_status, "started_by": user_name})
+        # Set ANALYZED + EDITING
+        _set_status(cur, race_id, "ANALYZED", "EDITING")
+        _write_history(cur, race_id, "EDITING", user_id,
+                       {"started_by": user_name})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old_status}, {"status": "CORRECTING", "started_by": user_name})
+                     {"status_id": old_status_id, "event": old_event},
+                     {"status_code": "ANALYZED", "event": "EDITING", "started_by": user_name})
 
         # Create correction session
         cur.execute(
@@ -856,7 +891,7 @@ def start_correction(race_id: str, body: dict):
 def complete_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id, event FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
@@ -864,14 +899,11 @@ def complete_correction(race_id: str):
             "UPDATE correction_session SET completed_at = NOW(), status = 'COMPLETED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
-        cur.execute(
-            "UPDATE race SET status = 'CORRECTED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        _set_status(cur, race_id, "IN_REVIEW")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "CORRECTED", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "CORRECTED"})
+                     {"status_id": old["status_id"]}, {"status_code": "IN_REVIEW"})
         conn.commit()
     return get_race(race_id)
 
@@ -891,14 +923,12 @@ def temp_save_correction(race_id: str, body: dict):
         session = cur.fetchone()
 
         if session:
-            # Compute next version number
             cur.execute(
                 "SELECT COALESCE(MAX(version), 0) + 1 AS next_ver FROM correction_result WHERE session_id = %s",
                 (session["id"],),
             )
             ver_row = cur.fetchone()
             next_ver = ver_row["next_ver"] if ver_row else 1
-
             user_id = _get_sys_user(cur)
             cur.execute(
                 """INSERT INTO correction_result (id, session_id, version, corrected_by, corrected_at, correction_data)
@@ -907,22 +937,19 @@ def temp_save_correction(race_id: str, body: dict):
             )
 
         if exit_editing:
-            cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+            cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
             race_now = cur.fetchone()
             cur.execute(
                 "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
                 (race_id,),
             )
-            prev_status = _get_previous_status(cur, race_id, "CORRECTING")
-            cur.execute(
-                "UPDATE race SET status = %s, updated_at = NOW() WHERE id = %s",
-                (prev_status, race_id),
-            )
+            # Revert to ANALYZED (clean state, no event)
+            _set_status(cur, race_id, "ANALYZED")
             user_id = _get_sys_user(cur)
-            _write_history(cur, race_id, prev_status, user_id, {"reason": "temp-save exit"})
+            _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "temp-save exit"})
             _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                         {"status": race_now["status"] if race_now else None},
-                         {"status": prev_status, "reason": "temp-save exit"})
+                         {"status_id": race_now["status_id"] if race_now else None},
+                         {"status_code": "ANALYZED", "reason": "temp-save exit"})
         else:
             cur.execute("UPDATE race SET updated_at = NOW() WHERE id = %s", (race_id,))
 
@@ -930,47 +957,29 @@ def temp_save_correction(race_id: str, body: dict):
     return get_race(race_id)
 
 
-CANONICAL_STATUSES = {
-    "PENDING", "ANALYZING", "ANALYSIS_FAILED", "ANALYZED", "ANALYSIS_REQUESTED",
-    "MATCH_FAILED", "CORRECTING", "CORRECTED", "REVISION_REQUESTED", "CONFIRMED",
+CANONICAL_STATUS_CODES = {
+    "WAITING", "ANALYZING", "ANALYZED", "IN_REVIEW", "NEEDS_ATTENTION", "CONFIRMED",
 }
-
-
-def _get_previous_status(cur, race_id: str, current_status: str) -> str:
-    """Look up the canonical status before current_status from race_status_history."""
-    cur.execute(
-        """SELECT status FROM race_status_history
-           WHERE race_id = %s AND status != %s
-           ORDER BY changed_at DESC""",
-        (race_id, current_status),
-    )
-    for row in cur:
-        if row["status"] in CANONICAL_STATUSES:
-            return row["status"]
-    return "ANALYZED"
 
 
 @router.post("/races/{race_id}/corrections/cancel")
 def cancel_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
-        prev_status = _get_previous_status(cur, race_id, old["status"])
         cur.execute(
             "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
-        cur.execute(
-            "UPDATE race SET status = %s, updated_at = NOW() WHERE id = %s",
-            (prev_status, race_id),
-        )
+        # Revert to ANALYZED (clean state)
+        _set_status(cur, race_id, "ANALYZED")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, prev_status, user_id, {"reason": "correction cancelled"})
+        _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "correction cancelled"})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": prev_status, "reason": "correction cancelled"})
+                     {"status_id": old["status_id"]}, {"status_code": "ANALYZED", "reason": "correction cancelled"})
         conn.commit()
     return get_race(race_id)
 
@@ -979,7 +988,7 @@ def cancel_correction(race_id: str):
 def force_unlock(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
@@ -987,18 +996,14 @@ def force_unlock(race_id: str):
             "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
             (race_id,),
         )
-        cur.execute(
-            "UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s",
-            (race_id,),
-        )
+        _set_status(cur, race_id, "ANALYZED")
         user_id = _get_sys_user(cur)
         _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "force-unlock by admin"})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]},
-                     {"status": "ANALYZED", "reason": "force-unlock by admin"})
+                     {"status_id": old["status_id"]},
+                     {"status_code": "ANALYZED", "reason": "force-unlock by admin"})
         conn.commit()
     return get_race(race_id)
-
 
 # ── Analysis option endpoints ────────────────────────────────────────────────
 
@@ -1254,7 +1259,7 @@ def trigger_linkage(race_id: str, body: dict = None):
     body = body or {}
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s::uuid", (race_id,))
+        cur.execute("SELECT status_id FROM race WHERE id = %s::uuid", (race_id,))
         old = cur.fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")

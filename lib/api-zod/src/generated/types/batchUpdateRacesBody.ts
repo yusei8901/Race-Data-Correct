@@ -8,5 +8,11 @@
 
 export interface BatchUpdateRacesBody {
   race_ids: string[];
-  status: string;
+  /** WAITING | ANALYZED | IN_REVIEW | CONFIRMED */
+  status_code: string;
+  /**
+   * EDITING | REVISION_REQUESTED | null
+   * @nullable
+   */
+  event?: string | null;
 }
