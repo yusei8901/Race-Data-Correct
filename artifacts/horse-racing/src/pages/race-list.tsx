@@ -165,23 +165,11 @@ interface VenuePreset {
   is_active: boolean;
 }
 
-const VIDEO_SELECTABLE_STATUSES = new Set(["NEEDS_SETUP", "STANDBY"]);
-const VIDEO_BULK_OPTIONS: { value: string; label: string }[] = [
-  { value: "NEEDS_SETUP", label: "解析未設定" },
-  { value: "STANDBY",     label: "準備完了" },
-];
-
-function isVideoSelectable(race: Race): boolean {
-  return VIDEO_SELECTABLE_STATUSES.has(race.video_raw_status || "");
-}
-
 function getVideoBadgeProps(displayStatus: string | null | undefined) {
   switch (displayStatus) {
-    case "完了":       return { className: "bg-green-900/40 text-green-400 border-green-800",   label: "完了" };
-    case "準備完了":   return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800",     label: "準備完了" };
-    case "解析未設定": return { className: "bg-amber-900/40 text-amber-400 border-amber-800",  label: "解析未設定" };
-    case "未完了":     return { className: "bg-zinc-800/60 text-zinc-500 border-zinc-700",     label: "未完了" };
-    default:           return { className: "bg-zinc-800/60 text-zinc-500 border-zinc-700",     label: displayStatus || "-" };
+    case "連携済み": return { className: "bg-green-900/40 text-green-400 border-green-800", label: "連携済み" };
+    case "未連携":   return { className: "bg-zinc-800/60 text-zinc-500 border-zinc-700",   label: "未連携" };
+    default:         return { className: "bg-zinc-800/60 text-zinc-500 border-zinc-700",   label: displayStatus || "-" };
   }
 }
 
@@ -254,7 +242,7 @@ function downloadCSV(races: Race[], venue: string) {
       `"${r.race_name}"`,
       r.surface_type,
       `${r.distance}m`,
-      r.video_status === "完了" ? "完了" : "未完了",
+      r.video_raw_status === "LINKED" ? "連携済み" : "未連携",
       st,
       r.assigned_user || "-",
       updatedTime,
@@ -294,16 +282,10 @@ export default function RaceList() {
   const [bulkStatus, setBulkStatus] = useState<string>(BULK_STATUS_OPTIONS[0]);
   const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-  const [videoCheckedIds, setVideoCheckedIds] = useState<Set<string>>(new Set());
-  const [videoBulkStatus, setVideoBulkStatus] = useState<string>("STANDBY");
-  const [videoBulkConfirmOpen, setVideoBulkConfirmOpen] = useState(false);
 
   const [presets, setPresets] = useState<VenuePreset[]>([]);
   const [editingGoalTime, setEditingGoalTime] = useState<{ raceId: string; value: string } | null>(null);
   const [savingOptionIds, setSavingOptionIds] = useState<Set<string>>(new Set());
-  const [presetBulkOpen, setPresetBulkOpen] = useState(false);
-  const [presetBulkPresetId, setPresetBulkPresetId] = useState<string>("");
-  const [presetBulkSaving, setPresetBulkSaving] = useState(false);
   const goalTimeInputRef = useRef<HTMLInputElement>(null);
 
   type PendingChange = {
@@ -385,6 +367,7 @@ export default function RaceList() {
     setCheckedIds(new Set());
     setStatusFilter(null);
   };
+
 
   const statusCounts = useMemo(() => {
     const perStatus: Record<string, number> = {};
@@ -484,66 +467,6 @@ export default function RaceList() {
       }));
   }, [bulkConfirmOpen, filteredRaces, selectedIds]);
 
-  // ── Video bulk update helpers ──
-  const videoSelectableIds = useMemo(
-    () => filteredRaces.filter((r) => isVideoSelectable(r)).map((r) => r.id),
-    [filteredRaces],
-  );
-  const videoAllChecked = videoSelectableIds.length > 0 && videoSelectableIds.every((id) => videoCheckedIds.has(id));
-  const videoSomeChecked = videoSelectableIds.some((id) => videoCheckedIds.has(id));
-
-  const toggleVideoRow = (id: string) => {
-    setVideoCheckedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAllVideo = (checked: boolean | "indeterminate") => {
-    if (checked === true) setVideoCheckedIds(new Set(videoSelectableIds));
-    else setVideoCheckedIds(new Set());
-  };
-
-  const videoSelectedIds = filteredRaces
-    .filter((r) => videoCheckedIds.has(r.id) && isVideoSelectable(r))
-    .map((r) => r.id);
-
-  const handleVideoBulkUpdate = () => {
-    if (videoSelectedIds.length === 0) return;
-    setVideoBulkConfirmOpen(true);
-  };
-
-  const executeVideoBulkUpdate = async () => {
-    setVideoBulkConfirmOpen(false);
-    try {
-      const res = await fetch(`${API}/races/batch-update-video`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ race_ids: videoSelectedIds, status: videoBulkStatus }),
-      });
-      if (res.ok) {
-        setVideoCheckedIds(new Set());
-        queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
-        toast({ title: `${videoSelectedIds.length}件の動画ステータスを変更しました` });
-      } else {
-        toast({ title: "動画ステータス変更に失敗しました", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "通信エラーが発生しました", variant: "destructive" });
-    }
-  };
-
-  const videoBulkConfirmRaces = useMemo(() => {
-    if (!videoBulkConfirmOpen) return [];
-    return filteredRaces
-      .filter((r) => videoSelectedIds.includes(r.id))
-      .map((r) => ({
-        label: `${r.venue} ${r.race_number}R`,
-        currentVideoStatus: r.video_display_status || "-",
-      }));
-  }, [videoBulkConfirmOpen, filteredRaces, videoSelectedIds]);
 
   const saveAnalysisOption = async (
     race: Race,
@@ -630,29 +553,6 @@ export default function RaceList() {
     await save();
   };
 
-  const executePresetBulkUpdate = async () => {
-    if (!presetBulkPresetId || videoSelectedIds.length === 0) return;
-    setPresetBulkSaving(true);
-    try {
-      const res = await fetch(`${API}/races/bulk-update-preset`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ race_ids: videoSelectedIds, venue_weather_preset_id: presetBulkPresetId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPresetBulkOpen(false);
-        setVideoCheckedIds(new Set());
-        queryClient.invalidateQueries({ queryKey: getGetRacesQueryKey(queryParams) });
-        toast({ title: `${data.updated}件にプリセットを設定しました` });
-      } else {
-        toast({ title: "一括設定に失敗しました", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "通信エラーが発生しました", variant: "destructive" });
-    }
-    setPresetBulkSaving(false);
-  };
 
   const handleCompleteAnalysis = async (raceId: string) => {
     setCompletingIds((prev) => new Set(prev).add(raceId));
@@ -812,32 +712,6 @@ export default function RaceList() {
         </div>
       )}
 
-      {/* Bulk action bar — video status */}
-      {isAdmin && videoSelectedIds.length > 0 && (
-        <div className="mx-6 mb-2 flex items-center gap-3 bg-blue-950/30 border border-blue-800/50 rounded-md px-4 py-2">
-          <span className="text-xs text-blue-300 font-medium">動画 {videoSelectedIds.length}件選択中</span>
-          <Select value={videoBulkStatus} onValueChange={setVideoBulkStatus}>
-            <SelectTrigger className="w-[140px] h-7 text-xs cursor-pointer">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {VIDEO_BULK_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" className="h-7 text-xs cursor-pointer bg-blue-700 hover:bg-blue-600 text-white border-0" onClick={handleVideoBulkUpdate}>
-            動画ステータス変更
-          </Button>
-          <Button size="sm" className="h-7 text-xs cursor-pointer bg-amber-800 hover:bg-amber-700 text-white border-0" onClick={() => { setPresetBulkPresetId(""); setPresetBulkOpen(true); }}>
-            一括プリセット設定
-          </Button>
-          <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto cursor-pointer" onClick={() => setVideoCheckedIds(new Set())}>
-            選択解除
-          </Button>
-        </div>
-      )}
-
       {/* Table */}
       <div className="flex-1 px-6 pb-6 overflow-hidden flex flex-col min-h-0">
         <div className="rounded-md border border-border bg-card flex-1 overflow-auto">
@@ -846,19 +720,9 @@ export default function RaceList() {
               <TableRow>
                 <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
                 <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
-                <TableHead style={{ width: "9%" }} className="text-center text-xs">レースID</TableHead>
+                <TableHead style={{ width: "14%" }} className="text-center text-xs">レース名</TableHead>
                 <TableHead style={{ width: "8%" }} className="text-center text-xs">コース</TableHead>
                 <TableHead style={{ width: "5%" }} className="text-center text-xs">距離</TableHead>
-                {isAdmin && (
-                  <TableHead style={{ width: "3%" }} className="text-center">
-                    <Checkbox
-                      checked={videoAllChecked ? true : videoSomeChecked ? "indeterminate" : false}
-                      onCheckedChange={toggleAllVideo}
-                      aria-label="動画全選択"
-                      className="cursor-pointer"
-                    />
-                  </TableHead>
-                )}
                 <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 {isAdmin && (
                   <TableHead style={{ width: "3%" }} className="text-center">
@@ -874,21 +738,21 @@ export default function RaceList() {
                 <TableHead style={{ width: "7%" }} className="text-xs">担当者</TableHead>
                 <TableHead style={{ width: "5%" }} className="text-xs">更新時間</TableHead>
                 <TableHead style={{ width: "11%" }} className="text-xs">解析オプション</TableHead>
-                <TableHead style={{ width: isAdmin ? "23%" : "29%" }} className="text-center text-xs">操作</TableHead>
+                <TableHead style={{ width: isAdmin ? "21%" : "27%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isRacesLoading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: isAdmin ? 13 : 11 }).map((_, j) => (
+                    {Array.from({ length: isAdmin ? 11 : 10 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : filteredRaces.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 13 : 11} className="h-32 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={isAdmin ? 11 : 10} className="h-32 text-center text-muted-foreground text-sm">
                     該当するレースが見つかりません
                   </TableCell>
                 </TableRow>
@@ -898,9 +762,7 @@ export default function RaceList() {
                   const badgeProps = getStatusBadgeProps(derivedStatus);
                   const videoBadge = getVideoBadgeProps(race.video_display_status);
                   const canSelect = isSelectable(derivedStatus);
-                  const canSelectVideo = isVideoSelectable(race);
                   const isChecked = checkedIds.has(race.id);
-                  const isVideoChecked = videoCheckedIds.has(race.id);
                   const isAnalyzing = derivedStatus === "解析中";
                   const isCompleting = completingIds.has(race.id);
 
@@ -919,25 +781,11 @@ export default function RaceList() {
                     <TableRow key={race.id} className={`hover:bg-muted/30 ${isChecked ? "bg-primary/5" : ""}`}>
                       <TableCell className="text-xs text-center font-medium">{race.venue}</TableCell>
                       <TableCell className="text-xs text-center font-bold">{race.race_number}R</TableCell>
-                      <TableCell className="text-xs text-center font-mono text-muted-foreground">
-                        {race.race_id_num != null ? String(race.race_id_num).padStart(10, "0") : "-"}
+                      <TableCell className="text-xs text-left font-medium text-foreground truncate px-2" title={race.race_name}>
+                        {race.race_name || "-"}
                       </TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{getCourse(race)}</TableCell>
                       <TableCell className="text-xs text-center text-muted-foreground">{race.distance}m</TableCell>
-                      {isAdmin && (
-                        <TableCell className="text-center">
-                          {canSelectVideo ? (
-                            <Checkbox
-                              checked={isVideoChecked}
-                              onCheckedChange={() => toggleVideoRow(race.id)}
-                              aria-label={`${race.race_number}R動画選択`}
-                              className="cursor-pointer"
-                            />
-                          ) : (
-                            <span className="block w-4 h-4" />
-                          )}
-                        </TableCell>
-                      )}
                       <TableCell className="text-center">
                         <Badge variant="outline" className={`text-[10px] font-normal border ${videoBadge.className}`}>
                           {videoBadge.label}
@@ -978,7 +826,7 @@ export default function RaceList() {
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
                       {(() => {
-                        const isNeedsSetup = race.video_raw_status === "NEEDS_SETUP";
+                        const isNeedsSetup = race.video_raw_status === "LINKED" && (race.video_goal_time_raw == null || !race.preset_id);
                         const isSaving = savingOptionIds.has(race.id);
                         const isEditingThis = editingGoalTime?.raceId === race.id;
                         const surfaceFilter = race.surface_type === "芝" ? "TURF" : race.surface_type === "ダート" ? "DIRT" : null;
@@ -1156,77 +1004,6 @@ export default function RaceList() {
                 キャンセル
               </Button>
               <Button size="sm" onClick={confirmPendingChange} className="h-8 text-xs cursor-pointer bg-primary hover:bg-primary/90">
-                変更する
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {presetBulkOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="bg-zinc-900 border border-amber-800/50 rounded-lg shadow-2xl w-[460px] max-w-[95vw] p-6">
-            <h2 className="text-sm font-semibold mb-1 text-amber-300">一括プリセット設定</h2>
-            <p className="text-xs text-muted-foreground mb-4">
-              選択した {videoSelectedIds.length} 件の動画に解析プリセットを一括設定します。<br />
-              既存のゴールタイムは保持されます。
-            </p>
-            <div className="mb-4">
-              <div className="text-xs font-medium text-muted-foreground mb-1.5">適用する解析プリセット</div>
-              <select
-                value={presetBulkPresetId}
-                onChange={(e) => setPresetBulkPresetId(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded text-sm p-2 text-foreground cursor-pointer"
-              >
-                <option value="">選択してください</option>
-                {presets.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" size="sm" onClick={() => setPresetBulkOpen(false)} className="h-8 text-xs cursor-pointer">
-                キャンセル
-              </Button>
-              <Button
-                size="sm"
-                onClick={executePresetBulkUpdate}
-                disabled={!presetBulkPresetId || presetBulkSaving}
-                className="h-8 text-xs cursor-pointer bg-amber-700 hover:bg-amber-600 text-white border-0"
-              >
-                {presetBulkSaving ? "設定中..." : "一括設定する"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {videoBulkConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="bg-zinc-900 border border-blue-800/50 rounded-lg shadow-2xl w-[500px] max-w-[95vw] p-6">
-            <h2 className="text-sm font-semibold mb-3 text-blue-300">動画ステータス一括変更の確認</h2>
-            <p className="text-xs text-muted-foreground mb-2">
-              以下の{videoBulkConfirmRaces.length}件の動画ステータスを変更します。
-            </p>
-            <div className="max-h-[240px] overflow-auto bg-zinc-800/60 border border-zinc-700 rounded p-2 mb-4 space-y-0.5">
-              {videoBulkConfirmRaces.map((item, i) => (
-                <div key={i} className="flex items-center justify-between text-xs py-0.5 gap-2">
-                  <span className="text-zinc-300 truncate">{item.label}</span>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${getVideoBadgeProps(item.currentVideoStatus).className}`}>
-                      {item.currentVideoStatus}
-                    </span>
-                    <span className="text-zinc-500 text-[10px]">→</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${getVideoBadgeProps(VIDEO_BULK_OPTIONS.find(o => o.value === videoBulkStatus)?.label).className}`}>
-                      {VIDEO_BULK_OPTIONS.find(o => o.value === videoBulkStatus)?.label}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" size="sm" onClick={() => setVideoBulkConfirmOpen(false)} className="h-8 text-xs cursor-pointer">キャンセル</Button>
-              <Button size="sm" onClick={executeVideoBulkUpdate} className="h-8 text-xs cursor-pointer bg-blue-700 hover:bg-blue-600 text-white border-0">
                 変更する
               </Button>
             </div>

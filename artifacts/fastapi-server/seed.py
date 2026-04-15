@@ -124,47 +124,47 @@ def seed():
     race_date_1 = "2026-04-04"
     # (venue, race_type, race_num, race_name, surface, dist, direction, weather, cond, start_time, new_status)
     races_0404 = [
-        ("中山","中央競馬",1,"3歳未勝利","芝",1400,"右回り","晴","良","09:35","CONFIRMED"),
-        ("阪神","中央競馬",1,"3歳未勝利","芝",1400,"右回り","晴","良","09:35","CONFIRMED"),
-        ("中山","中央競馬",2,"4歳未勝利","芝",1600,"右回り","晴","良","10:10","CORRECTED"),
-        ("阪神","中央競馬",2,"4歳未勝利","芝",1600,"右回り","晴","良","10:10","CORRECTED"),
-        ("中山","中央競馬",3,"5歳未勝利","ダート",1800,"右回り","晴","良","10:45","REVISION_REQUESTED"),
-        ("阪神","中央競馬",3,"5歳未勝利","ダート",1800,"右回り","晴","良","10:45","REVISION_REQUESTED"),
-        ("中山","中央競馬",4,"6歳未勝利","芝",2000,"右回り","晴","良","11:20","CORRECTING"),
-        ("阪神","中央競馬",4,"6歳未勝利","芝",2000,"右回り","晴","良","11:20","CORRECTING"),
+        ("中山","中央競馬",1,"3歳未勝利[指定]","芝",1400,"右回り","晴","良","09:35","CONFIRMED"),
+        ("阪神","中央競馬",1,"3歳未勝利[指定]","芝",1400,"右回り","晴","良","09:35","CONFIRMED"),
+        ("中山","中央競馬",2,"4歳以上未勝利[指定]","芝",1600,"右回り","晴","良","10:10","CORRECTED"),
+        ("阪神","中央競馬",2,"4歳以上未勝利[指定]","芝",1600,"右回り","晴","良","10:10","CORRECTED"),
+        ("中山","中央競馬",3,"5歳以上未勝利[指定]","ダート",1800,"右回り","晴","良","10:45","REVISION_REQUESTED"),
+        ("阪神","中央競馬",3,"5歳以上未勝利[指定]","ダート",1800,"右回り","晴","良","10:45","REVISION_REQUESTED"),
+        ("中山","中央競馬",4,"3歳1勝クラス[指定]","芝",2000,"右回り","晴","良","11:20","CORRECTING"),
+        ("阪神","中央競馬",4,"3歳1勝クラス[指定]","芝",2000,"右回り","晴","良","11:20","CORRECTING"),
         ("中山","中央競馬",5,"5歳以上2勝クラス","芝",2200,"右回り","曇","稍重","11:55","ANALYZED"),
         ("阪神","中央競馬",5,"5歳以上2勝クラス","芝",2200,"右回り","曇","稍重","11:55","ANALYZED"),
-        # index 10,11: PENDING + video COMPLETED (未処理)
-        ("中山","中央競馬",6,"3歳1勝クラス","芝",1800,"右回り","曇","稍重","12:30","PENDING"),
-        ("阪神","中央競馬",6,"3歳1勝クラス","芝",1800,"右回り","曇","稍重","12:30","PENDING"),
-        # index 12,13: PENDING + video INCOMPLETE (未処理)
-        ("中山","中央競馬",7,"4歳2勝クラス","ダート",1200,"右回り","晴","良","13:05","PENDING"),
-        ("阪神","中央競馬",7,"4歳2勝クラス","ダート",1200,"右回り","晴","良","13:05","PENDING"),
-        ("中山","中央競馬",8,"3歳オープン","芝",1600,"右回り","晴","良","13:40","ANALYZING"),
-        ("阪神","中央競馬",8,"3歳オープン","芝",1600,"右回り","晴","良","13:40","ANALYZING"),
-        ("中山","中央競馬",9,"4歳以上オープン","ダート",1800,"右回り","曇","稍重","14:15","ANALYSIS_REQUESTED"),
-        ("阪神","中央競馬",9,"4歳以上オープン","ダート",1800,"右回り","曇","稍重","14:15","ANALYSIS_REQUESTED"),
+        # index 10,11: PENDING + video LINKED (動画連携済み・未処理)
+        ("中山","中央競馬",6,"4歳以上1勝クラス","芝",1800,"右回り","曇","稍重","12:30","PENDING"),
+        ("阪神","中央競馬",6,"4歳以上1勝クラス","芝",1800,"右回り","曇","稍重","12:30","PENDING"),
+        # index 12,13: PENDING + video UNLINKED (動画未連携)
+        ("中山","中央競馬",7,"4歳以上2勝クラス","ダート",1200,"右回り","晴","良","13:05","PENDING"),
+        ("阪神","中央競馬",7,"4歳以上2勝クラス","ダート",1200,"右回り","晴","良","13:05","PENDING"),
+        ("中山","中央競馬",8,"3歳オープン[特指]","芝",1600,"右回り","晴","良","13:40","ANALYZING"),
+        ("阪神","中央競馬",8,"3歳オープン[特指]","芝",1600,"右回り","晴","良","13:40","ANALYZING"),
+        ("中山","中央競馬",9,"4歳以上オープン[特指]","ダート",1800,"右回り","曇","稍重","14:15","ANALYSIS_REQUESTED"),
+        ("阪神","中央競馬",9,"4歳以上オープン[特指]","ダート",1800,"右回り","曇","稍重","14:15","ANALYSIS_REQUESTED"),
         ("中山","中央競馬",10,"5歳以上3勝クラス","芝",2000,"右回り","曇","重","14:50","ANALYSIS_FAILED"),
         ("阪神","中央競馬",10,"5歳以上3勝クラス","芝",2000,"右回り","曇","重","14:50","ANALYSIS_FAILED"),
-        ("中山","中央競馬",11,"3歳重賞","芝",2400,"右回り","晴","良","15:25","ANALYSIS_REQUESTED"),
-        ("阪神","中央競馬",11,"3歳重賞","芝",2400,"右回り","晴","良","15:25","ANALYSIS_REQUESTED"),
-        ("中山","中央競馬",12,"4歳以上重賞","ダート",2500,"右回り","晴","良","16:00","MATCH_FAILED"),
-        ("阪神","中央競馬",12,"4歳以上重賞","ダート",2500,"右回り","晴","良","16:00","MATCH_FAILED"),
-        ("大井","地方競馬",1,"3歳未勝利","ダート",1200,"左回り","晴","良","15:00","ANALYZED"),
-        # index 25: PENDING + video INCOMPLETE (未処理)
-        ("川崎","地方競馬",1,"3歳未勝利","ダート",1400,"左回り","晴","良","15:30","PENDING"),
+        ("中山","中央競馬",11,"第29回マイラーズカップ(GII)","芝",1600,"右回り","晴","良","15:25","ANALYSIS_REQUESTED"),
+        ("阪神","中央競馬",11,"第52回京都新聞杯(GII)","芝",2200,"右回り","晴","良","15:25","ANALYSIS_REQUESTED"),
+        ("中山","中央競馬",12,"第66回天皇賞（春）(GI)","芝",3200,"右回り","晴","良","16:00","MATCH_FAILED"),
+        ("阪神","中央競馬",12,"第85回NHKマイルカップ(GI)","芝",1600,"右回り","晴","良","16:00","MATCH_FAILED"),
+        ("大井","地方競馬",1,"3歳未勝利[指定]","ダート",1200,"左回り","晴","良","15:00","ANALYZED"),
+        # index 25: PENDING + video UNLINKED (動画未連携)
+        ("川崎","地方競馬",1,"3歳未勝利[指定]","ダート",1400,"左回り","晴","良","15:30","PENDING"),
     ]
-    # Indices where video should be INCOMPLETE (未処理)
+    # Indices where video should be UNLINKED (動画未連携)
     incomplete_video_idxs_04 = {12, 13, 25}
-    # Index 10 (中山R6, PENDING): video FILE_RACE_LINK_FAILED (動画ファイル名とレースの紐付け失敗)
+    # Index 10 (中山R6, PENDING): video UNLINKED (動画連携失敗)
     file_race_link_failed_idxs_04 = {10}
 
     # ── 4/5 race definitions ──────────────────────────────────────────────────
     race_date_2 = "2026-04-05"
     race_names_pool = [
-        "3歳未勝利","3歳1勝クラス","4歳未勝利","4歳1勝クラス",
-        "5歳以上2勝クラス","3歳オープン","4歳以上オープン",
-        "5歳以上3勝クラス","3歳重賞","4歳以上重賞","天皇賞(春)","NHKマイルC",
+        "3歳未勝利[指定]","3歳1勝クラス[指定]","4歳以上未勝利[指定]","4歳以上1勝クラス",
+        "5歳以上2勝クラス[指定]","3歳オープン[特指]","4歳以上オープン[特指]",
+        "5歳以上3勝クラス","第66回天皇賞（春）(GI)","第85回NHKマイルカップ(GI)","第29回マイラーズカップ(GII)","第52回京都新聞杯(GII)",
     ]
     distances_turf = [1200,1400,1600,1800,2000,2200,2400,1600,2000,1800,3200,1600]
     distances_dirt = [1200,1400,1600,1800,2000,1400,1600,1800,1200,2100,1400,1600]
@@ -196,12 +196,12 @@ def seed():
         races_0405.append(("京都","中央競馬",i+1,race_names_pool[i],surface,dist,"右回り","曇",cond,start_times[i],statuses_kyoto[i]))
     # Index 22 in races_0405 = Kyoto R11 = PENDING + INCOMPLETE video (未処理)
     incomplete_video_idxs_05 = {22}
-    # Additional NEEDS_SETUP races for 2026-04-05 (indices 24-27)
+    # Additional UNLINKED races for 2026-04-05 (indices 24-27)
     races_0405.extend([
-        ("東京", "中央競馬", 13, "解析設定待ち②", "ダート", 1400, "左回り", "晴", "良", "16:30", "PENDING"),
-        ("東京", "中央競馬", 14, "解析設定待ち③", "芝",    2000, "左回り", "晴", "良", "16:50", "PENDING"),
-        ("京都", "中央競馬", 13, "解析設定待ち④", "芝",    1800, "右回り", "曇", "良", "16:30", "PENDING"),
-        ("京都", "中央競馬", 14, "解析設定待ち⑤", "ダート", 1200, "右回り", "曇", "稍重", "16:50", "PENDING"),
+        ("東京", "中央競馬", 13, "4歳以上未勝利[指定]", "ダート", 1400, "左回り", "晴", "良", "16:30", "PENDING"),
+        ("東京", "中央競馬", 14, "3歳2勝クラス[指定]", "芝",    2000, "左回り", "晴", "良", "16:50", "PENDING"),
+        ("京都", "中央競馬", 13, "4歳以上2勝クラス",   "芝",    1800, "右回り", "曇", "良", "16:30", "PENDING"),
+        ("京都", "中央競馬", 14, "5歳以上未勝利[指定]", "ダート", 1200, "右回り", "曇", "稍重", "16:50", "PENDING"),
     ])
     file_race_link_failed_idxs_05 = {24, 25, 26, 27}
 
@@ -461,13 +461,13 @@ def seed():
                  dist, direction, weather, cond, status),
             )
 
-            # race_video: INCOMPLETE, NEEDS_SETUP, or FINISHED
+            # race_video: UNLINKED or LINKED
             if race_idx in incomplete_video_idxs:
-                video_status = "INCOMPLETE"
+                video_status = "UNLINKED"
             elif race_idx in file_race_link_failed_idxs:
-                video_status = "NEEDS_SETUP"
+                video_status = "UNLINKED"
             else:
-                video_status = "FINISHED"
+                video_status = "LINKED"
             video_id = str(uuid.uuid4())
             storage_path = f"gs://furlong-bucket/{race_date.replace('-', '')}/{venue_code}_{rnum:02d}.mp4"
             cur.execute(
@@ -574,34 +574,34 @@ def seed():
     # (venue, rtype, rnum, rname, surface, dist, dir, weather, cond, stime,
     #  race_status, video_status, goal_time_sec, preset_weather, preset_surface)
     test_patterns = [
-        ("中山", "中央競馬", 1, "[A] 動画未アップロード",
+        ("中山", "中央競馬", 1, "[A] 3歳未勝利[指定]",
          "芝",    1600, "右回り", "晴", "良", "10:00",
-         "PENDING",         "INCOMPLETE",  None,  None,   None),
-        ("阪神", "中央競馬", 1, "[B] 解析設定待ち（入力不足）",
+         "PENDING",         "UNLINKED",  None,  None,   None),
+        ("阪神", "中央競馬", 1, "[B] 3歳1勝クラス[指定]",
          "芝",    1600, "右回り", "晴", "良", "10:30",
-         "PENDING",         "NEEDS_SETUP", None,  None,   None),
-        ("東京", "中央競馬", 1, "[C] 準備完了（設定済み）",
+         "PENDING",         "UNLINKED",  None,  None,   None),
+        ("東京", "中央競馬", 1, "[C] 4歳以上未勝利[指定]",
          "芝",    1600, "左回り", "晴", "良", "11:00",
-         "PENDING",         "STANDBY",     83.40, "CLEAR", "TURF"),
-        ("京都", "中央競馬", 1, "[D] 解析失敗（エラーあり）",
+         "PENDING",         "LINKED",    83.40, "CLEAR", "TURF"),
+        ("京都", "中央競馬", 1, "[D] 5歳以上2勝クラス[指定]",
          "芝",    1600, "右回り", "曇", "良", "11:30",
-         "ANALYSIS_FAILED", "STANDBY",     None,  None,   None),
-        ("大井", "地方競馬", 1, "[E] 解析完了（待機中）",
+         "ANALYSIS_FAILED", "LINKED",    None,  None,   None),
+        ("大井", "地方競馬", 1, "[E] 4歳以上1勝クラス",
          "ダート", 1600, "左回り", "晴", "良", "12:00",
-         "ANALYZED",        "FINISHED",    None,  None,   None),
-        # Additional NEEDS_SETUP patterns (F-I)
-        ("中山", "中央競馬", 2, "[F] 解析設定待ち②",
+         "ANALYZED",        "LINKED",    None,  None,   None),
+        # Additional UNLINKED patterns (F-I)
+        ("中山", "中央競馬", 2, "[F] 4歳以上未勝利②",
          "ダート", 1200, "右回り", "晴", "良", "10:50",
-         "PENDING",         "NEEDS_SETUP", None,  None,   None),
-        ("東京", "中央競馬", 2, "[G] 解析設定待ち③",
+         "PENDING",         "UNLINKED",  None,  None,   None),
+        ("東京", "中央競馬", 2, "[G] 3歳オープン[特指]",
          "芝",    1400, "左回り", "晴", "良", "11:20",
-         "PENDING",         "NEEDS_SETUP", None,  None,   None),
-        ("京都", "中央競馬", 2, "[H] 解析設定待ち④",
+         "PENDING",         "UNLINKED",  None,  None,   None),
+        ("京都", "中央競馬", 2, "[H] 5歳以上3勝クラス",
          "ダート", 1800, "右回り", "曇", "稍重", "11:50",
-         "PENDING",         "NEEDS_SETUP", None,  None,   None),
-        ("阪神", "中央競馬", 2, "[I] 解析設定待ち⑤",
+         "PENDING",         "UNLINKED",  None,  None,   None),
+        ("阪神", "中央競馬", 2, "[I] 4歳以上オープン[特指]",
          "芝",    2000, "右回り", "晴", "良", "12:20",
-         "PENDING",         "NEEDS_SETUP", None,  None,   None),
+         "PENDING",         "UNLINKED",  None,  None,   None),
     ]
 
     for (venue, rtype, rnum, rname, surface, dist, direction,
@@ -635,7 +635,7 @@ def seed():
             cur.execute("UPDATE race SET current_analysis_result_id=%s WHERE id=%s", (hdr, race_id))
             insert_status_history(race_id, "ANALYZED", admin_user)
         # analysis_option for pattern C (STANDBY + goal_time set)
-        if video_status == "STANDBY" and goal_time_sec is not None:
+        if video_status == "LINKED" and goal_time_sec is not None:
             pid = get_preset_id_by(vc, preset_surface or "TURF", preset_weather or "CLEAR")
             if pid:
                 cur.execute(

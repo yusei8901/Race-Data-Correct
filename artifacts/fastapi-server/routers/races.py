@@ -9,23 +9,29 @@ router = APIRouter(prefix="/fastapi")
 # ── Status display mapping ──────────────────────────────────────────────────
 
 # English DB code → (video_col_status, analysis_col_status, display_status)
+# Used only when video_raw == "LINKED"
 STATUS_DISPLAY = {
-    "PENDING":            ("未", "",       "未処理"),
-    "ANALYZING":          ("完了", "解析中",   "解析中"),
-    "ANALYSIS_FAILED":    ("完了", "解析失敗", "解析失敗"),
-    "ANALYZED":           ("完了", "完了",     "待機中"),
-    "MATCH_FAILED":       ("完了", "突合失敗", "突合失敗"),
-    "CORRECTING":         ("完了", "完了",     "補正中"),
-    "CORRECTED":          ("完了", "完了",     "レビュー待ち"),
-    "REVISION_REQUESTED": ("完了", "完了",     "修正要請"),
-    "CONFIRMED":          ("完了", "完了",     "データ確定"),
-    "ANALYSIS_REQUESTED": ("完了", "再解析要請", "再解析要請"),
+    "PENDING":            ("連携済み", "",          "未処理"),
+    "ANALYZING":          ("連携済み", "解析中",     "解析中"),
+    "ANALYSIS_FAILED":    ("連携済み", "解析失敗",   "解析失敗"),
+    "ANALYZED":           ("連携済み", "完了",       "待機中"),
+    "MATCH_FAILED":       ("連携済み", "突合失敗",   "突合失敗"),
+    "CORRECTING":         ("連携済み", "完了",       "補正中"),
+    "CORRECTED":          ("連携済み", "完了",       "レビュー待ち"),
+    "REVISION_REQUESTED": ("連携済み", "完了",       "修正要請"),
+    "CONFIRMED":          ("連携済み", "完了",       "データ確定"),
+    "ANALYSIS_REQUESTED": ("連携済み", "再解析要請", "再解析要請"),
 }
 
 
 def compute_display_status(english_status: str, video_raw: str, prev_status: Optional[str]) -> tuple:
-    """Return (video_status, analysis_status, display_status)."""
-    vid, ana, ds = STATUS_DISPLAY.get(english_status, ("未", "", "未処理"))
+    """Return (video_status, analysis_status, display_status).
+    If video is UNLINKED, race is always '未処理' regardless of DB status.
+    ANALYZED and beyond require video to be LINKED first.
+    """
+    if video_raw != "LINKED":
+        return ("未連携", "", "未処理")
+    vid, ana, ds = STATUS_DISPLAY.get(english_status, ("連携済み", "", "未処理"))
     return vid, ana, ds
 
 
@@ -126,10 +132,8 @@ LOCK_TIMEOUT_SECONDS = 1800  # 30 minutes
 
 # race_video.status → Japanese display label
 VIDEO_STATUS_DISPLAY = {
-    "INCOMPLETE":  "未完了",
-    "NEEDS_SETUP": "解析未設定",
-    "STANDBY":     "準備完了",
-    "FINISHED":    "完了",
+    "UNLINKED": "未連携",
+    "LINKED":   "連携済み",
 }
 
 # Venue code → numeric (JRA standard + local)
@@ -222,7 +226,7 @@ def fmt_race(row: dict) -> dict:
         "reanalysis_comment": row.get("reanalysis_comment"),
         "analysis_failure_reason": row.get("analysis_failure_reason"),
         "video_raw_status": row.get("video_raw_status"),
-        "video_display_status": VIDEO_STATUS_DISPLAY.get(row.get("video_raw_status") or "", "未完了"),
+        "video_display_status": VIDEO_STATUS_DISPLAY.get(row.get("video_raw_status") or "", "未連携"),
         "video_goal_time_raw": float(row["video_goal_time"]) if row.get("video_goal_time") is not None else None,
         "preset_name": row.get("preset_name"),
         "preset_id": row.get("preset_id"),
@@ -385,7 +389,7 @@ def batch_update_races(body: dict):
         return {"updated": len(updated_rows)}
 
 
-VIDEO_ALLOWED_STATUSES = {"NEEDS_SETUP", "STANDBY"}
+VIDEO_ALLOWED_STATUSES = {"UNLINKED", "LINKED"}
 
 
 @router.patch("/races/batch-update-video")
@@ -406,7 +410,7 @@ def batch_update_video(body: dict):
                    WHERE id = (
                        SELECT id FROM race_video WHERE race_id = %s::uuid
                        ORDER BY created_at DESC LIMIT 1
-                   ) AND status = ANY(ARRAY['NEEDS_SETUP','STANDBY'])
+                   )
                    RETURNING id""",
                 (new_status, race_id),
             )
@@ -432,7 +436,7 @@ def bulk_update_preset(body: dict):
                 (race_id,),
             )
             video = cur.fetchone()
-            if not video or video["status"] in ("FINISHED", "INCOMPLETE"):
+            if not video:
                 continue
             video_id = video["id"]
             cur.execute(
@@ -449,7 +453,6 @@ def bulk_update_preset(body: dict):
                    VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, NOW(), NOW())""",
                 (race_id, video_id, preset_id, goal_time, comment),
             )
-            _auto_update_video_status(cur, video_id, goal_time, preset_id)
             updated += 1
         conn.commit()
     return {"updated": updated}
@@ -1021,20 +1024,8 @@ def get_analysis_option(race_id: str):
 
 
 def _auto_update_video_status(cur, video_id: str, video_goal_time, preset_id) -> None:
-    """Auto-transition race_video.status based on goal_time + preset completeness."""
-    cur.execute("SELECT status FROM race_video WHERE id = %s", (video_id,))
-    row = cur.fetchone()
-    if not row:
-        return
-    current = row["status"]
-    if current in ("FINISHED", "INCOMPLETE"):
-        return
-    new_status = "STANDBY" if (video_goal_time is not None and preset_id) else "NEEDS_SETUP"
-    if new_status != current:
-        cur.execute(
-            "UPDATE race_video SET status = %s, updated_at = NOW() WHERE id = %s",
-            (new_status, video_id),
-        )
+    """No-op: video status (UNLINKED/LINKED) is managed manually, not auto-derived from analysis options."""
+    pass
 
 
 @router.post("/races/{race_id}/analysis-option")
