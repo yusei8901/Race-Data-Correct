@@ -809,6 +809,12 @@ export default function RaceList() {
           <Table className="w-full table-fixed">
             <TableHeader className="bg-muted/50 sticky top-0 z-10 backdrop-blur">
               <TableRow>
+                <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
+                <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-left text-xs">レース名</TableHead>
+                <TableHead style={{ width: "6%" }} className="text-center text-xs">コース</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-center text-xs">距離</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 {isAdmin && (
                   <TableHead style={{ width: "3%" }} className="text-center">
                     <Checkbox
@@ -819,18 +825,12 @@ export default function RaceList() {
                     />
                   </TableHead>
                 )}
-                <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
-                <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
-                <TableHead style={{ width: "10%" }} className="text-left text-xs">レース名</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-center text-xs">コース</TableHead>
-                <TableHead style={{ width: "5%" }} className="text-center text-xs">距離</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 <TableHead style={{ width: "9%" }} className="text-xs">ステータス</TableHead>
-                <TableHead style={{ width: "8%" }} className="text-xs">詳細</TableHead>
-                <TableHead style={{ width: "10%" }} className="text-xs">内容</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-xs">担当者</TableHead>
-                <TableHead style={{ width: "5%" }} className="text-xs">更新時間</TableHead>
-                <TableHead style={{ width: isAdmin ? "20%" : "23%" }} className="text-center text-xs">操作</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-xs">詳細</TableHead>
+                <TableHead style={{ width: "9%" }} className="text-xs">内容</TableHead>
+                <TableHead style={{ width: "6%" }} className="text-xs">担当者</TableHead>
+                <TableHead style={{ width: "4%" }} className="text-xs">更新</TableHead>
+                <TableHead style={{ width: isAdmin ? "25%" : "30%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -898,28 +898,24 @@ export default function RaceList() {
                         </TableCell>
                       )}
                       <TableCell>
-                        {derivedStatus === "解析失敗" && race.analysis_failure_reason ? (
-                          <div className="inline-flex flex-col rounded border border-red-800 overflow-hidden w-fit max-w-full">
-                            <div className="px-1.5 py-0.5 bg-red-900/50">
-                              <span className="text-[10px] font-normal text-red-400">解析失敗</span>
-                            </div>
-                            <div className="px-1.5 py-0.5 bg-red-950/60 border-t border-red-800/60">
-                              <span className="text-[8px] text-red-400/75 leading-tight block break-words">
-                                {race.analysis_failure_reason}
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className} w-fit`}>
-                            {badgeProps.label}
-                          </Badge>
-                        )}
+                        <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className} w-fit`}>
+                          {badgeProps.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {getEventLabel(race.event)}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground max-w-[120px]">
+                        <span className="block truncate" title={race.detail ?? undefined}>
+                          {race.detail || "-"}
+                        </span>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground truncate">{race.assigned_user || "-"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{updatedTime}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 justify-center">
-                          {opBlocked ? (
+                          {/* CONFIRMED: 管理者のみ編集導線を表示 */}
+                          {derivedStatus === "データ確定" && !isAdmin ? null : opBlocked ? (
                             <Button
                               size="sm"
                               disabled
