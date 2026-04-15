@@ -46,7 +46,7 @@ type DerivedStatus =
   | "要補正"
   | "補正中"
   | "修正要請"
-  | "穑合失敗"
+  | "突合失敗"
   | "レビュー待ち"
   | "管理者対応"
   | "再解析要請"
@@ -54,7 +54,7 @@ type DerivedStatus =
 
 const KNOWN_STATUSES: ReadonlySet<DerivedStatus> = new Set<DerivedStatus>([
   "解析待機中", "解析中", "解析失敗", "要補正", "補正中",
-  "修正要請", "穑合失敗", "レビュー待ち", "管理者対応", "再解析要請", "データ確定",
+  "修正要請", "突合失敗", "レビュー待ち", "管理者対応", "再解析要請", "データ確定",
 ]);
 
 function getDerivedStatus(race: Race): DerivedStatus {
@@ -73,7 +73,7 @@ function getDerivedStatus(race: Race): DerivedStatus {
   if (sc === "IN_REVIEW")       return "レビュー待ち";
   if (sc === "NEEDS_ATTENTION") {
     if (ev === "ANALYSIS_FAILED")    return "解析失敗";
-    if (ev === "MATCH_FAILED")       return "穑合失敗";
+    if (ev === "MATCH_FAILED")       return "突合失敗";
     if (ev === "ANALYSIS_REQUESTED") return "再解析要請";
     return "管理者対応";
   }
@@ -91,7 +91,7 @@ function getStatusBadgeProps(status: DerivedStatus) {
     case "再解析要請": return { className: "bg-red-900/40 text-red-400 border-red-800",     label: "再解析要請" };
     case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
     case "修正要請": return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };
-    case "穑合失敗": return { className: "bg-red-950/60 text-red-400 border-red-900",       label: "穑合失敗" };
+    case "突合失敗": return { className: "bg-red-950/60 text-red-400 border-red-900",       label: "突合失敗" };
     case "管理者対応": return { className: "bg-orange-900/30 text-orange-400 border-orange-800", label: "管理者対応" };
     case "データ確定": return { className: "bg-green-900/40 text-green-400 border-green-800",   label: "データ確定" };
     default:         return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
@@ -192,14 +192,14 @@ function getVideoBadgeProps(displayStatus: string | null | undefined) {
   }
 }
 
-const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析要請", "穑合失敗"]);
+const ALERT_STATUSES: Set<string> = new Set(["修正要請", "解析失敗", "再解析要請", "突合失敗"]);
 const HIGHLIGHT_STATUSES: Set<string> = new Set([...ALERT_STATUSES, "解析待機中"]);
 
 const ALERT_STYLE_MAP: Record<string, { bg: string; border: string; hoverBorder: string; hoverBg: string; shadow: string; textColor: string }> = {
   "修正要請":   { bg: "bg-orange-950/80", border: "border-orange-500", hoverBorder: "hover:border-orange-300", hoverBg: "hover:bg-orange-900/60", shadow: "shadow-[0_0_10px_rgba(249,115,22,0.45)]", textColor: "text-orange-200" },
   "解析失敗":   { bg: "bg-red-950/80",    border: "border-red-500",    hoverBorder: "hover:border-red-300",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
   "再解析要請": { bg: "bg-red-950/80",    border: "border-red-500",    hoverBorder: "hover:border-red-300",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
-  "穑合失敗":   { bg: "bg-red-950/80",    border: "border-red-600",    hoverBorder: "hover:border-red-400",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
+  "突合失敗":   { bg: "bg-red-950/80",    border: "border-red-600",    hoverBorder: "hover:border-red-400",    hoverBg: "hover:bg-red-900/60",    shadow: "shadow-[0_0_10px_rgba(239,68,68,0.45)]",  textColor: "text-red-200" },
 };
 
 type FilterKey = string;
@@ -262,12 +262,24 @@ const TABS: TabDef[] = [
     subFilters: [
       { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400", matchFn: (r) => r.status_code === "IN_REVIEW" },
       { key: "解析失敗",   label: "解析失敗",   colorClass: "text-red-400",    matchFn: (r) => r.event === "ANALYSIS_FAILED" },
-      { key: "穑合失敗",   label: "穑合失敗",   colorClass: "text-red-400",    matchFn: (r) => r.event === "MATCH_FAILED" },
+      { key: "突合失敗",   label: "突合失敗",   colorClass: "text-red-400",    matchFn: (r) => r.event === "MATCH_FAILED" },
       { key: "再解析要請", label: "再解析要請", colorClass: "text-red-400",    matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
     ],
   },
 ];
 
+
+function getEventLabel(event: string | null | undefined): string {
+  if (!event) return "-";
+  switch (event) {
+    case "EDITING":            return "補正中";
+    case "REVISION_REQUESTED": return "修正要請";
+    case "ANALYSIS_FAILED":    return "解析失敗";
+    case "MATCH_FAILED":       return "突合失敗";
+    case "ANALYSIS_REQUESTED": return "再解析要請";
+    default: return event;
+  }
+}
 
 function getOperationConfig(status: DerivedStatus, isAdmin: boolean): { label: string; colorClass: string; disabled: boolean; adminOnly: boolean } {
   switch (status) {
@@ -277,7 +289,7 @@ function getOperationConfig(status: DerivedStatus, isAdmin: boolean): { label: s
       return { label: "レビュー", colorClass: "bg-purple-700 hover:bg-purple-600 text-white border-0", disabled: false, adminOnly: true };
     case "再解析要請":
       return { label: "レース詳細", colorClass: "bg-orange-700 hover:bg-orange-600 text-white border-0", disabled: false, adminOnly: true };
-    case "穑合失敗":
+    case "突合失敗":
       return { label: "レース詳細", colorClass: "bg-orange-700 hover:bg-orange-600 text-white border-0", disabled: false, adminOnly: true };
     case "解析中":
       return { label: "解析中", colorClass: "bg-zinc-700 text-white border-0", disabled: true, adminOnly: false };
@@ -797,12 +809,6 @@ export default function RaceList() {
           <Table className="w-full table-fixed">
             <TableHeader className="bg-muted/50 sticky top-0 z-10 backdrop-blur">
               <TableRow>
-                <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
-                <TableHead style={{ width: "6%" }} className="text-center text-xs">R</TableHead>
-                <TableHead style={{ width: "10%" }} className="text-left text-xs">レース名</TableHead>
-                <TableHead style={{ width: "8%" }} className="text-center text-xs">コース</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-center text-xs">距離</TableHead>
-                <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
                 {isAdmin && (
                   <TableHead style={{ width: "3%" }} className="text-center">
                     <Checkbox
@@ -813,24 +819,32 @@ export default function RaceList() {
                     />
                   </TableHead>
                 )}
-                <TableHead style={{ width: "10%" }} className="text-xs">ステータス</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-center text-xs">競馬場</TableHead>
+                <TableHead style={{ width: "4%" }} className="text-center text-xs">R</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-left text-xs">レース名</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-center text-xs">コース</TableHead>
+                <TableHead style={{ width: "5%" }} className="text-center text-xs">距離</TableHead>
+                <TableHead style={{ width: "7%" }} className="text-center text-xs">動画</TableHead>
+                <TableHead style={{ width: "9%" }} className="text-xs">ステータス</TableHead>
+                <TableHead style={{ width: "8%" }} className="text-xs">詳細</TableHead>
+                <TableHead style={{ width: "10%" }} className="text-xs">内容</TableHead>
                 <TableHead style={{ width: "7%" }} className="text-xs">担当者</TableHead>
                 <TableHead style={{ width: "5%" }} className="text-xs">更新時間</TableHead>
-                <TableHead style={{ width: isAdmin ? "30%" : "36%" }} className="text-center text-xs">操作</TableHead>
+                <TableHead style={{ width: isAdmin ? "20%" : "23%" }} className="text-center text-xs">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isRacesLoading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: isAdmin ? 10 : 9 }).map((_, j) => (
+                    {Array.from({ length: isAdmin ? 13 : 12 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : filteredRaces.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 10 : 9} className="h-32 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={isAdmin ? 13 : 12} className="h-32 text-center text-muted-foreground text-sm">
                     該当するレースが見つかりません
                   </TableCell>
                 </TableRow>
