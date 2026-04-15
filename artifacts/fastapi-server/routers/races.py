@@ -243,6 +243,7 @@ def fmt_race(row: dict) -> dict:
         "status_code": status_code,
         "status_id": row.get("status_id"),
         "tab_group": row.get("tab_group"),
+        "display_name": row.get("status_display_name"),
         "event": event,
         "detail": row.get("detail"),
         # Backward-compat status (maps new model back to old codes)

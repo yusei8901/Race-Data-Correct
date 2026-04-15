@@ -31,6 +31,11 @@ export interface Race {
   /** 待機中 | 要補正 | 管理者対応待ち | データ確定 */
   tab_group: string;
   /**
+   * race_statuses.display_name (ステータスコードレベルの表示名)
+   * @nullable
+   */
+  display_name?: string | null;
+  /**
    * EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED
    * @nullable
    */

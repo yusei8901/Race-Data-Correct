@@ -487,6 +487,9 @@ components:
         tab_group:
           type: string
           description: "待機中 | 要補正 | 管理者対応待ち | データ確定"
+        display_name:
+          type: ["string", "null"]
+          description: "race_statuses.display_name (ステータスコードレベルの表示名)"
         event:
           type: ["string", "null"]
           description: "EDITING | REVISION_REQUESTED | ANALYSIS_FAILED | MATCH_FAILED | ANALYSIS_REQUESTED"

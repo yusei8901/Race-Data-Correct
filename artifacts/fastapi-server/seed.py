@@ -437,6 +437,15 @@ def seed():
         )
         return sess_id
 
+    # ── サンプル detail テキスト (event → detail) ────────────────────────────
+    EVENT_DETAIL_MAP = {
+        "EDITING":            "馬番3が映像見切れのため補正作業中。完了後にレビュー提出予定。",
+        "REVISION_REQUESTED": "タイム計測に誤差が発生。担当者に再補正を依頼済み。",
+        "ANALYSIS_FAILED":    "フレームレート不足（12fps）により解析エンジンが処理不能。動画の再撮影が必要。",
+        "MATCH_FAILED":       "JRA公式レースデータとの突合に失敗。馬番マッピングを確認してください。",
+        "ANALYSIS_REQUESTED": "新しいBBoxパラメータセットで再解析を要請済み。優先度：高。",
+    }
+
     # ── Process a list of races ───────────────────────────────────────────────
     def process_races(race_date, races_list, inject_bad_data=False,
                       incomplete_video_idxs=None, file_race_link_failed_idxs=None):
@@ -466,15 +475,16 @@ def seed():
                 "ANALYSIS_REQUESTED": ("NEEDS_ATTENTION", "ANALYSIS_REQUESTED"),
             }
             sc, ev = OLD_TO_NEW.get(status, ("WAITING", None))
+            detail = EVENT_DETAIL_MAP.get(ev) if ev else None
             cur.execute(
                 """INSERT INTO race
                    (id, event_id, race_number, race_name, start_time, surface_type,
                     distance, direction, weather, track_condition,
-                    status_id, event)
+                    status_id, event, detail)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           (SELECT id FROM race_statuses WHERE status_code = %s), %s)""",
+                           (SELECT id FROM race_statuses WHERE status_code = %s), %s, %s)""",
                 (race_id, event_id, rnum, rname, stime, surface,
-                 dist, direction, weather, cond, sc, ev),
+                 dist, direction, weather, cond, sc, ev, detail),
             )
 
             # race_video: UNLINKED or LINKED
@@ -639,15 +649,16 @@ def seed():
             "ANALYSIS_REQUESTED": ("NEEDS_ATTENTION", "ANALYSIS_REQUESTED"),
         }
         sc_tp, ev_tp = OLD_TO_NEW_TP.get(race_status, ("WAITING", None))
+        detail_tp = EVENT_DETAIL_MAP.get(ev_tp) if ev_tp else None
         cur.execute(
             """INSERT INTO race
                (id, event_id, race_number, race_name, start_time, surface_type,
                 distance, direction, weather, track_condition,
-                status_id, event)
+                status_id, event, detail)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                       (SELECT id FROM race_statuses WHERE status_code = %s), %s)""",
+                       (SELECT id FROM race_statuses WHERE status_code = %s), %s, %s)""",
             (race_id, eid, rnum, rname, stime, surface,
-             dist, direction, weather, cond, sc_tp, ev_tp),
+             dist, direction, weather, cond, sc_tp, ev_tp, detail_tp),
         )
         video_id = str(uuid.uuid4())
         sp = f"gs://furlong-bucket/{race_date_test.replace('-','')}/{vc}_{rnum:02d}.mp4"
@@ -865,10 +876,12 @@ def seed():
              psycopg2.extras.Json(bp["parameters"])),
         )
 
-    # ── BBOX annotations (sample data for CORRECTING races) ───────────────────
+    # ── BBOX annotations (sample data for EDITING/IN_REVIEW races) ──────────
     cur.execute("""
         SELECT id, distance, surface_type FROM race
-        WHERE status IN ('CORRECTING', 'CORRECTED')
+        WHERE (event = 'EDITING' OR status_id IN (
+            SELECT id FROM race_statuses WHERE status_code = 'IN_REVIEW'
+        ))
         LIMIT 2
     """)
     _bbox_races = cur.fetchall()

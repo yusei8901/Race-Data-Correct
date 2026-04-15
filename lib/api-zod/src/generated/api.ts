@@ -47,6 +47,10 @@ export const GetRacesResponseItem = zod.object({
   tab_group: zod
     .string()
     .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  display_name: zod
+    .string()
+    .nullish()
+    .describe("race_statuses.display_name (ステータスコードレベルの表示名)"),
   event: zod
     .string()
     .nullish()
@@ -155,6 +159,10 @@ export const GetRaceResponse = zod.object({
   tab_group: zod
     .string()
     .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  display_name: zod
+    .string()
+    .nullish()
+    .describe("race_statuses.display_name (ステータスコードレベルの表示名)"),
   event: zod
     .string()
     .nullish()
@@ -227,6 +235,10 @@ export const UpdateRaceResponse = zod.object({
   tab_group: zod
     .string()
     .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  display_name: zod
+    .string()
+    .nullish()
+    .describe("race_statuses.display_name (ステータスコードレベルの表示名)"),
   event: zod
     .string()
     .nullish()
@@ -304,6 +316,10 @@ export const StartCorrectionResponse = zod.object({
   tab_group: zod
     .string()
     .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  display_name: zod
+    .string()
+    .nullish()
+    .describe("race_statuses.display_name (ステータスコードレベルの表示名)"),
   event: zod
     .string()
     .nullish()
@@ -370,6 +386,10 @@ export const CompleteCorrectionResponse = zod.object({
   tab_group: zod
     .string()
     .describe("待機中 | 要補正 | 管理者対応待ち | データ確定"),
+  display_name: zod
+    .string()
+    .nullish()
+    .describe("race_statuses.display_name (ステータスコードレベルの表示名)"),
   event: zod
     .string()
     .nullish()

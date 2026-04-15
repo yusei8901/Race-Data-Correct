@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
-import { Calendar, RefreshCcw, AlertTriangle, Download, RefreshCw } from "lucide-react";
+import { Calendar, RefreshCcw, Download, RefreshCw } from "lucide-react";
 import {
   useGetRaces,
   getGetRacesQueryKey,
@@ -83,18 +83,35 @@ function getDerivedStatus(race: Race): DerivedStatus {
 
 function getStatusBadgeProps(status: DerivedStatus) {
   switch (status) {
+    // 待機中グループ → zinc
     case "解析待機中": return { className: "bg-zinc-800/60 text-zinc-400 border-zinc-700",     label: "解析待機中" };
-    case "解析中":   return { className: "bg-cyan-900/40 text-cyan-400 border-cyan-800",     label: "解析中" };
-    case "解析失敗": return { className: "bg-red-900/50 text-red-400 border-red-800",       label: "解析失敗" };
-    case "要補正":   return { className: "bg-amber-900/40 text-amber-300 border-amber-700",   label: "要補正" };
-    case "補正中":   return { className: "bg-cyan-900/50 text-cyan-400 border-cyan-800",     label: "補正中" };
-    case "再解析要請": return { className: "bg-red-900/40 text-red-400 border-red-800",     label: "再解析要請" };
-    case "レビュー待ち": return { className: "bg-purple-900/40 text-purple-400 border-purple-800", label: "レビュー待ち" };
-    case "修正要請": return { className: "bg-orange-900/40 text-orange-400 border-orange-800", label: "修正要請" };
-    case "突合失敗": return { className: "bg-red-950/60 text-red-400 border-red-900",       label: "突合失敗" };
+    case "解析中":     return { className: "bg-zinc-800/70 text-zinc-300 border-zinc-600",     label: "解析中" };
+    // 要補正グループ → amber
+    case "要補正":     return { className: "bg-amber-900/40 text-amber-300 border-amber-700",  label: "要補正" };
+    case "補正中":     return { className: "bg-amber-900/50 text-amber-300 border-amber-700",  label: "補正中" };
+    case "修正要請":   return { className: "bg-amber-900/50 text-amber-300 border-amber-700",  label: "修正要請" };
+    // データ確定グループ → green
+    case "データ確定": return { className: "bg-green-900/40 text-green-400 border-green-800",  label: "データ確定" };
+    // 管理者対応グループ → orange
+    case "レビュー待ち": return { className: "bg-orange-900/40 text-orange-400 border-orange-700", label: "レビュー待ち" };
+    case "解析失敗":   return { className: "bg-orange-900/50 text-orange-400 border-orange-700", label: "解析失敗" };
+    case "突合失敗":   return { className: "bg-orange-900/50 text-orange-400 border-orange-700", label: "突合失敗" };
+    case "再解析要請": return { className: "bg-orange-900/50 text-orange-400 border-orange-700", label: "再解析要請" };
     case "管理者対応": return { className: "bg-orange-900/30 text-orange-400 border-orange-800", label: "管理者対応" };
-    case "データ確定": return { className: "bg-green-900/40 text-green-400 border-green-800",   label: "データ確定" };
-    default:         return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
+    default:           return { className: "bg-muted text-muted-foreground border-muted-border", label: status };
+  }
+}
+
+// ステータス列: status_codeベースのバッジ色（タブ色と統一）
+function getStatusCodeBadgeClass(statusCode: string | null | undefined): string {
+  switch (statusCode) {
+    case "WAITING":         return "bg-zinc-800/60 text-zinc-400 border-zinc-700";
+    case "ANALYZING":       return "bg-zinc-800/70 text-zinc-300 border-zinc-600";
+    case "ANALYZED":        return "bg-amber-900/40 text-amber-300 border-amber-700";
+    case "IN_REVIEW":       return "bg-orange-900/40 text-orange-400 border-orange-700";
+    case "NEEDS_ATTENTION": return "bg-orange-900/50 text-orange-400 border-orange-700";
+    case "CONFIRMED":       return "bg-green-900/40 text-green-400 border-green-800";
+    default:                return "bg-muted text-muted-foreground border-border";
   }
 }
 
@@ -248,9 +265,9 @@ const TABS: TabDef[] = [
     badgeActiveClass: "bg-amber-600/50 text-amber-100",
     matchFn: (r) => r.status_code === "ANALYZED",
     subFilters: [
-      { key: "補正中",    label: "補正中",   colorClass: "text-cyan-400",   activeClass: "bg-cyan-900/50 border-cyan-500/70 text-cyan-200",   matchFn: (r) => r.status_code === "ANALYZED" && r.event === "EDITING" },
-      { key: "修正要請",  label: "修正要請", colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.status_code === "ANALYZED" && r.event === "REVISION_REQUESTED" },
-      { key: "要補正のみ", label: "補正待ち", colorClass: "text-amber-300",  activeClass: "bg-amber-900/50 border-amber-500/70 text-amber-200",  matchFn: (r) => r.status_code === "ANALYZED" && !r.event },
+      { key: "補正中",    label: "補正中",   colorClass: "text-amber-300", activeClass: "bg-amber-900/50 border-amber-500/70 text-amber-200", matchFn: (r) => r.status_code === "ANALYZED" && r.event === "EDITING" },
+      { key: "修正要請",  label: "修正要請", colorClass: "text-amber-300", activeClass: "bg-amber-900/50 border-amber-500/70 text-amber-200", matchFn: (r) => r.status_code === "ANALYZED" && r.event === "REVISION_REQUESTED" },
+      { key: "要補正のみ", label: "補正待ち", colorClass: "text-amber-300", activeClass: "bg-amber-900/50 border-amber-500/70 text-amber-200", matchFn: (r) => r.status_code === "ANALYZED" && !r.event },
     ],
   },
   {
@@ -262,21 +279,21 @@ const TABS: TabDef[] = [
     matchFn: (r) => r.tab_group === "待機中",
     subFilters: [
       { key: "解析待機中", label: "解析待機中", colorClass: "text-zinc-400", activeClass: "bg-zinc-700/60 border-zinc-500/70 text-zinc-200", matchFn: (r) => r.status_code === "WAITING" },
-      { key: "解析中",    label: "解析中",    colorClass: "text-cyan-400",  activeClass: "bg-cyan-900/50 border-cyan-500/70 text-cyan-200",  matchFn: (r) => r.status_code === "ANALYZING" },
+      { key: "解析中",    label: "解析中",    colorClass: "text-zinc-400",  activeClass: "bg-zinc-700/60 border-zinc-500/70 text-zinc-200",  matchFn: (r) => r.status_code === "ANALYZING" },
     ],
   },
   {
     key: "管理者対応待ち",
-    label: "管理者対応待ち",
+    label: "管理者対応",
     colorClass: "text-orange-400",
     activeClass: "bg-orange-900/35 border-orange-500/70 text-orange-200 shadow-[0_0_12px_rgba(249,115,22,0.35)]",
     badgeActiveClass: "bg-orange-600/50 text-orange-100",
     matchFn: (r) => r.tab_group === "管理者対応待ち",
     subFilters: [
-      { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400", activeClass: "bg-purple-900/50 border-purple-500/70 text-purple-200", matchFn: (r) => r.status_code === "IN_REVIEW" },
-      { key: "解析失敗",    label: "解析失敗",    colorClass: "text-red-400",    activeClass: "bg-red-900/50 border-red-500/70 text-red-200",           matchFn: (r) => r.event === "ANALYSIS_FAILED" },
-      { key: "突合失敗",    label: "突合失敗",    colorClass: "text-red-400",    activeClass: "bg-red-900/50 border-red-500/70 text-red-200",           matchFn: (r) => r.event === "MATCH_FAILED" },
-      { key: "再解析要請",  label: "再解析要請",  colorClass: "text-red-400",    activeClass: "bg-red-900/50 border-red-500/70 text-red-200",           matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
+      { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.status_code === "IN_REVIEW" },
+      { key: "解析失敗",    label: "解析失敗",    colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.event === "ANALYSIS_FAILED" },
+      { key: "突合失敗",    label: "突合失敗",    colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.event === "MATCH_FAILED" },
+      { key: "再解析要請",  label: "再解析要請",  colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
     ],
   },
 ];
@@ -783,28 +800,31 @@ export default function RaceList() {
             {activeTab.subFilters.map((sf) => {
               const sfKey = `${activeTab.key}::${sf.key}`;
               const sfCount = tabCounts[sfKey] ?? 0;
-              const isAlertSf = ALERT_STATUSES.has(sf.key) && sfCount > 0;
+              const hasCount = sfCount > 0;
               const isActiveSf = subFilter === sf.key;
               return (
                 <button
                   key={sf.key}
                   onClick={() => setSubFilter(subFilter === sf.key ? null : sf.key)}
-                  className={`px-3 py-1 rounded-md text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1.5 ${
+                  className={`relative px-3 py-1 rounded-md text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1.5 ${
                     isActiveSf
                       ? sf.activeClass
-                      : isAlertSf
-                        ? "bg-red-950/60 border-red-700/70 text-red-400 hover:bg-red-900/50 hover:border-red-500 shadow-[0_0_8px_rgba(239,68,68,0.2)]"
-                        : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                      : hasCount
+                        ? `border-zinc-600 bg-zinc-800/60 ${sf.colorClass} hover:bg-zinc-700/60`
+                        : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
                   }`}
                 >
-                  {isAlertSf && <AlertTriangle className="h-3 w-3 flex-shrink-0" />}
+                  {/* 件数があれば右上にアラートドット */}
+                  {hasCount && !isActiveSf && (
+                    <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-current opacity-80 shadow-[0_0_4px_currentColor]" />
+                  )}
                   <span>{sf.label}</span>
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center ${
                     isActiveSf
                       ? "bg-white/15 text-white"
-                      : isAlertSf
-                        ? "bg-red-800/60 text-red-200"
-                        : "bg-zinc-800 text-zinc-500"
+                      : hasCount
+                        ? "bg-zinc-700/80 text-zinc-200"
+                        : "bg-zinc-800 text-zinc-600"
                   }`}>
                     {sfCount}
                   </span>
@@ -933,14 +953,14 @@ export default function RaceList() {
                         </TableCell>
                       )}
                       <TableCell>
-                        <Badge variant="outline" className={`text-[10px] font-normal border ${badgeProps.className} w-fit`}>
-                          {badgeProps.label}
+                        <Badge variant="outline" className={`text-[10px] font-normal border ${getStatusCodeBadgeClass(race.status_code)} w-fit whitespace-nowrap`}>
+                          {race.display_name || badgeProps.label}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                         {getEventLabel(race.event)}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[120px]">
+                      <TableCell className="text-xs text-muted-foreground max-w-[160px]">
                         <span className="block truncate" title={race.detail ?? undefined}>
                           {race.detail || "-"}
                         </span>
