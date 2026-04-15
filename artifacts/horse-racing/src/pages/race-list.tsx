@@ -209,6 +209,8 @@ interface TabDef {
   key: FilterKey;
   label: string;
   colorClass: string;
+  activeClass: string;
+  badgeActiveClass: string;
   matchFn: (race: Race) => boolean;
   subFilters?: SubFilterDef[];
 }
@@ -217,6 +219,7 @@ interface SubFilterDef {
   key: string;
   label: string;
   colorClass: string;
+  activeClass: string;
   matchFn: (race: Race) => boolean;
 }
 
@@ -225,45 +228,55 @@ const TABS: TabDef[] = [
     key: "total",
     label: "総レース",
     colorClass: "text-zinc-300",
+    activeClass: "bg-zinc-700/50 border-zinc-500/70 text-zinc-100 shadow-[0_0_10px_rgba(161,161,170,0.25)]",
+    badgeActiveClass: "bg-zinc-500/50 text-zinc-100",
     matchFn: () => true,
   },
   {
     key: "データ確定",
     label: "データ確定",
     colorClass: "text-green-400",
+    activeClass: "bg-green-900/40 border-green-500/70 text-green-300 shadow-[0_0_10px_rgba(74,222,128,0.3)]",
+    badgeActiveClass: "bg-green-600/50 text-green-100",
     matchFn: (r) => r.status_code === "CONFIRMED",
   },
   {
     key: "要補正",
     label: "要補正",
     colorClass: "text-amber-300",
+    activeClass: "bg-amber-900/35 border-amber-500/70 text-amber-200 shadow-[0_0_10px_rgba(251,191,36,0.3)]",
+    badgeActiveClass: "bg-amber-600/50 text-amber-100",
     matchFn: (r) => r.status_code === "ANALYZED",
     subFilters: [
-      { key: "補正中",   label: "補正中",   colorClass: "text-cyan-400",   matchFn: (r) => r.status_code === "ANALYZED" && r.event === "EDITING" },
-      { key: "修正要請", label: "修正要請", colorClass: "text-orange-400", matchFn: (r) => r.status_code === "ANALYZED" && r.event === "REVISION_REQUESTED" },
-      { key: "要補正のみ",  label: "補正待ち", colorClass: "text-amber-300",  matchFn: (r) => r.status_code === "ANALYZED" && !r.event },
+      { key: "補正中",    label: "補正中",   colorClass: "text-cyan-400",   activeClass: "bg-cyan-900/50 border-cyan-500/70 text-cyan-200",   matchFn: (r) => r.status_code === "ANALYZED" && r.event === "EDITING" },
+      { key: "修正要請",  label: "修正要請", colorClass: "text-orange-400", activeClass: "bg-orange-900/50 border-orange-500/70 text-orange-200", matchFn: (r) => r.status_code === "ANALYZED" && r.event === "REVISION_REQUESTED" },
+      { key: "要補正のみ", label: "補正待ち", colorClass: "text-amber-300",  activeClass: "bg-amber-900/50 border-amber-500/70 text-amber-200",  matchFn: (r) => r.status_code === "ANALYZED" && !r.event },
     ],
   },
   {
     key: "待機中",
     label: "待機中",
     colorClass: "text-zinc-400",
+    activeClass: "bg-zinc-800/70 border-zinc-600/70 text-zinc-200 shadow-[0_0_8px_rgba(161,161,170,0.18)]",
+    badgeActiveClass: "bg-zinc-600/50 text-zinc-200",
     matchFn: (r) => r.tab_group === "待機中",
     subFilters: [
-      { key: "解析待機中", label: "解析待機中", colorClass: "text-zinc-400",   matchFn: (r) => r.status_code === "WAITING" },
-      { key: "解析中",   label: "解析中",   colorClass: "text-cyan-400",   matchFn: (r) => r.status_code === "ANALYZING" },
+      { key: "解析待機中", label: "解析待機中", colorClass: "text-zinc-400", activeClass: "bg-zinc-700/60 border-zinc-500/70 text-zinc-200", matchFn: (r) => r.status_code === "WAITING" },
+      { key: "解析中",    label: "解析中",    colorClass: "text-cyan-400",  activeClass: "bg-cyan-900/50 border-cyan-500/70 text-cyan-200",  matchFn: (r) => r.status_code === "ANALYZING" },
     ],
   },
   {
     key: "管理者対応待ち",
     label: "管理者対応待ち",
     colorClass: "text-orange-400",
+    activeClass: "bg-orange-900/35 border-orange-500/70 text-orange-200 shadow-[0_0_12px_rgba(249,115,22,0.35)]",
+    badgeActiveClass: "bg-orange-600/50 text-orange-100",
     matchFn: (r) => r.tab_group === "管理者対応待ち",
     subFilters: [
-      { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400", matchFn: (r) => r.status_code === "IN_REVIEW" },
-      { key: "解析失敗",   label: "解析失敗",   colorClass: "text-red-400",    matchFn: (r) => r.event === "ANALYSIS_FAILED" },
-      { key: "突合失敗",   label: "突合失敗",   colorClass: "text-red-400",    matchFn: (r) => r.event === "MATCH_FAILED" },
-      { key: "再解析要請", label: "再解析要請", colorClass: "text-red-400",    matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
+      { key: "レビュー待ち", label: "レビュー待ち", colorClass: "text-purple-400", activeClass: "bg-purple-900/50 border-purple-500/70 text-purple-200", matchFn: (r) => r.status_code === "IN_REVIEW" },
+      { key: "解析失敗",    label: "解析失敗",    colorClass: "text-red-400",    activeClass: "bg-red-900/50 border-red-500/70 text-red-200",           matchFn: (r) => r.event === "ANALYSIS_FAILED" },
+      { key: "突合失敗",    label: "突合失敗",    colorClass: "text-red-400",    activeClass: "bg-red-900/50 border-red-500/70 text-red-200",           matchFn: (r) => r.event === "MATCH_FAILED" },
+      { key: "再解析要請",  label: "再解析要請",  colorClass: "text-red-400",    activeClass: "bg-red-900/50 border-red-500/70 text-red-200",           matchFn: (r) => r.event === "ANALYSIS_REQUESTED" },
     ],
   },
 ];
@@ -715,12 +728,13 @@ export default function RaceList() {
       </div>
 
       {/* Status filter — 5-tab system */}
-      <div className="px-6 pt-2 pb-0">
+      <div className="px-6 pt-3 pb-0">
         {/* Tab row */}
-        <div className="flex gap-1 border-b border-border">
+        <div className="flex gap-1.5 border-b border-zinc-800 pb-2">
           {TABS.map((tab) => {
             const count = tabCounts[tab.key] ?? 0;
             const isActive = tabFilter === tab.key;
+            const hasAlert = tab.key === "管理者対応待ち" && count > 0;
             return (
               <button
                 key={tab.key}
@@ -729,50 +743,71 @@ export default function RaceList() {
                   setSubFilter(null);
                   setCheckedIds(new Set());
                 }}
-                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap -mb-px ${
+                className={`relative flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold border transition-all duration-150 cursor-pointer whitespace-nowrap ${
                   isActive
-                    ? `border-primary ${tab.colorClass}`
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground"
+                    ? tab.activeClass
+                    : `border-zinc-700/50 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 hover:border-zinc-600 ${hasAlert ? "border-orange-800/60 text-orange-500/70" : ""}`
                 }`}
               >
-                {tab.label}
-                <span className={`text-[11px] font-bold ${tab.colorClass}`}>{count}</span>
+                {hasAlert && !isActive && (
+                  <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.8)]" />
+                )}
+                <span>{tab.label}</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center transition-all ${
+                  isActive
+                    ? tab.badgeActiveClass
+                    : hasAlert
+                      ? "bg-orange-900/60 text-orange-300"
+                      : "bg-zinc-800 text-zinc-500"
+                }`}>
+                  {count}
+                </span>
               </button>
             );
           })}
         </div>
         {/* Sub-filter row */}
         {activeTab.subFilters && (
-          <div className="flex gap-1 py-1.5 flex-wrap">
+          <div className="flex gap-1.5 py-2 flex-wrap items-center">
+            <span className="text-[10px] text-zinc-600 mr-0.5 tracking-wide">絞込：</span>
             <button
               onClick={() => setSubFilter(null)}
-              className={`px-3 py-0.5 rounded text-[11px] border cursor-pointer transition-colors ${
+              className={`px-3 py-1 rounded-md text-[11px] font-medium border cursor-pointer transition-all ${
                 !subFilter
-                  ? "bg-primary/20 border-primary text-primary"
-                  : "bg-muted/30 border-border text-muted-foreground hover:border-primary/50"
+                  ? activeTab.activeClass
+                  : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
               }`}
             >
-              すべて ({tabCounts[activeTab.key] ?? 0})
+              すべて <span className="font-bold ml-1">{tabCounts[activeTab.key] ?? 0}</span>
             </button>
             {activeTab.subFilters.map((sf) => {
               const sfKey = `${activeTab.key}::${sf.key}`;
               const sfCount = tabCounts[sfKey] ?? 0;
               const isAlertSf = ALERT_STATUSES.has(sf.key) && sfCount > 0;
+              const isActiveSf = subFilter === sf.key;
               return (
                 <button
                   key={sf.key}
                   onClick={() => setSubFilter(subFilter === sf.key ? null : sf.key)}
-                  className={`px-3 py-0.5 rounded text-[11px] border cursor-pointer transition-colors flex items-center gap-1 ${
-                    subFilter === sf.key
-                      ? "bg-primary/20 border-primary text-primary"
+                  className={`px-3 py-1 rounded-md text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1.5 ${
+                    isActiveSf
+                      ? sf.activeClass
                       : isAlertSf
-                        ? "bg-red-900/30 border-red-700 text-red-300 hover:bg-red-900/50"
-                        : "bg-muted/30 border-border text-muted-foreground hover:border-primary/50"
+                        ? "bg-red-950/60 border-red-700/70 text-red-400 hover:bg-red-900/50 hover:border-red-500 shadow-[0_0_8px_rgba(239,68,68,0.2)]"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
                   }`}
                 >
-                  {isAlertSf && <AlertTriangle className="h-2.5 w-2.5" />}
-                  <span className={sf.colorClass}>{sf.label}</span>
-                  <span className="font-bold ml-0.5">{sfCount}</span>
+                  {isAlertSf && <AlertTriangle className="h-3 w-3 flex-shrink-0" />}
+                  <span>{sf.label}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center ${
+                    isActiveSf
+                      ? "bg-white/15 text-white"
+                      : isAlertSf
+                        ? "bg-red-800/60 text-red-200"
+                        : "bg-zinc-800 text-zinc-500"
+                  }`}>
+                    {sfCount}
+                  </span>
                 </button>
               );
             })}
