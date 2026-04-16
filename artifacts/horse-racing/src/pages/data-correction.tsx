@@ -128,7 +128,7 @@ function parseBboxTimeInput(s: string): number | null {
   return null;
 }
 
-const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "その他"];
+const SPECIAL_NOTES = ["出遅れ", "大幅遅れ", "映像見切れ", "確認困難（ブレが大きい）", "途中破棄", "その他"];
 const PLAY_SPEEDS = [0.5, 1.0, 1.5, 2.0];
 
 const VENUE_ID_MAP: Record<string, string> = {

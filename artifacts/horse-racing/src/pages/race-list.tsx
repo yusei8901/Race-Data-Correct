@@ -882,7 +882,7 @@ export default function RaceList() {
                 )}
                 <TableHead style={{ width: "9%" }} className="text-xs">ステータス</TableHead>
                 <TableHead style={{ width: "8%" }} className="text-xs">詳細</TableHead>
-                <TableHead style={{ width: "18%" }} className="text-xs">内容</TableHead>
+                <TableHead style={{ width: "18%" }} className="text-xs">コメント</TableHead>
                 <TableHead style={{ width: "5%" }} className="text-xs">担当者</TableHead>
                 <TableHead style={{ width: "4%" }} className="text-xs">更新</TableHead>
                 <TableHead style={{ width: isAdmin ? "16%" : "21%" }} className="text-center text-xs">操作</TableHead>
