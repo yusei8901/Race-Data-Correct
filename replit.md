@@ -54,6 +54,7 @@ SPA horse racing data correction app. React+Vite frontend, FastAPI (Python) back
 ### Presets & masters
 - `venue_weather_preset` — Analysis parameter presets by venue×weather×surface
 - `correction_memo_master` — Special note dropdown options (~10 items)
+- `race_comment` — Stores comments from correction requests (REVISION_REQUEST) and reanalysis requests (REANALYSIS_REQUEST). FK → race, users. Phase 2 addition.
 
 ### Infra
 - `users` — App users. external_subject_id (IdP sub). UUID PK

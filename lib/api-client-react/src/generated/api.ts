@@ -25,6 +25,7 @@ import type {
   BatchUpdateResult,
   CreateBatchJobBody,
   GetPassingOrdersParams,
+  GetRaceCommentsParams,
   GetRaceSummaryParams,
   GetRacesParams,
   HealthStatus,
@@ -32,6 +33,7 @@ import type {
   MessageResponse,
   PassingOrder,
   Race,
+  RaceComment,
   RaceEntry,
   RaceSummary,
   UpdateAnalysisParamsBody,
@@ -1920,6 +1922,119 @@ export function useGetAuditLogFilters<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetAuditLogFiltersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Retrieve all comments for a race from race_comment table (Phase 2)
+ * @summary Get race comments
+ */
+export const getGetRaceCommentsUrl = (
+  raceId: string,
+  params?: GetRaceCommentsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/fastapi/races/${raceId}/comments?${stringifiedParams}`
+    : `/fastapi/races/${raceId}/comments`;
+};
+
+export const getRaceComments = async (
+  raceId: string,
+  params?: GetRaceCommentsParams,
+  options?: RequestInit,
+): Promise<RaceComment[]> => {
+  return customFetch<RaceComment[]>(getGetRaceCommentsUrl(raceId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRaceCommentsQueryKey = (
+  raceId: string,
+  params?: GetRaceCommentsParams,
+) => {
+  return [
+    `/fastapi/races/${raceId}/comments`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetRaceCommentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRaceComments>>,
+  TError = ErrorType<unknown>,
+>(
+  raceId: string,
+  params?: GetRaceCommentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRaceComments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRaceCommentsQueryKey(raceId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRaceComments>>> = ({
+    signal,
+  }) => getRaceComments(raceId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!raceId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRaceComments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRaceCommentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRaceComments>>
+>;
+export type GetRaceCommentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get race comments
+ */
+
+export function useGetRaceComments<
+  TData = Awaited<ReturnType<typeof getRaceComments>>,
+  TError = ErrorType<unknown>,
+>(
+  raceId: string,
+  params?: GetRaceCommentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRaceComments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRaceCommentsQueryOptions(raceId, params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

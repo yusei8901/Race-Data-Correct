@@ -699,3 +699,24 @@ export const GetAuditLogFiltersResponse = zod.object({
     }),
   ),
 });
+
+/**
+ * Retrieve all comments for a race from race_comment table (Phase 2)
+ * @summary Get race comments
+ */
+export const GetRaceCommentsParams = zod.object({
+  race_id: zod.coerce.string(),
+});
+
+export const GetRaceCommentsQueryParams = zod.object({
+  comment_type: zod.enum(["REVISION_REQUEST", "REANALYSIS_REQUEST"]).optional(),
+});
+
+export const GetRaceCommentsResponseItem = zod.object({
+  id: zod.string(),
+  comment_type: zod.enum(["REVISION_REQUEST", "REANALYSIS_REQUEST"]),
+  comment: zod.string(),
+  created_by_name: zod.string().nullish(),
+  created_at: zod.string().nullish(),
+});
+export const GetRaceCommentsResponse = zod.array(GetRaceCommentsResponseItem);

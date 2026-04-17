@@ -307,6 +307,24 @@ export interface AuditLogListResponse {
   cleaned_up?: number;
 }
 
+export type RaceCommentCommentType =
+  (typeof RaceCommentCommentType)[keyof typeof RaceCommentCommentType];
+
+export const RaceCommentCommentType = {
+  REVISION_REQUEST: "REVISION_REQUEST",
+  REANALYSIS_REQUEST: "REANALYSIS_REQUEST",
+} as const;
+
+export interface RaceComment {
+  id: string;
+  comment_type: RaceCommentCommentType;
+  comment: string;
+  /** @nullable */
+  created_by_name?: string | null;
+  /** @nullable */
+  created_at?: string | null;
+}
+
 export type GetRacesParams = {
   /**
    * Date in YYYY-MM-DD format
@@ -376,3 +394,15 @@ export type ListAuditLogsParams = {
    */
   page_size?: number;
 };
+
+export type GetRaceCommentsParams = {
+  comment_type?: GetRaceCommentsCommentType;
+};
+
+export type GetRaceCommentsCommentType =
+  (typeof GetRaceCommentsCommentType)[keyof typeof GetRaceCommentsCommentType];
+
+export const GetRaceCommentsCommentType = {
+  REVISION_REQUEST: "REVISION_REQUEST",
+  REANALYSIS_REQUEST: "REANALYSIS_REQUEST",
+} as const;

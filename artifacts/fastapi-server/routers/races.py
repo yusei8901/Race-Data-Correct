@@ -302,6 +302,18 @@ def _get_status_state(cur, race_id: str) -> Optional[dict]:
     return cur.fetchone()
 
 
+def _write_comment(cur, race_id: str, comment_type: str, comment: str, user_id: Optional[str] = None):
+    """race_comment テーブルにコメントを保存（PDF Phase 2 設計準拠）。
+    comment が空文字・None の場合は何もしない。"""
+    if not comment:
+        return
+    cur.execute(
+        """INSERT INTO race_comment (id, race_id, comment_type, comment, created_by, created_at)
+           VALUES (gen_random_uuid(), %s, %s, %s, %s, NOW())""",
+        (race_id, comment_type, comment, user_id),
+    )
+
+
 def _write_audit(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
                  old_value: Optional[dict] = None, new_value: Optional[dict] = None):
     cur.execute(
@@ -704,6 +716,42 @@ def get_race_history(race_id: str):
         return result
 
 
+@router.get("/races/{race_id}/comments")
+def get_race_comments(race_id: str, comment_type: Optional[str] = None):
+    """race_comment テーブルから修正要請・再解析要請コメントを返す（PDF Phase 2）。"""
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        if comment_type:
+            cur.execute(
+                """SELECT
+                       rc.id,
+                       rc.comment_type,
+                       rc.comment,
+                       COALESCE(u.name, '管理者') AS created_by_name,
+                       rc.created_at::text AS created_at
+                   FROM race_comment rc
+                   LEFT JOIN "user" u ON rc.created_by = u.id
+                   WHERE rc.race_id = %s AND rc.comment_type = %s
+                   ORDER BY rc.created_at DESC""",
+                (race_id, comment_type),
+            )
+        else:
+            cur.execute(
+                """SELECT
+                       rc.id,
+                       rc.comment_type,
+                       rc.comment,
+                       COALESCE(u.name, '管理者') AS created_by_name,
+                       rc.created_at::text AS created_at
+                   FROM race_comment rc
+                   LEFT JOIN "user" u ON rc.created_by = u.id
+                   WHERE rc.race_id = %s
+                   ORDER BY rc.created_at DESC""",
+                (race_id,),
+            )
+        return cur.fetchall()
+
+
 @router.post("/races/{race_id}/history")
 def add_race_history(race_id: str, body: dict):
     """手動で操作ログを追記するエンドポイント（ユーザーアクションのフリー記録）。
@@ -810,6 +858,7 @@ def reanalysis_request(race_id: str, body: dict):
                        to_status="NEEDS_ATTENTION", to_sub_status="ANALYSIS_REQUESTED",
                        user_id=user_id, reason=(reason or "再解析要請")[:200],
                        metadata={"reanalysis_reason": reason, "reanalysis_comment": comment})
+        _write_comment(cur, race_id, "REANALYSIS_REQUEST", comment or reason or "", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
                      {"status_code": old["status_code"], "event": old["event"]},
                      {"status_code": "NEEDS_ATTENTION", "event": "ANALYSIS_REQUESTED"})
@@ -854,6 +903,7 @@ def correction_request(race_id: str, body: dict):
                        to_status="ANALYZED", to_sub_status="REVISION_REQUESTED",
                        user_id=user_id, reason=(comment or "修正要請")[:200],
                        metadata={"correction_request_comment": comment})
+        _write_comment(cur, race_id, "REVISION_REQUEST", comment or "", user_id)
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
                      {"status_code": old["status_code"], "event": old["event"]},
                      {"status_code": "ANALYZED", "event": "REVISION_REQUESTED"})

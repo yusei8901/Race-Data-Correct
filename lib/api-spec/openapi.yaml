@@ -480,6 +480,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/AuditLogFilterOptions"
 
+  /races/{race_id}/comments:
+    get:
+      operationId: getRaceComments
+      tags: [races]
+      summary: Get race comments
+      description: Retrieve all comments for a race from race_comment table (Phase 2)
+      parameters:
+        - name: race_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: comment_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [REVISION_REQUEST, REANALYSIS_REQUEST]
+      responses:
+        "200":
+          description: List of race comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RaceComment"
+
 components:
   schemas:
     HealthStatus:
@@ -963,3 +991,22 @@ components:
         cleaned_up:
           type: integer
       required: [items, total, page, page_size]
+
+    RaceComment:
+      type: object
+      properties:
+        id:
+          type: string
+        comment_type:
+          type: string
+          enum: [REVISION_REQUEST, REANALYSIS_REQUEST]
+        comment:
+          type: string
+        created_by_name:
+          type: ["string", "null"]
+        created_at:
+          type: ["string", "null"]
+      required:
+        - id
+        - comment_type
+        - comment

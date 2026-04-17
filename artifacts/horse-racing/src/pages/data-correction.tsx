@@ -246,6 +246,14 @@ interface HistoryEntry {
   description?: string; created_at: string;
 }
 
+type RaceCommentEntry = {
+  id: string;
+  comment_type: "REVISION_REQUEST" | "REANALYSIS_REQUEST";
+  comment: string;
+  created_by_name?: string | null;
+  created_at?: string | null;
+};
+
 function HistoryModal({
   raceId, onClose, correctionRequestComment, isEditingMode, onRestore,
 }: {
@@ -253,7 +261,9 @@ function HistoryModal({
   isEditingMode: boolean; onRestore?: (entryId: string) => void;
 }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [comments, setComments] = useState<RaceCommentEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [commentsLoading, setCommentsLoading] = useState(true);
   const [tab, setTab] = useState<"history" | "comment">("history");
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
 
@@ -262,6 +272,10 @@ function HistoryModal({
       .then((r) => r.json())
       .then((d) => { setEntries(d); setLoading(false); })
       .catch(() => setLoading(false));
+    fetch(`${API}/races/${raceId}/comments`)
+      .then((r) => r.json())
+      .then((d) => { setComments(Array.isArray(d) ? d : []); setCommentsLoading(false); })
+      .catch(() => setCommentsLoading(false));
   }, [raceId]);
 
   return (
@@ -278,24 +292,52 @@ function HistoryModal({
                 onClick={() => setTab("history")}
                 className={`px-3 py-1 text-[10px] cursor-pointer transition-colors ${tab === "history" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
               >修正履歴</button>
-              {correctionRequestComment && (
-                <button
-                  onClick={() => setTab("comment")}
-                  className={`px-3 py-1 text-[10px] cursor-pointer transition-colors ${tab === "comment" ? "bg-orange-600 text-white" : "text-zinc-400 hover:text-white"}`}
-                >修正要請コメント</button>
-              )}
+              <button
+                onClick={() => setTab("comment")}
+                className={`px-3 py-1 text-[10px] cursor-pointer transition-colors relative ${tab === "comment" ? "bg-orange-600 text-white" : "text-zinc-400 hover:text-white"}`}
+              >
+                コメント
+                {comments.length > 0 && (
+                  <span className="ml-1 bg-orange-500 text-white text-[9px] rounded-full px-1 leading-none">{comments.length}</span>
+                )}
+              </button>
             </div>
             <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer text-lg leading-none">✕</button>
           </div>
         </div>
         <div className="flex-1 overflow-auto">
-          {tab === "comment" && correctionRequestComment ? (
-            <div className="p-5">
-              <div className="bg-orange-950/30 border border-orange-800/50 rounded-lg p-4">
-                <div className="text-xs font-semibold text-orange-400 mb-2">修正要請コメント</div>
-                <p className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">{correctionRequestComment}</p>
+          {tab === "comment" ? (
+            commentsLoading ? (
+              <div className="p-4 space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+            ) : comments.length === 0 ? (
+              correctionRequestComment ? (
+                <div className="p-5">
+                  <div className="bg-orange-950/30 border border-orange-800/50 rounded-lg p-4">
+                    <div className="text-xs font-semibold text-orange-400 mb-2">修正要請コメント</div>
+                    <p className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">{correctionRequestComment}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-8 text-center text-muted-foreground text-sm">コメントはありません</div>
+              )
+            ) : (
+              <div className="p-4 space-y-3">
+                {comments.map((c) => (
+                  <div key={c.id} className={`border rounded-lg p-4 ${c.comment_type === "REVISION_REQUEST" ? "bg-orange-950/30 border-orange-800/50" : "bg-blue-950/30 border-blue-800/50"}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${c.comment_type === "REVISION_REQUEST" ? "bg-orange-900/60 text-orange-300" : "bg-blue-900/60 text-blue-300"}`}>
+                        {c.comment_type === "REVISION_REQUEST" ? "修正要請" : "再解析要請"}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {c.created_by_name ?? "管理者"} &nbsp;·&nbsp;
+                        {c.created_at ? new Date(c.created_at).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}
+                      </span>
+                    </div>
+                    <p className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">{c.comment}</p>
+                  </div>
+                ))}
               </div>
-            </div>
+            )
           ) : loading ? (
             <div className="p-4 space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
           ) : entries.length === 0 ? (
