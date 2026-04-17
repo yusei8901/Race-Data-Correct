@@ -628,3 +628,74 @@ export const UpdateAnalysisParamsResponse = zod.object({
   params: zod.record(zod.string(), zod.unknown()),
   updated_at: zod.string().optional(),
 });
+
+/**
+ * @summary List audit log entries with filters and pagination
+ */
+export const listAuditLogsQueryPageDefault = 1;
+
+export const listAuditLogsQueryPageSizeDefault = 50;
+export const listAuditLogsQueryPageSizeMax = 200;
+
+export const ListAuditLogsQueryParams = zod.object({
+  from_date: zod.coerce.string().nullish(),
+  to_date: zod.coerce.string().nullish(),
+  user_id: zod.coerce.string().nullish(),
+  action: zod.coerce.string().nullish(),
+  target_table: zod.coerce.string().nullish(),
+  page: zod.coerce.number().min(1).default(listAuditLogsQueryPageDefault),
+  page_size: zod.coerce
+    .number()
+    .min(1)
+    .max(listAuditLogsQueryPageSizeMax)
+    .default(listAuditLogsQueryPageSizeDefault),
+});
+
+export const ListAuditLogsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      user_id: zod.string().nullish(),
+      user_name: zod.string().nullish(),
+      user_email: zod.string().nullish(),
+      action: zod.string(),
+      action_label: zod.string(),
+      target_table: zod.string(),
+      target_table_label: zod.string(),
+      target_id: zod.string(),
+      old_value: zod.record(zod.string(), zod.unknown()).nullish(),
+      new_value: zod.record(zod.string(), zod.unknown()).nullish(),
+      ip_address: zod.string().nullish(),
+      created_at: zod.string().nullish(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  page_size: zod.number(),
+  cleaned_up: zod.number().optional(),
+});
+
+/**
+ * @summary Get available filter options (users, actions, target tables)
+ */
+export const GetAuditLogFiltersResponse = zod.object({
+  users: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string().nullish(),
+      email: zod.string().nullish(),
+    }),
+  ),
+  actions: zod.array(
+    zod.object({
+      code: zod.string(),
+      label: zod.string(),
+    }),
+  ),
+  target_tables: zod.array(
+    zod.object({
+      code: zod.string(),
+      label: zod.string(),
+    }),
+  ),
+});

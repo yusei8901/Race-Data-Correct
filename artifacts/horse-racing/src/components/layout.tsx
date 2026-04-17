@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ShieldCheck,
   User,
+  ScrollText,
 } from "lucide-react";
 import { useUserRole } from "@/contexts/user-role";
 import type { UserRole } from "@/contexts/user-role";
@@ -21,6 +22,7 @@ export function Layout({ children }: LayoutProps) {
   const { role, setRole, isAdmin } = useUserRole();
 
   const allNavItems = [
+    { name: "監査ログ", href: "/audit-logs", icon: ScrollText, adminOnly: true, match: (loc: string) => loc.startsWith("/audit-logs") },
     { name: "処理管理", href: "/processing", icon: Settings, adminOnly: true, match: (loc: string) => loc.startsWith("/processing") },
     { name: "レース一覧", href: "/", icon: ListOrdered, adminOnly: false, match: (loc: string) => loc === "/" || loc.startsWith("/races/") },
   ];

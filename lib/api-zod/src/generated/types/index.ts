@@ -8,6 +8,14 @@
 
 export * from "./analysisParams";
 export * from "./analysisParamsParams";
+export * from "./auditLogActionOption";
+export * from "./auditLogEntry";
+export * from "./auditLogEntryNewValue";
+export * from "./auditLogEntryOldValue";
+export * from "./auditLogFilterOptions";
+export * from "./auditLogListResponse";
+export * from "./auditLogTargetTableOption";
+export * from "./auditLogUser";
 export * from "./batchJob";
 export * from "./batchUpdateRacesBody";
 export * from "./batchUpdateResult";
@@ -16,6 +24,7 @@ export * from "./getPassingOrdersParams";
 export * from "./getRacesParams";
 export * from "./getRaceSummaryParams";
 export * from "./healthStatus";
+export * from "./listAuditLogsParams";
 export * from "./messageResponse";
 export * from "./passingOrder";
 export * from "./race";

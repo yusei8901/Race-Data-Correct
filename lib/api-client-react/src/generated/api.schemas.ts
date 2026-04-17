@@ -242,6 +242,71 @@ export interface UpdateAnalysisParamsBody {
   params: UpdateAnalysisParamsBodyParams;
 }
 
+export interface AuditLogUser {
+  id: string;
+  /** @nullable */
+  name?: string | null;
+  /** @nullable */
+  email?: string | null;
+}
+
+export interface AuditLogActionOption {
+  code: string;
+  label: string;
+}
+
+export interface AuditLogTargetTableOption {
+  code: string;
+  label: string;
+}
+
+export interface AuditLogFilterOptions {
+  users: AuditLogUser[];
+  actions: AuditLogActionOption[];
+  target_tables: AuditLogTargetTableOption[];
+}
+
+/**
+ * @nullable
+ */
+export type AuditLogEntryOldValue = { [key: string]: unknown } | null;
+
+/**
+ * @nullable
+ */
+export type AuditLogEntryNewValue = { [key: string]: unknown } | null;
+
+export interface AuditLogEntry {
+  id: string;
+  /** @nullable */
+  user_id?: string | null;
+  /** @nullable */
+  user_name?: string | null;
+  /** @nullable */
+  user_email?: string | null;
+  action: string;
+  action_label: string;
+  target_table: string;
+  target_table_label: string;
+  target_id: string;
+  /** @nullable */
+  old_value?: AuditLogEntryOldValue;
+  /** @nullable */
+  new_value?: AuditLogEntryNewValue;
+  /** @nullable */
+  ip_address?: string | null;
+  /** @nullable */
+  created_at?: string | null;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  cleaned_up?: number;
+}
+
 export type GetRacesParams = {
   /**
    * Date in YYYY-MM-DD format
@@ -276,4 +341,38 @@ export type GetPassingOrdersParams = {
    * @nullable
    */
   checkpoint?: string | null;
+};
+
+export type ListAuditLogsParams = {
+  /**
+   * YYYY-MM-DD
+   * @nullable
+   */
+  from_date?: string | null;
+  /**
+   * YYYY-MM-DD (inclusive)
+   * @nullable
+   */
+  to_date?: string | null;
+  /**
+   * @nullable
+   */
+  user_id?: string | null;
+  /**
+   * @nullable
+   */
+  action?: string | null;
+  /**
+   * @nullable
+   */
+  target_table?: string | null;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  page_size?: number;
 };

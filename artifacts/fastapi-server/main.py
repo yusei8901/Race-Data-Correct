@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from routers import races, analysis_results, masters, batch_jobs, jobs, bbox
+from routers import races, analysis_results, masters, batch_jobs, jobs, bbox, audit
 
 app = FastAPI(title="Horse Racing Data Correction API")
 
@@ -25,6 +25,7 @@ app.include_router(masters.router)
 app.include_router(batch_jobs.router)
 app.include_router(jobs.router)
 app.include_router(bbox.router)
+app.include_router(audit.router)
 
 
 

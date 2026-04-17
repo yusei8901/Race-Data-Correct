@@ -18,6 +18,8 @@ import type {
 
 import type {
   AnalysisParams,
+  AuditLogFilterOptions,
+  AuditLogListResponse,
   BatchJob,
   BatchUpdateRacesBody,
   BatchUpdateResult,
@@ -26,6 +28,7 @@ import type {
   GetRaceSummaryParams,
   GetRacesParams,
   HealthStatus,
+  ListAuditLogsParams,
   MessageResponse,
   PassingOrder,
   Race,
@@ -1755,3 +1758,172 @@ export const useUpdateAnalysisParams = <
 > => {
   return useMutation(getUpdateAnalysisParamsMutationOptions(options));
 };
+
+/**
+ * @summary List audit log entries with filters and pagination
+ */
+export const getListAuditLogsUrl = (params?: ListAuditLogsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/fastapi/audit-logs?${stringifiedParams}`
+    : `/fastapi/audit-logs`;
+};
+
+export const listAuditLogs = async (
+  params?: ListAuditLogsParams,
+  options?: RequestInit,
+): Promise<AuditLogListResponse> => {
+  return customFetch<AuditLogListResponse>(getListAuditLogsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAuditLogsQueryKey = (params?: ListAuditLogsParams) => {
+  return [`/fastapi/audit-logs`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAuditLogsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAuditLogs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAuditLogsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAuditLogs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAuditLogsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditLogs>>> = ({
+    signal,
+  }) => listAuditLogs(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAuditLogs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAuditLogsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAuditLogs>>
+>;
+export type ListAuditLogsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List audit log entries with filters and pagination
+ */
+
+export function useListAuditLogs<
+  TData = Awaited<ReturnType<typeof listAuditLogs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAuditLogsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAuditLogs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAuditLogsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get available filter options (users, actions, target tables)
+ */
+export const getGetAuditLogFiltersUrl = () => {
+  return `/fastapi/audit-logs/filters`;
+};
+
+export const getAuditLogFilters = async (
+  options?: RequestInit,
+): Promise<AuditLogFilterOptions> => {
+  return customFetch<AuditLogFilterOptions>(getGetAuditLogFiltersUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAuditLogFiltersQueryKey = () => {
+  return [`/fastapi/audit-logs/filters`] as const;
+};
+
+export const getGetAuditLogFiltersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAuditLogFilters>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAuditLogFilters>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAuditLogFiltersQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAuditLogFilters>>
+  > = ({ signal }) => getAuditLogFilters({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAuditLogFilters>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAuditLogFiltersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAuditLogFilters>>
+>;
+export type GetAuditLogFiltersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get available filter options (users, actions, target tables)
+ */
+
+export function useGetAuditLogFilters<
+  TData = Awaited<ReturnType<typeof getAuditLogFilters>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAuditLogFilters>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAuditLogFiltersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
