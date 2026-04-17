@@ -156,9 +156,9 @@ export default function AuditLogsPage() {
         <div className="flex items-center gap-2">
           <ScrollText className="h-5 w-5 text-orange-400" />
           <h1 className="text-lg font-semibold text-white tracking-tight">監査ログ</h1>
-          <span className="text-xs text-zinc-500 ml-2">
+          {/* <span className="text-xs text-zinc-500 ml-2">
             （いつ・誰が・何を・どう編集したかを記録／6ヶ月で自動削除）
-          </span>
+          </span> */}
         </div>
         <Button
           variant="outline"
