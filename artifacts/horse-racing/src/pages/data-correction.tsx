@@ -243,7 +243,47 @@ function CapCircle({ gate, label }: { gate?: number | null; label?: string }) {
 // ── History Modal ─────────────────────────────────────────────────────────────
 interface HistoryEntry {
   id: string; user_name: string; action_type: string;
+  from_status?: string | null; from_sub_status?: string | null;
+  to_status?: string | null; to_sub_status?: string | null;
+  reason?: string | null;
   description?: string; created_at: string;
+}
+
+const STATUS_LABEL_MAP: Record<string, Record<string, string>> = {
+  WAITING:         { "": "解析待機中" },
+  ANALYZING:       { "": "解析中" },
+  ANALYZED:        { "": "要補正", REVISION_REQUESTED: "修正要請", EDITING: "補正中" },
+  IN_REVIEW:       { "": "レビュー待ち" },
+  NEEDS_ATTENTION: { "": "管理者対応", ANALYSIS_REQUESTED: "再解析要請", ANALYSIS_FAILED: "解析失敗", MATCH_FAILED: "突合失敗" },
+  CONFIRMED:       { "": "データ確定" },
+};
+
+function statusLabel(code?: string | null, sub?: string | null): string {
+  if (!code) return "不明";
+  const subKey = sub ?? "";
+  return STATUS_LABEL_MAP[code]?.[subKey] ?? STATUS_LABEL_MAP[code]?.[""] ?? code;
+}
+
+function statusBadgeClass(code?: string | null, sub?: string | null): string {
+  if (!code) return "bg-zinc-700 text-zinc-300";
+  if (code === "CONFIRMED") return "bg-green-900/60 text-green-300";
+  if (code === "ANALYZED" && sub === "REVISION_REQUESTED") return "bg-orange-900/60 text-orange-300";
+  if (code === "ANALYZED" && sub === "EDITING") return "bg-blue-900/60 text-blue-300";
+  if (code === "ANALYZED") return "bg-amber-900/60 text-amber-300";
+  if (code === "IN_REVIEW") return "bg-red-900/60 text-red-300";
+  if (code === "NEEDS_ATTENTION") return "bg-red-900/60 text-red-300";
+  if (code === "ANALYZING") return "bg-cyan-900/60 text-cyan-300";
+  if (code === "WAITING") return "bg-zinc-700 text-zinc-400";
+  return "bg-zinc-700 text-zinc-300";
+}
+
+function timelineNodeColor(code?: string | null): string {
+  if (!code) return "bg-zinc-600";
+  if (code === "CONFIRMED") return "bg-green-500";
+  if (code === "ANALYZED") return "bg-amber-500";
+  if (code === "IN_REVIEW" || code === "NEEDS_ATTENTION") return "bg-red-500";
+  if (code === "ANALYZING") return "bg-cyan-500";
+  return "bg-zinc-500";
 }
 
 type RaceCommentEntry = {
@@ -339,48 +379,69 @@ function HistoryModal({
               </div>
             )
           ) : loading ? (
-            <div className="p-4 space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
           ) : entries.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">履歴がありません</div>
           ) : (
-            <table className="w-full text-xs">
-              <thead className="bg-zinc-800 sticky top-0">
-                <tr>
-                  <th className="p-2 text-left text-muted-foreground font-medium w-36">日時</th>
-                  <th className="p-2 text-left text-muted-foreground font-medium w-20">担当者</th>
-                  <th className="p-2 text-left text-muted-foreground font-medium w-20">種別</th>
-                  <th className="p-2 text-left text-muted-foreground font-medium">内容</th>
-                  {isEditingMode && <th className="p-2 text-center text-muted-foreground font-medium w-16">復元</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => (
-                  <tr key={e.id} className="border-t border-zinc-800 hover:bg-zinc-800/40">
-                    <td className="p-2 text-muted-foreground font-mono whitespace-nowrap">
-                      {new Date(e.created_at).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                    </td>
-                    <td className="p-2">{e.user_name}</td>
-                    <td className="p-2">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        e.action_type === "補正完了" || e.action_type === "データ確定" ? "bg-green-900/50 text-green-400"
-                          : e.action_type === "補正開始" || e.action_type === "補正再開" ? "bg-blue-900/50 text-blue-400"
-                          : e.action_type === "修正要請" ? "bg-orange-900/50 text-orange-400"
-                          : "bg-zinc-700 text-zinc-300"
-                      }`}>{e.action_type}</span>
-                    </td>
-                    <td className="p-2 text-muted-foreground">{e.description || "-"}</td>
-                    {isEditingMode && (
-                      <td className="p-2 text-center">
+            <div className="p-4">
+              {entries.map((e, i) => {
+                const hasTransition = !!(e.to_status);
+                const nodeColor = timelineNodeColor(e.to_status ?? e.from_status ?? undefined);
+                const dt = new Date(e.created_at).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+                return (
+                  <div key={e.id} className="relative flex gap-3">
+                    {i < entries.length - 1 && (
+                      <div className="absolute left-[10px] top-5 bottom-0 w-px bg-zinc-700/70" />
+                    )}
+                    <div className="relative z-10 flex-shrink-0 mt-1">
+                      <div className={`w-5 h-5 rounded-full border-2 border-zinc-900 ${nodeColor}`} />
+                    </div>
+                    <div className="flex-1 pb-5 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[10px] font-mono text-muted-foreground whitespace-nowrap">{dt}</span>
+                        <span className="text-[10px] text-zinc-400">{e.user_name}</span>
+                      </div>
+                      {hasTransition ? (
+                        <>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusBadgeClass(e.from_status, e.from_sub_status)}`}>
+                              {statusLabel(e.from_status, e.from_sub_status)}
+                            </span>
+                            <span className="text-zinc-500 text-xs font-bold">→</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusBadgeClass(e.to_status, e.to_sub_status)}`}>
+                              {statusLabel(e.to_status, e.to_sub_status)}
+                            </span>
+                          </div>
+                          {e.reason && (
+                            <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                              <span className="text-zinc-500">理由：</span>{e.reason}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            e.action_type === "CONFIRMED" || e.action_type === "補正完了" || e.action_type === "データ確定" ? "bg-green-900/50 text-green-400"
+                              : e.action_type === "ANALYZED" || e.action_type === "補正開始" || e.action_type === "補正再開" ? "bg-blue-900/50 text-blue-400"
+                              : e.action_type === "修正要請" ? "bg-orange-900/50 text-orange-400"
+                              : "bg-zinc-700 text-zinc-300"
+                          }`}>{e.action_type}</span>
+                          {e.description && (
+                            <p className="text-[11px] text-zinc-400 mt-1">{e.description}</p>
+                          )}
+                        </>
+                      )}
+                      {isEditingMode && (
                         <button
                           onClick={() => setRestoreTarget(e.id)}
-                          className="text-[10px] text-cyan-400 hover:text-cyan-300 cursor-pointer underline"
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 cursor-pointer underline mt-1 block"
                         >復元</button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

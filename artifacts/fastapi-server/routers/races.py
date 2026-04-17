@@ -688,6 +688,11 @@ def get_race_history(race_id: str):
                    rsh.id,
                    COALESCE(u.name, '管理者') AS user_name,
                    rsh.status                 AS action_type,
+                   rsh.from_status,
+                   rsh.from_sub_status,
+                   rsh.to_status,
+                   rsh.to_sub_status,
+                   rsh.reason,
                    rsh.metadata               AS metadata,
                    rsh.changed_at::text       AS created_at
                FROM race_status_history rsh
@@ -710,6 +715,11 @@ def get_race_history(race_id: str):
                 "id": r["id"],
                 "user_name": r["user_name"],
                 "action_type": r["action_type"],
+                "from_status": r.get("from_status"),
+                "from_sub_status": r.get("from_sub_status"),
+                "to_status": r.get("to_status"),
+                "to_sub_status": r.get("to_sub_status"),
+                "reason": r.get("reason"),
                 "description": desc,
                 "created_at": r["created_at"],
             })
