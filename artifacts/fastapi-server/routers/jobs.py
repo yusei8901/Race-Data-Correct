@@ -91,20 +91,27 @@ def create_analysis_job(race_id: str, body: dict = None):
 @router.post("/races/{race_id}/analysis/reanalyze")
 def reanalyze_race(race_id: str, body: dict = None):
     """再解析 — 新規 analysis_job として実行。旧 /races/{id}/reanalyze と同等。"""
-    from routers.races import _get_sys_user, _write_history, _write_audit, get_race
+    from routers.races import _get_sys_user, _get_status_state, _write_history, _write_audit, get_race
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status FROM race WHERE id = %s::uuid", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
-            "UPDATE race SET status = 'ANALYZING', updated_at = NOW() WHERE id = %s::uuid",
+            """UPDATE race
+               SET status_id = (SELECT id FROM race_statuses WHERE status_code = 'ANALYZING'),
+                   event = NULL,
+                   updated_at = NOW()
+               WHERE id = %s::uuid""",
             (race_id,),
         )
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZING", user_id)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZING", to_sub_status=None,
+                       user_id=user_id, reason="再解析ジョブ起動")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status": old["status"]}, {"status": "ANALYZING"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZING", "event": None})
         conn.commit()
     return get_race(race_id)

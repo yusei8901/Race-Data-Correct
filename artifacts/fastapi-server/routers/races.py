@@ -269,12 +269,37 @@ def fmt_race(row: dict) -> dict:
     }
 
 
-def _write_history(cur, race_id: str, status: str, user_id: Optional[str], metadata: Optional[dict] = None):
+def _write_history(cur, race_id: str, *,
+                   from_status: Optional[str] = None,
+                   from_sub_status: Optional[str] = None,
+                   to_status: Optional[str] = None,
+                   to_sub_status: Optional[str] = None,
+                   user_id: Optional[str] = None,
+                   reason: Optional[str] = None,
+                   metadata: Optional[dict] = None):
+    """全ステータス遷移を race_status_history に記録（PDF設計準拠）。
+    legacy `status` カラムには to_status を二重書きして既存クエリとの互換を保つ。"""
+    legacy_status = to_status or ""
     cur.execute(
-        """INSERT INTO race_status_history (id, race_id, status, changed_by, changed_at, metadata)
-           VALUES (gen_random_uuid(), %s, %s, %s, NOW(), %s)""",
-        (race_id, status, user_id, json.dumps(metadata or {})),
+        """INSERT INTO race_status_history
+             (id, race_id, status, from_status, from_sub_status,
+              to_status, to_sub_status, reason, changed_by, changed_at, metadata)
+           VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)""",
+        (race_id, legacy_status, from_status, from_sub_status,
+         to_status, to_sub_status, reason,
+         user_id, json.dumps(metadata or {})),
     )
+
+
+def _get_status_state(cur, race_id: str) -> Optional[dict]:
+    """現在の (status_id, status_code, event) を返す。存在しなければ None。"""
+    cur.execute(
+        """SELECT r.status_id, rs.status_code, r.event
+           FROM race r LEFT JOIN race_statuses rs ON rs.id = r.status_id
+           WHERE r.id = %s""",
+        (race_id,),
+    )
+    return cur.fetchone()
 
 
 def _write_audit(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
@@ -407,6 +432,15 @@ def batch_update_races(body: dict):
         return {"updated": 0}
     with get_db() as conn:
         cur = dict_cursor(conn)
+        # Capture per-race old state before update so history records true from→to.
+        cur.execute(
+            """SELECT r.id::text AS id, rs.status_code AS status_code, r.event AS event
+               FROM race r LEFT JOIN race_statuses rs ON rs.id = r.status_id
+               WHERE r.id = ANY(%s::uuid[])""",
+            (race_ids,),
+        )
+        old_by_id = {row["id"]: row for row in cur.fetchall()}
+
         cur.execute(
             """UPDATE race
                SET status_id = (SELECT id FROM race_statuses WHERE status_code = %s),
@@ -419,11 +453,16 @@ def batch_update_races(body: dict):
         updated_rows = [r["id"] for r in cur.fetchall()]
         if updated_rows:
             user_id = _get_sys_user(cur)
-            history_label = new_event or new_status_code
             for race_id in updated_rows:
-                _write_history(cur, race_id, history_label, user_id, {"batch_update": True})
+                old = old_by_id.get(race_id) or {"status_code": None, "event": None}
+                _write_history(cur, race_id,
+                               from_status=old["status_code"], from_sub_status=old["event"],
+                               to_status=new_status_code, to_sub_status=new_event,
+                               user_id=user_id, reason="一括ステータス更新",
+                               metadata={"batch_update": True})
                 _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                             None, {"status_code": new_status_code, "event": new_event, "batch": True})
+                             {"status_code": old["status_code"], "event": old["event"]},
+                             {"status_code": new_status_code, "event": new_event, "batch": True})
         conn.commit()
         return {"updated": len(updated_rows)}
 
@@ -667,13 +706,19 @@ def get_race_history(race_id: str):
 
 @router.post("/races/{race_id}/history")
 def add_race_history(race_id: str, body: dict):
+    """手動で操作ログを追記するエンドポイント（ユーザーアクションのフリー記録）。
+    ステータス遷移を伴わない場合は to_status のみに action_type を入れる。"""
     user_name = body.get("user_name", "システム")
     action_type = body.get("action_type", "")
     description = body.get("description", "")
     with get_db() as conn:
         cur = dict_cursor(conn)
         user_id = _get_user_by_name(cur, user_name)
-        _write_history(cur, race_id, action_type, user_id, {"description": description} if description else None)
+        _write_history(cur, race_id,
+                       to_status=action_type,
+                       user_id=user_id,
+                       reason=description[:200] if description else None,
+                       metadata={"description": description} if description else None)
         conn.commit()
         return {"message": "OK"}
 
@@ -710,16 +755,19 @@ def update_race(race_id: str, body: dict):
 def complete_analysis(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id, event FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         if not _set_status(cur, race_id, "ANALYZED"):
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZED", user_id)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZED", to_sub_status=None,
+                       user_id=user_id, reason="解析完了")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "ANALYZED"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZED", "event": None})
         conn.commit()
     return get_race(race_id)
 
@@ -728,16 +776,19 @@ def complete_analysis(race_id: str):
 def reanalyze_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         if not _set_status(cur, race_id, "ANALYZING"):
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZING", user_id)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZING", to_sub_status=None,
+                       user_id=user_id, reason="再解析開始")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "ANALYZING"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZING", "event": None})
         conn.commit()
     return get_race(race_id)
 
@@ -748,17 +799,20 @@ def reanalysis_request(race_id: str, body: dict):
     comment = body.get("comment")
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         if not _set_status(cur, race_id, "NEEDS_ATTENTION", "ANALYSIS_REQUESTED"):
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYSIS_REQUESTED", user_id,
-                       {"reanalysis_reason": reason, "reanalysis_comment": comment})
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="NEEDS_ATTENTION", to_sub_status="ANALYSIS_REQUESTED",
+                       user_id=user_id, reason=(reason or "再解析要請")[:200],
+                       metadata={"reanalysis_reason": reason, "reanalysis_comment": comment})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "NEEDS_ATTENTION", "event": "ANALYSIS_REQUESTED"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "NEEDS_ATTENTION", "event": "ANALYSIS_REQUESTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -767,16 +821,19 @@ def reanalysis_request(race_id: str, body: dict):
 def matching_failure(race_id: str, body: dict):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         if not _set_status(cur, race_id, "NEEDS_ATTENTION", "MATCH_FAILED"):
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "MATCH_FAILED", user_id)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="NEEDS_ATTENTION", to_sub_status="MATCH_FAILED",
+                       user_id=user_id, reason="突合失敗")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "NEEDS_ATTENTION", "event": "MATCH_FAILED"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "NEEDS_ATTENTION", "event": "MATCH_FAILED"})
         conn.commit()
     return get_race(race_id)
 
@@ -786,17 +843,20 @@ def correction_request(race_id: str, body: dict):
     comment = body.get("comment", "")
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         if not _set_status(cur, race_id, "ANALYZED", "REVISION_REQUESTED"):
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "REVISION_REQUESTED", user_id,
-                       {"correction_request_comment": comment})
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZED", to_sub_status="REVISION_REQUESTED",
+                       user_id=user_id, reason=(comment or "修正要請")[:200],
+                       metadata={"correction_request_comment": comment})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "ANALYZED", "event": "REVISION_REQUESTED"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZED", "event": "REVISION_REQUESTED"})
         conn.commit()
     return get_race(race_id)
 
@@ -805,8 +865,7 @@ def correction_request(race_id: str, body: dict):
 def confirm_race(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         user_id = _get_sys_user(cur)
@@ -818,9 +877,13 @@ def confirm_race(race_id: str):
                WHERE id = %s""",
             (user_id, race_id),
         )
-        _write_history(cur, race_id, "CONFIRMED", user_id)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="CONFIRMED", to_sub_status=None,
+                       user_id=user_id, reason="データ確定")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "CONFIRMED"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "CONFIRMED", "event": None})
         conn.commit()
     return get_race(race_id)
 
@@ -860,21 +923,20 @@ def start_correction(race_id: str, body: dict):
 
         user_id = _get_user_by_name(cur, user_name)
 
-        # Check race exists
-        cur.execute("SELECT status_id, event FROM race WHERE id = %s", (race_id,))
-        race_row = cur.fetchone()
-        if not race_row:
+        # Check race exists & fetch current state in one query
+        old_state = _get_status_state(cur, race_id)
+        if not old_state:
             raise HTTPException(status_code=404, detail="Race not found")
-
-        old_status_id = race_row["status_id"]
-        old_event = race_row["event"]
 
         # Set ANALYZED + EDITING
         _set_status(cur, race_id, "ANALYZED", "EDITING")
-        _write_history(cur, race_id, "EDITING", user_id,
-                       {"started_by": user_name})
+        _write_history(cur, race_id,
+                       from_status=old_state["status_code"], from_sub_status=old_state["event"],
+                       to_status="ANALYZED", to_sub_status="EDITING",
+                       user_id=user_id, reason=f"{user_name} が補正開始",
+                       metadata={"started_by": user_name})
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old_status_id, "event": old_event},
+                     {"status_code": old_state["status_code"], "event": old_state["event"]},
                      {"status_code": "ANALYZED", "event": "EDITING", "started_by": user_name})
 
         # Create correction session
@@ -892,8 +954,7 @@ def start_correction(race_id: str, body: dict):
 def complete_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id, event FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
@@ -902,9 +963,13 @@ def complete_correction(race_id: str):
         )
         _set_status(cur, race_id, "IN_REVIEW")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "CORRECTED", user_id)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="IN_REVIEW", to_sub_status=None,
+                       user_id=user_id, reason="補正完了・レビュー待ち")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "IN_REVIEW"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "IN_REVIEW", "event": None})
         conn.commit()
     return get_race(race_id)
 
@@ -938,8 +1003,7 @@ def temp_save_correction(race_id: str, body: dict):
             )
 
         if exit_editing:
-            cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-            race_now = cur.fetchone()
+            old = _get_status_state(cur, race_id) or {"status_code": None, "event": None}
             cur.execute(
                 "UPDATE correction_session SET completed_at = NOW(), status = 'REVERTED' WHERE race_id = %s AND status = 'IN_PROGRESS'",
                 (race_id,),
@@ -947,10 +1011,13 @@ def temp_save_correction(race_id: str, body: dict):
             # Revert to ANALYZED (clean state, no event)
             _set_status(cur, race_id, "ANALYZED")
             user_id = _get_sys_user(cur)
-            _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "temp-save exit"})
+            _write_history(cur, race_id,
+                           from_status=old["status_code"], from_sub_status=old["event"],
+                           to_status="ANALYZED", to_sub_status=None,
+                           user_id=user_id, reason="一時保存して編集中断")
             _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                         {"status_id": race_now["status_id"] if race_now else None},
-                         {"status_code": "ANALYZED", "reason": "temp-save exit"})
+                         {"status_code": old["status_code"], "event": old["event"]},
+                         {"status_code": "ANALYZED", "event": None, "reason": "temp-save exit"})
         else:
             cur.execute("UPDATE race SET updated_at = NOW() WHERE id = %s", (race_id,))
 
@@ -967,8 +1034,7 @@ CANONICAL_STATUS_CODES = {
 def cancel_correction(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
@@ -978,9 +1044,13 @@ def cancel_correction(race_id: str):
         # Revert to ANALYZED (clean state)
         _set_status(cur, race_id, "ANALYZED")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "correction cancelled"})
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZED", to_sub_status=None,
+                       user_id=user_id, reason="補正キャンセル")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]}, {"status_code": "ANALYZED", "reason": "correction cancelled"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZED", "event": None, "reason": "correction cancelled"})
         conn.commit()
     return get_race(race_id)
 
@@ -989,8 +1059,7 @@ def cancel_correction(race_id: str):
 def force_unlock(race_id: str):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute("SELECT status_id FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
+        old = _get_status_state(cur, race_id)
         if not old:
             raise HTTPException(status_code=404, detail="Race not found")
         cur.execute(
@@ -999,10 +1068,13 @@ def force_unlock(race_id: str):
         )
         _set_status(cur, race_id, "ANALYZED")
         user_id = _get_sys_user(cur)
-        _write_history(cur, race_id, "ANALYZED", user_id, {"reason": "force-unlock by admin"})
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZED", to_sub_status=None,
+                       user_id=user_id, reason="管理者による強制ロック解除")
         _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_id": old["status_id"]},
-                     {"status_code": "ANALYZED", "reason": "force-unlock by admin"})
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZED", "event": None, "reason": "force-unlock by admin"})
         conn.commit()
     return get_race(race_id)
 

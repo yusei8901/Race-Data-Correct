@@ -266,12 +266,34 @@ def _get_sys_user_ar(cur) -> Optional[str]:
     return row["id"] if row else None
 
 
-def _write_history_ar(cur, race_id: str, status: str, user_id: Optional[str], metadata: Optional[dict] = None):
+def _write_history_ar(cur, race_id: str, *,
+                      from_status: Optional[str] = None,
+                      from_sub_status: Optional[str] = None,
+                      to_status: Optional[str] = None,
+                      to_sub_status: Optional[str] = None,
+                      user_id: Optional[str] = None,
+                      reason: Optional[str] = None,
+                      metadata: Optional[dict] = None):
+    legacy_status = to_status or ""
     cur.execute(
-        """INSERT INTO race_status_history (id, race_id, status, changed_by, changed_at, metadata)
-           VALUES (gen_random_uuid(), %s, %s, %s, NOW(), %s)""",
-        (race_id, status, user_id, json.dumps(metadata or {})),
+        """INSERT INTO race_status_history
+             (id, race_id, status, from_status, from_sub_status,
+              to_status, to_sub_status, reason, changed_by, changed_at, metadata)
+           VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)""",
+        (race_id, legacy_status, from_status, from_sub_status,
+         to_status, to_sub_status, reason,
+         user_id, json.dumps(metadata or {})),
     )
+
+
+def _get_status_state_ar(cur, race_id: str) -> Optional[dict]:
+    cur.execute(
+        """SELECT r.status_id, rs.status_code, r.event
+           FROM race r LEFT JOIN race_statuses rs ON rs.id = r.status_id
+           WHERE r.id = %s""",
+        (race_id,),
+    )
+    return cur.fetchone()
 
 
 def _write_audit_ar(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
@@ -308,7 +330,8 @@ def get_available_analysis(race_id: str):
                JOIN race r ON h.race_id = r.id
                JOIN race_event re ON r.event_id = re.id
                JOIN analysis_job j ON h.job_id = j.id
-               WHERE r.status = 'ANALYZED'
+               JOIN race_statuses rs ON rs.id = r.status_id
+               WHERE rs.status_code = 'ANALYZED'
                  AND r.id != %s
                  AND h.is_current = TRUE
                ORDER BY h.created_at DESC""",
@@ -365,16 +388,27 @@ def bind_analysis(race_id: str, body: dict):
             (new_header_id, source_header_id),
         )
 
-        cur.execute("SELECT status FROM race WHERE id = %s", (race_id,))
-        old = cur.fetchone()
-        cur.execute("UPDATE race SET status = 'ANALYZED', updated_at = NOW() WHERE id = %s", (race_id,))
+        old = _get_status_state_ar(cur, race_id) or {"status_code": None, "event": None}
+        cur.execute(
+            """UPDATE race
+               SET status_id = (SELECT id FROM race_statuses WHERE status_code = 'ANALYZED'),
+                   event = NULL,
+                   updated_at = NOW()
+               WHERE id = %s""",
+            (race_id,),
+        )
 
         user_id = _get_sys_user_ar(cur)
-        _write_history_ar(cur, race_id, "ANALYZED", user_id,
-                          {"bound_from_header": str(source_header_id), "new_header_id": str(new_header_id)})
+        _write_history_ar(cur, race_id,
+                          from_status=old["status_code"], from_sub_status=old["event"],
+                          to_status="ANALYZED", to_sub_status=None,
+                          user_id=user_id, reason="解析結果バインド",
+                          metadata={"bound_from_header": str(source_header_id),
+                                    "new_header_id": str(new_header_id)})
         _write_audit_ar(cur, user_id, "BIND_ANALYSIS", "race", race_id,
-                        {"status": old["status"] if old else None},
-                        {"status": "ANALYZED", "source_header_id": str(source_header_id),
+                        {"status_code": old["status_code"], "event": old["event"]},
+                        {"status_code": "ANALYZED", "event": None,
+                         "source_header_id": str(source_header_id),
                          "new_header_id": str(new_header_id)})
         conn.commit()
 
