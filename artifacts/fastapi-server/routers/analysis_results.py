@@ -1,8 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from database import get_db, dict_cursor
-import json
-from routers.races import get_race
+from routers.races import get_race, _get_sys_user, _write_history, _get_status_state, _write_audit
 
 router = APIRouter(prefix="/fastapi")
 
@@ -258,55 +257,6 @@ def update_passing_order(order_id: str, body: dict):
         return fmt_detail(updated, str(race_id))
 
 
-# ── Local helpers for bind-analysis (share patterns with races.py) ───────────
-
-def _get_sys_user_ar(cur) -> Optional[str]:
-    cur.execute('SELECT id FROM "user" WHERE name = %s LIMIT 1', ("管理者",))
-    row = cur.fetchone()
-    return row["id"] if row else None
-
-
-def _write_history_ar(cur, race_id: str, *,
-                      from_status: Optional[str] = None,
-                      from_sub_status: Optional[str] = None,
-                      to_status: Optional[str] = None,
-                      to_sub_status: Optional[str] = None,
-                      user_id: Optional[str] = None,
-                      reason: Optional[str] = None,
-                      metadata: Optional[dict] = None):
-    legacy_status = to_status or ""
-    cur.execute(
-        """INSERT INTO race_status_history
-             (id, race_id, status, from_status, from_sub_status,
-              to_status, to_sub_status, reason, changed_by, changed_at, metadata)
-           VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)""",
-        (race_id, legacy_status, from_status, from_sub_status,
-         to_status, to_sub_status, reason,
-         user_id, json.dumps(metadata or {})),
-    )
-
-
-def _get_status_state_ar(cur, race_id: str) -> Optional[dict]:
-    cur.execute(
-        """SELECT r.status_id, rs.status_code, r.event
-           FROM race r LEFT JOIN race_statuses rs ON rs.id = r.status_id
-           WHERE r.id = %s""",
-        (race_id,),
-    )
-    return cur.fetchone()
-
-
-def _write_audit_ar(cur, user_id: Optional[str], action: str, target_table: str, target_id: str,
-                    old_value: Optional[dict] = None, new_value: Optional[dict] = None):
-    cur.execute(
-        """INSERT INTO audit_log (id, user_id, action, target_table, target_id, old_value, new_value, created_at)
-           VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, NOW())""",
-        (user_id, action, target_table, target_id,
-         json.dumps(old_value) if old_value else None,
-         json.dumps(new_value) if new_value else None),
-    )
-
-
 # ── Bind analysis endpoints ───────────────────────────────────────────────────
 
 @router.get("/races/{race_id}/available-analysis")
@@ -388,7 +338,7 @@ def bind_analysis(race_id: str, body: dict):
             (new_header_id, source_header_id),
         )
 
-        old = _get_status_state_ar(cur, race_id) or {"status_code": None, "event": None}
+        old = _get_status_state(cur, race_id) or {"status_code": None, "event": None}
         cur.execute(
             """UPDATE race
                SET status_id = (SELECT id FROM race_statuses WHERE status_code = 'ANALYZED'),
@@ -398,18 +348,18 @@ def bind_analysis(race_id: str, body: dict):
             (race_id,),
         )
 
-        user_id = _get_sys_user_ar(cur)
-        _write_history_ar(cur, race_id,
-                          from_status=old["status_code"], from_sub_status=old["event"],
-                          to_status="ANALYZED", to_sub_status=None,
-                          user_id=user_id, reason="解析結果バインド",
-                          metadata={"bound_from_header": str(source_header_id),
-                                    "new_header_id": str(new_header_id)})
-        _write_audit_ar(cur, user_id, "BIND_ANALYSIS", "race", race_id,
-                        {"status_code": old["status_code"], "event": old["event"]},
-                        {"status_code": "ANALYZED", "event": None,
-                         "source_header_id": str(source_header_id),
-                         "new_header_id": str(new_header_id)})
+        user_id = _get_sys_user(cur)
+        _write_history(cur, race_id,
+                       from_status=old["status_code"], from_sub_status=old["event"],
+                       to_status="ANALYZED", to_sub_status=None,
+                       user_id=user_id, reason="解析結果バインド",
+                       metadata={"bound_from_header": str(source_header_id),
+                                 "new_header_id": str(new_header_id)})
+        _write_audit(cur, user_id, "BIND_ANALYSIS", "race", race_id,
+                     {"status_code": old["status_code"], "event": old["event"]},
+                     {"status_code": "ANALYZED", "event": None,
+                      "source_header_id": str(source_header_id),
+                      "new_header_id": str(new_header_id)})
         conn.commit()
 
     return get_race(race_id)
