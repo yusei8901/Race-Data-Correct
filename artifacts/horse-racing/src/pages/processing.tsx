@@ -1,365 +1,910 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
-  Settings2, RefreshCcw, Play, ChevronDown, ChevronRight,
-  Clock, CheckCircle, XCircle, AlertTriangle, X, Film,
+  Settings2, Plus, Trash2, Pencil, ChevronDown, ChevronRight,
+  FolderOpen, Clock, Film, CheckCircle, XCircle, RefreshCcw,
+  AlertTriangle, X, CheckSquare, Square, Save, RotateCcw
 } from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useGetBatchJobs, getGetBatchJobsQueryKey,
+  useToggleBatchJob, useDeleteBatchJob, useCreateBatchJob, useUpdateBatchJob,
+  useGetAnalysisParams, getGetAnalysisParamsQueryKey,
+  useUpdateAnalysisParams,
+} from "@workspace/api-client-react";
+import type { BatchJob } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { useUserRole } from "@/contexts/user-role";
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
-const API = BASE_URL + "/fastapi";
-const ADMIN_HEADER = { "X-Dev-User-Id": "10" };
 
-// ── Types ─────────────────────────────────────────────────────────────────
-interface LastRun {
-  id: number;
-  status: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  processedCount: number;
-  errorCount: number;
+// ── Types ──────────────────────────────────────────────────────────────────────
+interface MockVideo {
+  id: string;
+  filename: string;
+  path: string;
+  raceInfo: string;
+  completedAt?: string;
+  status: "完了" | "エラー";
 }
 
-interface BatchJob {
-  id: number;
-  name: string;
-  targetType: string;
-  targetFolder: string;
-  scheduleType: string;
-  scheduleTime: string;
-  enabled: boolean;
-  lastRun: LastRun | null;
-  updatedAt: string | null;
+const SCHEDULE_OPTIONS = [
+  { value: "0 2 * * *", label: "毎日 2:00" },
+  { value: "0 14 * * *", label: "毎日 14:00" },
+  { value: "0 0 * * 6,0", label: "週末 0:00" },
+  { value: "*/30 * * * *", label: "30分ごと" },
+  { value: "0 * * * *", label: "毎時" },
+];
+
+const FOLDER_OPTIONS = [
+  { value: "/videos/daily", label: "日次処理フォルダ (/videos/daily)" },
+  { value: "/videos/weekend", label: "週末フォルダ (/videos/weekend)" },
+  { value: "/videos/archive", label: "アーカイブ (/videos/archive)" },
+  { value: "/videos/urgent", label: "緊急フォルダ (/videos/urgent)" },
+];
+
+function cronToLabel(expr: string): string {
+  const found = SCHEDULE_OPTIONS.find((s) => s.value === expr);
+  return found ? found.label : expr;
 }
 
-interface SyncJob {
-  syncJobId: number;
-  holdingDate: string;
-  status: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  errorMessage: string | null;
-  triggeredBy: string | null;
-  createdAt: string;
+function generateMockVideos(jobId: string, count: number, type: "pending" | "completed"): MockVideo[] {
+  const venues = ["東京", "中山", "阪神", "京都"];
+  const results: MockVideo[] = [];
+  const seed = jobId.charCodeAt(0) + jobId.charCodeAt(1);
+  for (let i = 0; i < count; i++) {
+    const num = (seed * (i + 1) * 7) % 900 + 100;
+    const venueIdx = (seed + i) % venues.length;
+    const raceNum = (i % 12) + 1;
+    const filename = `2024031${num}${String(i + 1).padStart(3, "0")}.mp4`;
+    const isError = type === "completed" && i % 5 === 2;
+    results.push({
+      id: `${jobId}-${type}-${i}`,
+      filename,
+      path: `/videos/daily/${filename}`,
+      raceInfo: `${venues[venueIdx]} ${raceNum}R 3歳${i % 2 === 0 ? "未勝利" : "1勝クラス"}`,
+      completedAt: type === "completed" ? `2024-03-${String(15 - i).padStart(2, "0")} ${String(i % 24).padStart(2, "0")}:00` : undefined,
+      status: isError ? "エラー" : "完了",
+    });
+  }
+  return results;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-function statusBadgeClass(status: string): string {
-  if (status === "SUCCESS") return "bg-green-900/40 text-green-400 border-green-800";
-  if (status === "PARTIAL_SUCCESS") return "bg-yellow-900/40 text-yellow-400 border-yellow-800";
-  if (status === "RUNNING") return "bg-blue-900/40 text-blue-400 border-blue-800";
-  if (status === "FAILED") return "bg-red-900/40 text-red-400 border-red-700";
-  if (status === "PENDING") return "bg-zinc-800/60 text-zinc-400 border-zinc-700";
-  return "bg-zinc-800/60 text-zinc-400 border-zinc-700";
+// ── Analysis Params structure ──────────────────────────────────────────────────
+interface M200Params {
+  detection_confidence: number;
 }
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    SUCCESS: "成功", PARTIAL_SUCCESS: "一部成功", RUNNING: "実行中",
-    FAILED: "失敗", PENDING: "待機中",
+interface StraightGeneralParams {
+  left_rail_ratio: number;
+}
+
+interface AnalysisParams {
+  m200: M200Params;
+  straight_general: StraightGeneralParams;
+}
+
+const DEFAULT_PARAMS: AnalysisParams = {
+  m200: {
+    detection_confidence: 70,
+  },
+  straight_general: {
+    left_rail_ratio: 15,
+  },
+};
+
+function getNestedParams(raw: Record<string, any>, surfaceType: string, preset: string): AnalysisParams {
+  const nested = raw?.[surfaceType]?.[preset];
+  if (!nested) return DEFAULT_PARAMS;
+  return {
+    m200: { ...DEFAULT_PARAMS.m200, ...(nested.m200 || {}) },
+    straight_general: { ...DEFAULT_PARAMS.straight_general, ...(nested.straight_general || {}) },
   };
-  return map[status] ?? status;
 }
 
-function formatTime(iso: string | null): string {
-  if (!iso) return "-";
-  try {
-    const d = new Date(iso);
-    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-  } catch { return "-"; }
+// ── Slider Row Component ───────────────────────────────────────────────────────
+function SliderRow({
+  label, desc, value, min, max, step, unit, onChange, isTurf
+}: {
+  label: string; desc?: string; value: number; min: number; max: number; step: number; unit: string; onChange: (v: number) => void; isTurf?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs font-medium text-foreground">{label}</div>
+          {desc && <div className="text-[10px] text-muted-foreground mt-0.5">{desc}</div>}
+        </div>
+        <span className="text-xs font-mono text-foreground min-w-[60px] text-right">{value}{unit}</span>
+      </div>
+      <div style={isTurf ? { "--primary": "142 70% 45%", "--primary-foreground": "0 0% 100%" } as React.CSSProperties : {}}>
+        <Slider
+          value={[value]}
+          min={min} max={max} step={step}
+          onValueChange={(v) => onChange(v[0])}
+          className="h-4"
+        />
+      </div>
+    </div>
+  );
 }
 
-// ── Batch Job Row ─────────────────────────────────────────────────────────
-function BatchJobRow({ job, onRun }: { job: BatchJob; onRun: (id: number) => void }) {
-  const [expanded, setExpanded] = useState(false);
+function ToggleRow({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-xs text-foreground">{label}</span>
+      <Switch checked={value} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+// ── New Job Dialog ─────────────────────────────────────────────────────────────
+function NewJobDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (data: { name: string; cron_expression: string; folder: string }) => void; }) {
+  const [name, setName] = useState("");
+  const [schedule, setSchedule] = useState(SCHEDULE_OPTIONS[0].value);
+  const [folder, setFolder] = useState("");
 
   return (
-    <div className="border border-zinc-800 rounded-lg overflow-hidden">
-      <div
-        className="flex items-center gap-3 px-4 py-3 bg-zinc-900/60 hover:bg-zinc-900/80 cursor-pointer transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <button className="text-muted-foreground flex-shrink-0">
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </button>
-
-        <div className="flex-1 flex items-center gap-3 min-w-0">
-          <span className="font-medium text-sm truncate">{job.name}</span>
-          <Badge variant="outline" className="text-[10px] shrink-0 bg-zinc-800/60 text-zinc-400 border-zinc-700">
-            {job.scheduleType} {job.scheduleTime}
-          </Badge>
-          <span className="text-[10px] text-muted-foreground truncate hidden sm:block">
-            {job.targetFolder}
-          </span>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[480px] max-w-[95vw] p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold">新規バッチジョブ作成</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>
         </div>
-
-        <div className="flex items-center gap-3 ml-auto">
-          {job.lastRun && (
-            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] ${statusBadgeClass(job.lastRun.status)}`}>
-              {statusLabel(job.lastRun.status)}
-            </span>
-          )}
-          <Switch
-            checked={job.enabled}
-            onCheckedChange={() => {}}
-            className="scale-75"
-            onClick={(e) => e.stopPropagation()}
-          />
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">ジョブ名</label>
+            <Input placeholder="バッチジョブの名前" value={name} onChange={(e) => setName(e.target.value)} className="h-9" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">スケジュール</label>
+            <Select value={schedule} onValueChange={setSchedule}>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCHEDULE_OPTIONS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">対象フォルダ</label>
+            <Select value={folder} onValueChange={setFolder}>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue placeholder="フォルダを選択" />
+              </SelectTrigger>
+              <SelectContent>
+                {FOLDER_OPTIONS.map((f) => (
+                  <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end mt-6">
+          <Button variant="outline" onClick={onClose} className="h-8 text-xs cursor-pointer">キャンセル</Button>
           <Button
-            size="sm"
-            className="h-6 text-[10px] gap-1 bg-primary/80 hover:bg-primary cursor-pointer"
-            onClick={(e) => { e.stopPropagation(); onRun(job.id); }}
+            onClick={() => name && folder && onCreate({ name, cron_expression: schedule, folder })}
+            disabled={!name || !folder}
+            className="h-8 text-xs bg-primary hover:bg-primary/90 cursor-pointer"
           >
-            <Play className="h-3 w-3" />実行
+            作成
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {expanded && (
-        <div className="border-t border-zinc-800 bg-zinc-950/40 p-4 text-xs text-muted-foreground space-y-2">
-          <div className="flex gap-6 flex-wrap">
-            <span>対象フォルダ: <span className="font-mono text-foreground">{job.targetFolder}</span></span>
-            <span>スケジュール: <span className="text-foreground">{job.scheduleType} {job.scheduleTime}</span></span>
+// ── Edit Job Dialog ────────────────────────────────────────────────────────────
+function EditJobDialog({
+  job, onClose, onSave,
+}: {
+  job: BatchJob; onClose: () => void;
+  onSave: (data: { name: string; cron_expression: string; folder: string; videos: string[]; file_mode: string }) => void;
+}) {
+  const [name, setName] = useState(job.name);
+  const [schedule, setSchedule] = useState(job.cron_expression || SCHEDULE_OPTIONS[0].value);
+  const [folder, setFolder] = useState(FOLDER_OPTIONS[0].value);
+  const [fileMode, setFileMode] = useState<"folder" | "individual">("folder");
+  const mockVideos = useMemo(() => generateMockVideos(job.id, 30, "pending"), [job.id]);
+  const [selectedVideos, setSelectedVideos] = useState<Set<string>>(new Set());
+
+  const allSelected = selectedVideos.size === mockVideos.length;
+
+  const toggleVideo = (id: string) => {
+    setSelectedVideos((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[560px] max-w-[95vw] flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-700">
+          <h2 className="text-base font-semibold">バッチジョブ編集</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 overflow-auto p-5 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">ジョブ名</label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} className="h-9" />
           </div>
-          {job.lastRun && (
-            <div className="flex gap-6 flex-wrap">
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />開始: <span className="text-foreground">{formatTime(job.lastRun.startedAt)}</span>
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />完了: <span className="text-foreground">{formatTime(job.lastRun.completedAt)}</span>
-              </span>
-              <span className="flex items-center gap-1">
-                <CheckCircle className="h-3 w-3 text-green-400" />成功: <span className="text-green-400">{job.lastRun.processedCount}件</span>
-              </span>
-              {job.lastRun.errorCount > 0 && (
-                <span className="flex items-center gap-1">
-                  <XCircle className="h-3 w-3 text-red-400" />エラー: <span className="text-red-400">{job.lastRun.errorCount}件</span>
-                </span>
-              )}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">スケジュール</label>
+            <Select value={schedule} onValueChange={setSchedule}>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCHEDULE_OPTIONS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">対象フォルダ</label>
+            <Select value={folder} onValueChange={setFolder}>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FOLDER_OPTIONS.map((f) => (
+                  <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-muted-foreground">処理対象動画</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedVideos(new Set(mockVideos.map((v) => v.id)))}
+                  className="text-[10px] text-primary hover:underline cursor-pointer"
+                >全選択</button>
+                <button
+                  onClick={() => setSelectedVideos(new Set())}
+                  className="text-[10px] text-muted-foreground hover:underline cursor-pointer"
+                >選択解除</button>
+              </div>
+            </div>
+            <div className="border border-zinc-700 rounded-md max-h-[180px] overflow-auto">
+              {mockVideos.map((v) => (
+                <label
+                  key={v.id}
+                  className="flex items-start gap-2 px-3 py-2 hover:bg-zinc-800/50 cursor-pointer border-b border-zinc-800/50 last:border-0"
+                >
+                  <Checkbox
+                    checked={selectedVideos.has(v.id)}
+                    onCheckedChange={() => toggleVideo(v.id)}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="text-xs font-medium text-foreground">{v.filename}</div>
+                    <div className="text-[10px] text-muted-foreground">{v.raceInfo}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-1">{selectedVideos.size}/{mockVideos.length} 件選択中</div>
+          </div>
+          {selectedVideos.size > 0 && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-2 block">実行モード（定期実行時）</label>
+              <div className="flex gap-2">
+                {(["folder", "individual"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setFileMode(m)}
+                    className={`flex-1 py-1.5 px-3 rounded border text-xs transition-colors cursor-pointer ${
+                      fileMode === m
+                        ? "bg-primary/20 border-primary text-primary"
+                        : "bg-zinc-800 border-zinc-700 text-muted-foreground hover:border-zinc-500"
+                    }`}
+                  >
+                    {m === "folder" ? "フォルダ内全ファイルで実行" : "個別ファイルで実行"}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
+        </div>
+        <div className="flex gap-2 justify-end p-4 border-t border-zinc-700">
+          <Button variant="outline" onClick={onClose} className="h-8 text-xs cursor-pointer">キャンセル</Button>
+          <Button
+            onClick={() => onSave({ name, cron_expression: schedule, folder, videos: Array.from(selectedVideos), file_mode: fileMode })}
+            className="h-8 text-xs bg-primary cursor-pointer"
+          >
+            保存
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Job Row (expandable) ───────────────────────────────────────────────────────
+function JobRow({
+  job, onToggle, onEdit, onDelete,
+}: {
+  job: BatchJob;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [pendingPage, setPendingPage] = useState(1);
+  const [completedPage, setCompletedPage] = useState(1);
+  const [selectedErrorIds, setSelectedErrorIds] = useState<Set<string>>(new Set());
+  const [showMoveConfirm, setShowMoveConfirm] = useState(false);
+  const [pendingVideos, setPendingVideos] = useState(() => generateMockVideos(job.id, 20, "pending"));
+  const [completedJobs, setCompletedJobs] = useState(() => generateMockVideos(job.id, 30, "completed"));
+
+  const { toast } = useToast();
+  const PAGE_SIZE = 4;
+  const pendingTotal = pendingVideos.length;
+  const completedTotal = completedJobs.length;
+  const errorCount = completedJobs.filter((j) => j.status === "エラー").length;
+
+  const pendingSlice = pendingVideos.slice((pendingPage - 1) * PAGE_SIZE, pendingPage * PAGE_SIZE);
+  const completedSlice = completedJobs.slice((completedPage - 1) * PAGE_SIZE, completedPage * PAGE_SIZE);
+
+  const toggleError = (id: string) => {
+    setSelectedErrorIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const handleMoveToPending = () => {
+    const toMove = completedJobs.filter((j) => selectedErrorIds.has(j.id));
+    setCompletedJobs((prev) => prev.filter((j) => !selectedErrorIds.has(j.id)));
+    setPendingVideos((prev) => [...prev, ...toMove.map((v) => ({ ...v, completedAt: undefined, status: "完了" as const }))]);
+    setSelectedErrorIds(new Set());
+    setShowMoveConfirm(false);
+    toast({ title: `${toMove.length}件を処理待ちに移動しました` });
+  };
+
+  const mockFolder = FOLDER_OPTIONS[job.id.charCodeAt(0) % FOLDER_OPTIONS.length].value;
+  const mockLastRun = `2024-03-${String(15 - (job.id.charCodeAt(1) % 10)).padStart(2, "0")} ${String(job.id.charCodeAt(2) % 24).padStart(2, "0")}:00`;
+
+  return (
+    <div className="border border-zinc-800 rounded-lg overflow-hidden">
+      {/* Header row */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900/60 hover:bg-zinc-900/80 transition-colors">
+        <button onClick={() => setExpanded(!expanded)} className="text-muted-foreground hover:text-white cursor-pointer flex-shrink-0">
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+        <div className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+          <span className="font-medium text-sm truncate">{job.name}</span>
+          <Badge variant="outline" className="text-[10px] font-mono shrink-0">{cronToLabel(job.cron_expression)}</Badge>
+          {job.next_run_at && (
+            <span className="text-[10px] text-muted-foreground shrink-0">次回: {job.next_run_at}</span>
+          )}
+          <Badge
+            variant={job.status === "実行中" ? "default" : job.status === "有効" ? "outline" : "secondary"}
+            className={`text-[10px] shrink-0 ${job.status === "実行中" ? "bg-blue-600" : job.status === "有効" ? "text-green-500 border-green-800 bg-green-950/20" : ""}`}
+          >
+            {job.status || "有効"}
+          </Badge>
+          <div className="flex items-center gap-2 ml-auto shrink-0">
+            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Film className="h-3 w-3" />処理待ち <span className="text-yellow-400 font-semibold">{pendingTotal}件</span>
+            </span>
+            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <CheckCircle className="h-3 w-3" />処理済み <span className="text-green-400 font-semibold">{completedTotal}件</span>
+              {errorCount > 0 && <span className="text-red-400 font-semibold">({errorCount}エラー)</span>}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 ml-3">
+          <button onClick={onEdit} className="p-1 text-zinc-400 hover:text-white transition-colors cursor-pointer" title="編集">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={onDelete} className="p-1 text-red-500 hover:text-red-400 transition-colors cursor-pointer" title="削除">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+          <Switch checked={job.is_enabled} onCheckedChange={onToggle} className="scale-75" />
+        </div>
+      </div>
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="border-t border-zinc-800 bg-zinc-950/40 p-4 space-y-4">
+          {/* Meta */}
+          <div className="flex gap-6 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5"><FolderOpen className="h-3.5 w-3.5" />対象フォルダ: <span className="text-foreground font-mono">{mockFolder}</span></span>
+            <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />最終実行: <span className="text-foreground">{mockLastRun}</span></span>
+          </div>
+
+          {/* Pending Videos */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-yellow-400">処理待ち動画（{pendingTotal}件）</span>
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <span>{pendingPage}/{Math.ceil(pendingTotal / PAGE_SIZE)} ページ</span>
+                <button disabled={pendingPage <= 1} onClick={() => setPendingPage((p) => p - 1)} className="hover:text-white disabled:opacity-30 cursor-pointer">前へ</button>
+                <button disabled={pendingPage >= Math.ceil(pendingTotal / PAGE_SIZE)} onClick={() => setPendingPage((p) => p + 1)} className="hover:text-white disabled:opacity-30 cursor-pointer">次へ</button>
+              </div>
+            </div>
+            <div className="border border-zinc-800 rounded overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-zinc-800/60">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground w-8">No.</th>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground">ファイル名</th>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground">パス</th>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground">レース情報</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingSlice.map((v, i) => (
+                    <tr key={v.id} className="border-t border-zinc-800/50 hover:bg-zinc-800/20">
+                      <td className="px-3 py-1.5 text-muted-foreground">{(pendingPage - 1) * PAGE_SIZE + i + 1}</td>
+                      <td className="px-3 py-1.5 font-mono text-foreground">{v.filename}</td>
+                      <td className="px-3 py-1.5 text-zinc-500 font-mono text-[10px]">{v.path}</td>
+                      <td className="px-3 py-1.5 text-muted-foreground">{v.raceInfo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Completed Jobs */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-green-400">処理済みジョブ（{completedTotal}件）</span>
+              <div className="flex items-center gap-2">
+                {selectedErrorIds.size > 0 && (
+                  <Button
+                    size="sm"
+                    className="h-6 text-[10px] bg-yellow-700 hover:bg-yellow-600 text-white border-0 cursor-pointer"
+                    onClick={() => setShowMoveConfirm(true)}
+                  >
+                    選択した{selectedErrorIds.size}件を処理待ちへ移動
+                  </Button>
+                )}
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                  <span>{completedPage}/{Math.ceil(completedTotal / PAGE_SIZE)} ページ</span>
+                  <button disabled={completedPage <= 1} onClick={() => setCompletedPage((p) => p - 1)} className="hover:text-white disabled:opacity-30 cursor-pointer">前へ</button>
+                  <button disabled={completedPage >= Math.ceil(completedTotal / PAGE_SIZE)} onClick={() => setCompletedPage((p) => p + 1)} className="hover:text-white disabled:opacity-30 cursor-pointer">次へ</button>
+                </div>
+              </div>
+            </div>
+            <div className="border border-zinc-800 rounded overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-zinc-800/60">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground w-8">No.</th>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground">動画名</th>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground">レース情報</th>
+                    <th className="px-3 py-1.5 text-left text-muted-foreground">完了日時</th>
+                    <th className="px-3 py-1.5 text-center text-muted-foreground">結果</th>
+                    <th className="px-3 py-1.5 text-center text-muted-foreground w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {completedSlice.map((v, i) => (
+                    <tr key={v.id} className={`border-t border-zinc-800/50 hover:bg-zinc-800/20 ${selectedErrorIds.has(v.id) ? "bg-yellow-950/20" : ""}`}>
+                      <td className="px-3 py-1.5 text-muted-foreground">{(completedPage - 1) * PAGE_SIZE + i + 1}</td>
+                      <td className="px-3 py-1.5 font-mono text-foreground">{v.filename}</td>
+                      <td className="px-3 py-1.5 text-muted-foreground">{v.raceInfo}</td>
+                      <td className="px-3 py-1.5 text-muted-foreground">{v.completedAt}</td>
+                      <td className="px-3 py-1.5 text-center">
+                        {v.status === "完了" ? (
+                          <span className="inline-flex items-center gap-1 text-green-400 text-[10px]"><CheckCircle className="h-3 w-3" />完了</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-400 text-[10px]"><XCircle className="h-3 w-3" />エラー</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5 text-center">
+                        {v.status === "エラー" && (
+                          <Checkbox
+                            checked={selectedErrorIds.has(v.id)}
+                            onCheckedChange={() => toggleError(v.id)}
+                            className="cursor-pointer"
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move confirm dialog */}
+      {showMoveConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-6 w-[400px]">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertTriangle className="h-5 w-5 text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-semibold mb-1">処理待ちへ移動</div>
+                <div className="text-xs text-muted-foreground">選択した {selectedErrorIds.size} 件のエラー動画を処理待ちに移動しますか？</div>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowMoveConfirm(false)} className="h-7 text-xs cursor-pointer">キャンセル</Button>
+              <Button size="sm" onClick={handleMoveToPending} className="h-7 text-xs bg-yellow-700 hover:bg-yellow-600 text-white border-0 cursor-pointer">移動する</Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────
-export default function ProcessingManagement() {
+// ── Analysis Params Panel ──────────────────────────────────────────────────────
+const RACE_TYPE_VENUES: Record<string, { id: string; name: string }[]> = {
+  "中央競馬": [
+    { id: "tokyo", name: "東京" },
+    { id: "nakayama", name: "中山" },
+    { id: "kyoto", name: "京都" },
+    { id: "hanshin", name: "阪神" },
+    { id: "chukyo", name: "中京" },
+    { id: "kokura", name: "小倉" },
+    { id: "niigata", name: "新潟" },
+    { id: "hakodate", name: "函館" },
+    { id: "sapporo", name: "札幌" },
+    { id: "fukushima", name: "福島" },
+  ],
+  "地方競馬": [
+    { id: "ooi", name: "大井" },
+    { id: "kawasaki", name: "川崎" },
+    { id: "funabashi", name: "船橋" },
+    { id: "urawa", name: "浦和" },
+    { id: "nagoya", name: "名古屋" },
+    { id: "kochi", name: "高知" },
+    { id: "saga", name: "佐賀" },
+  ],
+  "海外競馬": [
+    { id: "longchamp", name: "ロンシャン" },
+    { id: "ascot", name: "アスコット" },
+    { id: "churchill", name: "チャーチルダウンズ" },
+    { id: "sha_tin", name: "シャティン" },
+  ],
+};
+
+const ANALYSIS_PRESETS = ["標準", "逆光用", "曇り用", "雨天用"];
+
+function AnalysisParamsPanel() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [syncDate, setSyncDate] = useState("");
 
-  // Batch jobs
-  const { data: batchData, isLoading: batchLoading, refetch: refetchBatch } = useQuery<{ items: BatchJob[] }>({
-    queryKey: ["batch-jobs"],
-    queryFn: async () => {
-      const res = await fetch(`${API}/batch-jobs`);
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-  });
-  const batchJobs = batchData?.items ?? [];
+  const [raceType, setRaceType] = useState<string>("中央競馬");
+  const [selectedVenueId, setSelectedVenueId] = useState<string>("tokyo");
+  const [surfaceType, setSurfaceType] = useState<"芝" | "ダート">("芝");
+  const [preset, setPreset] = useState<string>("標準");
+  const [params, setParams] = useState<AnalysisParams>(DEFAULT_PARAMS);
+  const [isDirty, setIsDirty] = useState(false);
 
-  // Sync jobs
-  const { data: syncData, isLoading: syncLoading, refetch: refetchSync } = useQuery<{ items: SyncJob[] }>({
-    queryKey: ["sync-jobs"],
-    queryFn: async () => {
-      const res = await fetch(`${API}/race-sync-jobs?limit=20`, { headers: ADMIN_HEADER });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-  });
-  const syncJobs = syncData?.items ?? [];
+  const { data: paramsData, isLoading } = useGetAnalysisParams(
+    selectedVenueId,
+    { query: { enabled: !!selectedVenueId, queryKey: getGetAnalysisParamsQueryKey(selectedVenueId) } }
+  );
 
-  // Run batch job
-  const runJobMutation = useMutation({
-    mutationFn: async (jobId: number) => {
-      const res = await fetch(`${API}/batch-jobs/${jobId}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...ADMIN_HEADER },
-        body: "{}",
-      });
-      if (!res.ok) throw new Error("Failed to run job");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["batch-jobs"] });
-      toast({ title: "バッチジョブを開始しました" });
-    },
-    onError: () => toast({ title: "バッチジョブの実行に失敗しました", variant: "destructive" }),
-  });
+  const updateParams = useUpdateAnalysisParams();
 
-  // Create sync job
-  const createSyncMutation = useMutation({
-    mutationFn: async (holdingDate: string) => {
-      const res = await fetch(`${API}/race-sync-jobs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...ADMIN_HEADER },
-        body: JSON.stringify({ holdingDate }),
-      });
-      if (!res.ok) throw new Error("Failed to create sync job");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sync-jobs"] });
-      toast({ title: "レース情報同期ジョブを作成しました" });
-      setSyncDate("");
-    },
-    onError: () => toast({ title: "同期ジョブの作成に失敗しました", variant: "destructive" }),
-  });
+  useEffect(() => {
+    if (paramsData) {
+      const loaded = getNestedParams(paramsData.params || {}, surfaceType, preset);
+      setParams(loaded);
+      setIsDirty(false);
+    }
+  }, [paramsData, surfaceType, preset]);
 
-  const handleCreateSync = () => {
-    if (!syncDate) return;
-    createSyncMutation.mutate(syncDate.replace(/-/g, ""));
+  const venues = RACE_TYPE_VENUES[raceType] || [];
+
+  useEffect(() => {
+    if (!venues.find((v) => v.id === selectedVenueId)) {
+      setSelectedVenueId(venues[0]?.id || "");
+    }
+  }, [raceType]);
+
+  const updateM200 = (key: keyof M200Params, val: any) => {
+    setParams((p) => ({ ...p, m200: { ...p.m200, [key]: val } }));
+    setIsDirty(true);
+  };
+  const updateSG = (key: keyof StraightGeneralParams, val: any) => {
+    setParams((p) => ({ ...p, straight_general: { ...p.straight_general, [key]: val } }));
+    setIsDirty(true);
+  };
+  const handleSave = () => {
+    if (!selectedVenueId) return;
+    const existingRaw = (paramsData?.params as Record<string, any>) || {};
+    const updated = {
+      ...existingRaw,
+      [surfaceType]: {
+        ...(existingRaw[surfaceType] || {}),
+        [preset]: params,
+      },
+    };
+    updateParams.mutate({ venueId: selectedVenueId, data: { params: updated } }, {
+      onSuccess: () => {
+        toast({ title: "パラメータを保存しました" });
+        queryClient.invalidateQueries({ queryKey: getGetAnalysisParamsQueryKey(selectedVenueId) });
+        setIsDirty(false);
+      },
+      onError: () => toast({ title: "保存に失敗しました", variant: "destructive" }),
+    });
+  };
+
+  const handleReset = () => {
+    setParams(DEFAULT_PARAMS);
+    setIsDirty(true);
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <Settings2 className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">処理管理</h1>
+    <div className="flex gap-4 h-full min-h-0">
+      {/* Left: Venue Selection */}
+      <div className="w-[200px] shrink-0 flex flex-col gap-3">
+        <div className="border border-border rounded-lg bg-card p-3">
+          <div className="text-xs font-medium text-muted-foreground mb-2">競馬の種類</div>
+          <div className="flex flex-col gap-1">
+            {Object.keys(RACE_TYPE_VENUES).map((rt) => (
+              <button
+                key={rt}
+                onClick={() => setRaceType(rt)}
+                className={`text-left px-2 py-1.5 rounded text-xs transition-colors cursor-pointer ${
+                  raceType === rt ? "bg-primary/20 text-primary font-medium" : "text-foreground hover:bg-muted"
+                }`}
+              >
+                {rt}
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-border mt-3 pt-3">
+            <div className="text-xs font-medium text-muted-foreground mb-2">競馬場</div>
+            <div className="flex flex-col gap-0.5 max-h-[240px] overflow-auto">
+              {venues.map((v) => (
+                <button
+                  key={v.id}
+                  onClick={() => setSelectedVenueId(v.id)}
+                  className={`text-left px-2 py-1.5 rounded text-xs transition-colors cursor-pointer ${
+                    selectedVenueId === v.id ? "bg-primary/20 text-primary font-medium" : "text-foreground hover:bg-muted"
+                  }`}
+                >
+                  {v.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right: Params */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {/* Course + Preset */}
+        <div className="border border-border rounded-lg bg-card p-3 mb-3 flex items-center gap-4">
+          <div>
+            <div className="text-[10px] text-muted-foreground mb-1">コース種別</div>
+            <div className="flex gap-1">
+              {(["芝", "ダート"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSurfaceType(s)}
+                  className={`px-3 py-1 rounded text-xs border transition-colors cursor-pointer ${
+                    surfaceType === s ? "bg-primary/20 border-primary text-primary" : "bg-zinc-800 border-zinc-700 text-muted-foreground hover:border-zinc-500"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground mb-1">解析プリセット</div>
+            <div className="flex gap-1">
+              {ANALYSIS_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPreset(p)}
+                  className={`px-3 py-1 rounded text-xs border transition-colors cursor-pointer ${
+                    preset === p ? "bg-primary/20 border-primary text-primary" : "bg-zinc-800 border-zinc-700 text-muted-foreground hover:border-zinc-500"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="ml-auto text-[10px] text-muted-foreground">
+            {venues.find((v) => v.id === selectedVenueId)?.name || "-"} / {surfaceType} / {preset}
+          </div>
         </div>
 
-        <Tabs defaultValue="batch">
-          <TabsList className="mb-4">
-            <TabsTrigger value="batch">バッチジョブ</TabsTrigger>
-            <TabsTrigger value="sync">レース情報同期</TabsTrigger>
-          </TabsList>
+        {/* Param sections scrollable */}
+        <div className="flex-1 overflow-auto space-y-3">
+          {/* 200m params */}
+          <div className="border border-border rounded-lg bg-card p-4 space-y-4">
+            <div className="text-sm font-semibold text-foreground border-b border-border pb-2">200mごとの集計パラメータ</div>
+            <SliderRow label="物体検知モデル確証度閾値" desc="馬や騎手を検出する際の確証度の最低閾値" value={params.m200.detection_confidence} min={0} max={100} step={1} unit="%" onChange={(v) => updateM200("detection_confidence", v)} isTurf={surfaceType === "芝"} />
+          </div>
 
-          {/* Batch Jobs Tab */}
-          <TabsContent value="batch">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-medium">バッチジョブ一覧</h2>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1 cursor-pointer"
-                onClick={() => refetchBatch()}
-              >
-                <RefreshCcw className="h-3.5 w-3.5" />更新
-              </Button>
-            </div>
+          {/* Straight general */}
+          <div className="border border-border rounded-lg bg-card p-4 space-y-4">
+            <div className="text-sm font-semibold text-foreground border-b border-border pb-2">最後の直線パラメータ - 一般設定</div>
+            <SliderRow label="左ラチ帯の幅比率" desc="" value={params.straight_general.left_rail_ratio} min={0} max={50} step={1} unit="%" onChange={(v) => updateSG("left_rail_ratio", v)} isTurf={surfaceType === "芝"} />
+          </div>
 
-            {batchLoading ? (
-              <div className="space-y-2">
-                {[1, 2].map((i) => (
-                  <div key={i} className="border border-zinc-800 rounded-lg h-12 bg-zinc-900/40 animate-pulse" />
-                ))}
-              </div>
-            ) : batchJobs.length === 0 ? (
-              <div className="text-center text-muted-foreground py-12 text-sm">
-                バッチジョブが見つかりません
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {batchJobs.map((job) => (
-                  <BatchJobRow
-                    key={job.id}
-                    job={job}
-                    onRun={(id) => runJobMutation.mutate(id)}
-                  />
-                ))}
-              </div>
-            )}
-          </TabsContent>
+          <div className="h-4" />
+        </div>
 
-          {/* Sync Jobs Tab */}
-          <TabsContent value="sync">
-            <div className="mb-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-lg">
-              <h2 className="text-sm font-medium mb-3">レース情報同期ジョブ作成</h2>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="date"
-                  value={syncDate}
-                  onChange={(e) => setSyncDate(e.target.value)}
-                  className="h-8 w-48 text-sm bg-zinc-900 border-zinc-700"
-                  placeholder="対象日を選択"
-                />
-                <Button
-                  size="sm"
-                  className="h-8 text-xs cursor-pointer"
-                  onClick={handleCreateSync}
-                  disabled={!syncDate || createSyncMutation.isPending}
-                >
-                  同期ジョブを作成
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-medium">同期ジョブ履歴</h2>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1 cursor-pointer"
-                onClick={() => refetchSync()}
-              >
-                <RefreshCcw className="h-3.5 w-3.5" />更新
-              </Button>
-            </div>
-
-            {syncLoading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="border border-zinc-800 rounded-lg h-10 bg-zinc-900/40 animate-pulse" />
-                ))}
-              </div>
-            ) : syncJobs.length === 0 ? (
-              <div className="text-center text-muted-foreground py-12 text-sm">
-                同期ジョブがありません
-              </div>
-            ) : (
-              <div className="border border-zinc-800 rounded-lg overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-zinc-900/60">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-muted-foreground">対象日</th>
-                      <th className="px-4 py-2 text-left text-muted-foreground">ステータス</th>
-                      <th className="px-4 py-2 text-left text-muted-foreground">開始時刻</th>
-                      <th className="px-4 py-2 text-left text-muted-foreground">完了時刻</th>
-                      <th className="px-4 py-2 text-left text-muted-foreground">実行者</th>
-                      <th className="px-4 py-2 text-left text-muted-foreground">エラー</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {syncJobs.map((job) => (
-                      <tr key={job.syncJobId} className="border-t border-zinc-800 hover:bg-zinc-900/30">
-                        <td className="px-4 py-2 font-mono text-foreground">{job.holdingDate}</td>
-                        <td className="px-4 py-2">
-                          <Badge variant="outline" className={`text-[10px] ${statusBadgeClass(job.status)}`}>
-                            {statusLabel(job.status)}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground">{formatTime(job.startedAt)}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{formatTime(job.completedAt)}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{job.triggeredBy || "-"}</td>
-                        <td className="px-4 py-2">
-                          {job.errorMessage && (
-                            <span className="text-red-400 flex items-center gap-1">
-                              <AlertTriangle className="h-3 w-3" />{job.errorMessage}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+        {/* Footer buttons */}
+        <div className="border-t border-border pt-3 flex items-center justify-between mt-2">
+          <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 cursor-pointer" onClick={handleReset}>
+            <RotateCcw className="h-3.5 w-3.5" />デフォルトに戻す
+          </Button>
+          <Button
+            size="sm"
+            className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 cursor-pointer"
+            onClick={handleSave}
+            disabled={!isDirty || updateParams.isPending}
+          >
+            <Save className="h-3.5 w-3.5" />パラメータを保存
+          </Button>
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ── Main Component ─────────────────────────────────────────────────────────────
+export default function ProcessingManagement() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<BatchJob | null>(null);
+
+  const { data: jobs, isLoading: isJobsLoading } = useGetBatchJobs({
+    query: { queryKey: getGetBatchJobsQueryKey() }
+  });
+
+  const toggleJob = useToggleBatchJob();
+  const deleteJob = useDeleteBatchJob();
+  const createJob = useCreateBatchJob();
+  const updateJob = useUpdateBatchJob();
+
+  const handleToggle = (job: BatchJob) => {
+    toggleJob.mutate({ id: job.id }, {
+      onSuccess: () => {
+        toast({ title: `ジョブを${job.is_enabled ? "無効化" : "有効化"}しました` });
+        queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
+      }
+    });
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirm("このバッチジョブを削除しますか？")) {
+      deleteJob.mutate({ id }, {
+        onSuccess: () => {
+          toast({ title: "ジョブを削除しました" });
+          queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
+        }
+      });
+    }
+  };
+
+  const handleCreate = (data: { name: string; cron_expression: string; folder: string }) => {
+    createJob.mutate({ data: { name: data.name, cron_expression: data.cron_expression, is_enabled: true } }, {
+      onSuccess: () => {
+        toast({ title: "バッチジョブを作成しました" });
+        setIsCreateOpen(false);
+        queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
+      },
+      onError: () => toast({ title: "エラーが発生しました", variant: "destructive" }),
+    });
+  };
+
+  const handleEditSave = (data: { name: string; cron_expression: string; folder: string; videos: string[]; file_mode: string }) => {
+    if (!editingJob) return;
+    updateJob.mutate({ id: editingJob.id, data: { name: data.name, cron_expression: data.cron_expression } }, {
+      onSuccess: () => {
+        toast({ title: "バッチジョブを更新しました" });
+        setEditingJob(null);
+        queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() });
+      },
+      onError: () => toast({ title: "更新に失敗しました", variant: "destructive" }),
+    });
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-background">
+      {/* Header */}
+      <div className="border-b border-border bg-card px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-primary" />
+          <h1 className="text-base font-semibold text-foreground">処理管理</h1>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1.5 cursor-pointer"
+          onClick={() => queryClient.invalidateQueries({ queryKey: getGetBatchJobsQueryKey() })}
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />更新
+        </Button>
+      </div>
+
+      <Tabs defaultValue="batch" className="flex-1 flex flex-col overflow-hidden">
+        <TabsList className="w-full justify-start rounded-none border-b border-border bg-transparent h-10 p-0 px-6">
+          <TabsTrigger
+            value="batch"
+            className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-4 h-full text-sm font-medium gap-1.5"
+          >
+            <Settings2 className="h-3.5 w-3.5" />バッチ管理
+          </TabsTrigger>
+          <TabsTrigger
+            value="analysis"
+            className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-4 h-full text-sm font-medium gap-1.5"
+          >
+            <Film className="h-3.5 w-3.5" />解析ツール管理
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="batch" className="flex-1 flex flex-col mt-0 p-6 overflow-hidden focus-visible:outline-none">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-foreground">バッチジョブ設定</h2>
+            <Button
+              size="sm"
+              className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 cursor-pointer"
+              onClick={() => setIsCreateOpen(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />新規ジョブ作成
+            </Button>
+          </div>
+          <div className="flex-1 overflow-auto space-y-2">
+            {isJobsLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-14 border border-zinc-800 rounded-lg bg-zinc-900/60 animate-pulse" />
+              ))
+            ) : !jobs?.length ? (
+              <div className="flex items-center justify-center h-40 text-muted-foreground text-sm border border-border rounded-lg">
+                バッチジョブが登録されていません
+              </div>
+            ) : (
+              jobs.map((job) => (
+                <JobRow
+                  key={job.id}
+                  job={job}
+                  onToggle={() => handleToggle(job)}
+                  onEdit={() => setEditingJob(job)}
+                  onDelete={() => handleDelete(job.id)}
+                />
+              ))
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="analysis" className="flex-1 flex flex-col mt-0 p-6 overflow-hidden focus-visible:outline-none">
+          <AnalysisParamsPanel />
+        </TabsContent>
+
+      </Tabs>
+
+      {isCreateOpen && (
+        <NewJobDialog onClose={() => setIsCreateOpen(false)} onCreate={handleCreate} />
+      )}
+      {editingJob && (
+        <EditJobDialog job={editingJob} onClose={() => setEditingJob(null)} onSave={handleEditSave} />
+      )}
     </div>
   );
 }
