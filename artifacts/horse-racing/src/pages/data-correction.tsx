@@ -12,14 +12,7 @@ import {
 } from "lucide-react";
 import BboxCanvas from "@/components/bbox-canvas";
 import type { BboxAnnotation, BboxTool, BboxItem } from "@/components/bbox-canvas";
-import { useQueryClient } from "@tanstack/react-query";
-import {
-  useGetRace, getGetRaceQueryKey,
-  useGetRaceEntries, getGetRaceEntriesQueryKey,
-  useGetPassingOrders, getGetPassingOrdersQueryKey,
-  useStartCorrection, useCompleteCorrection,
-} from "@workspace/api-client-react";
-import type { Race } from "@workspace/api-client-react";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,6 +31,82 @@ const STRAIGHT_MAP: Record<string, number> = {
   "東京芝": 502, "東京ダート": 502,
   "京都芝": 404, "京都ダート": 329,
 };
+
+// ── Race type (compatibility with new API v2) ──────────────────────────────
+interface Race {
+  id: string;
+  race_date: string;
+  venue: string;
+  race_type: string;
+  race_number: number;
+  race_name: string;
+  surface_type: string;
+  distance: number;
+  direction?: string | null;
+  start_time?: string | null;
+  status_code: string;
+  tab_group: string;
+  event?: string | null;
+  display_status: string;
+  status: string;
+  video_url?: string | null;
+  assigned_user?: string | null;
+  locked_by?: string | null;
+  video_raw_status?: string | null;
+  confirmed_at?: string | null;
+  confirmed_by?: string | null;
+  correction_request_comment?: string | null;
+  goal_time?: number | null;
+}
+
+function adaptRace(data: any): Race {
+  const basic = data.basicInfo ?? {};
+  const statusInfo = data.statusInfo ?? {};
+  const correctionSummary = data.correctionSummary ?? {};
+  const videoInfo = data.videoInfo ?? {};
+  const venueName = basic.venue?.shortName ?? basic.venue?.name ?? "";
+  const status = statusInfo.status ?? "";
+  const subStatus = statusInfo.subStatus ?? null;
+  const displayMap: Record<string, Record<string, string>> = {
+    WAITING: { "": "解析待機中" },
+    ANALYZING: { "": "解析中" },
+    ANALYZED: { "": "要補正", REVISION_REQUESTED: "修正要請", EDITING: "補正中" },
+    IN_REVIEW: { "": "レビュー待ち" },
+    NEEDS_ATTENTION: { "": "管理者対応", ANALYSIS_REQUESTED: "再解析要請", ANALYSIS_FAILED: "解析失敗", MATCH_FAILED: "突合失敗" },
+    CONFIRMED: { "": "データ確定" },
+  };
+  const display_status = displayMap[status]?.[subStatus ?? ""] ?? displayMap[status]?.[""] ?? status;
+  const tabGroupMap: Record<string, string> = {
+    WAITING: "待機中", ANALYZING: "待機中",
+    ANALYZED: "要補正", IN_REVIEW: "管理者対応待ち",
+    NEEDS_ATTENTION: "管理者対応待ち", CONFIRMED: "データ確定",
+  };
+  return {
+    id: String(data.raceId),
+    race_date: basic.holdingDate ?? "",
+    venue: venueName,
+    race_type: "中央競馬",
+    race_number: basic.raceNumber ?? 0,
+    race_name: basic.raceName ?? "",
+    surface_type: basic.trackCode ? (basic.trackCode === "1" ? "芝" : "ダート") : "芝",
+    distance: basic.distance ?? 0,
+    direction: null,
+    start_time: basic.startTime ?? null,
+    status_code: status,
+    tab_group: tabGroupMap[status] ?? "待機中",
+    event: subStatus,
+    display_status,
+    status,
+    video_url: null,
+    assigned_user: data.assigneeInfo?.correctedByName ?? null,
+    locked_by: correctionSummary.lockedByName ?? null,
+    video_raw_status: videoInfo.status === "LINKED" ? "LINKED" : "UNLINK",
+    confirmed_at: data.assigneeInfo?.confirmedAt ?? null,
+    confirmed_by: data.assigneeInfo?.confirmedByName ?? null,
+    correction_request_comment: null,
+    goal_time: null,
+  };
+}
 
 const CAP_COLORS: Record<number, { bg: string; text: string; label: string }> = {
   1: { bg: "#ffffff", text: "#000", label: "class_white_1" },
@@ -978,20 +1047,62 @@ export default function DataCorrection() {
   const autoEditRef = useRef<Set<string>>(new Set());
 
   // API hooks
-  const { data: race, isLoading: isRaceLoading } = useGetRace(raceId, {
-    query: { enabled: !!raceId, queryKey: getGetRaceQueryKey(raceId) },
+  const { data: race, isLoading: isRaceLoading } = useQuery<Race>({
+    queryKey: ["race-detail", raceId],
+    queryFn: async () => {
+      const res = await fetch(`${API}/races/${raceId}`);
+      if (!res.ok) throw new Error("fetch race failed");
+      return adaptRace(await res.json());
+    },
+    enabled: !!raceId,
   });
-  const { data: entries } = useGetRaceEntries(raceId, {
-    query: { enabled: !!raceId, queryKey: getGetRaceEntriesQueryKey(raceId) },
+  const { data: entries } = useQuery<any[]>({
+    queryKey: ["race-entries", raceId],
+    queryFn: async () => {
+      const res = await fetch(`${API}/races/${raceId}/entries`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : (data.entries ?? []);
+    },
+    enabled: !!raceId,
   });
-  const { data: passingOrders, isLoading: isOrdersLoading } = useGetPassingOrders(
-    raceId,
-    { checkpoint: selectedCp ?? undefined },
-    { query: { enabled: !!raceId && !!selectedCp, queryKey: getGetPassingOrdersQueryKey(raceId, { checkpoint: selectedCp ?? undefined }) } },
-  );
+  const { data: passingOrders, isLoading: isOrdersLoading } = useQuery<any[]>({
+    queryKey: ["race-sections", raceId, selectedCp],
+    queryFn: async () => {
+      if (!selectedCp) return [];
+      const res = await fetch(`${API}/races/${raceId}/sections/${encodeURIComponent(selectedCp)}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : (data.rows ?? data.passingOrders ?? []);
+    },
+    enabled: !!raceId && !!selectedCp,
+  });
 
-  const startCorrectionMut = useStartCorrection();
-  const completeCorrectionMut = useCompleteCorrection();
+  const startCorrectionMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/races/${raceId}/corrections/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Dev-User-Id": isAdmin ? "10" : "1" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error("start failed");
+      return res.json();
+    },
+  });
+  const completeCorrectionMut = useMutation({
+    mutationFn: async ({ raceId: _raceId }: { raceId: string }) => {
+      const sessionId = await fetch(`${API}/races/${_raceId}`)
+        .then((r) => r.json())
+        .then((d) => d.correctionSummary?.currentCorrectionSessionId ?? null);
+      const res = await fetch(`${API}/races/${_raceId}/corrections/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Dev-User-Id": isAdmin ? "10" : "1" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      if (!res.ok) throw new Error("complete failed");
+      return res.json();
+    },
+  });
 
   // Race metadata
   const straight = race ? getStraight(race) : 300;
@@ -1218,7 +1329,7 @@ export default function DataCorrection() {
           description: `${selectedCp}: ${data.count}頭の通過タイムをBBOX推定値で更新しました`,
         }),
       });
-      queryClient.invalidateQueries({ queryKey: getGetPassingOrdersQueryKey(raceId, {}) });
+      queryClient.invalidateQueries({ queryKey: ["race-sections", raceId] });
       toast({ title: `${data.count}頭の通過タイムを更新しました` });
       setCalcResults(null);
     } catch {
@@ -1343,7 +1454,7 @@ export default function DataCorrection() {
     })
       .then((r) => { if (!r.ok) throw new Error("Lock failed"); return r.json(); })
       .then((updated) => {
-        queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+        queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
         const actionType = raceStatus === "修正要請" || raceStatus === "補正中" ? "補正再開" : "補正開始";
         fetch(`${API}/races/${raceId}/history`, {
           method: "POST",
@@ -1385,7 +1496,7 @@ export default function DataCorrection() {
       body: JSON.stringify({ user_name: currentUserName, exit_editing: true }),
     });
     const updated = await res.json();
-    queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+    queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
     fetch(`${API}/races/${raceId}/history`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1408,7 +1519,7 @@ export default function DataCorrection() {
     await saveAllEdits();
     completeCorrectionMut.mutate({ raceId }, {
       onSuccess: (updated) => {
-        queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+        queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
         fetch(`${API}/races/${raceId}/history`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1435,7 +1546,7 @@ export default function DataCorrection() {
     await fetch(`${API}/races/${raceId}/corrections/cancel`, { method: "POST" });
     const res = await fetch(`${API}/races/${raceId}`);
     const updated = await res.json();
-    queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+    queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
     setIsEditingMode(false);
     setLocalEdits({});
     setConfirmDialog(null);
@@ -1452,7 +1563,7 @@ export default function DataCorrection() {
       });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
-      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1476,7 +1587,7 @@ export default function DataCorrection() {
       });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
-      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1500,7 +1611,7 @@ export default function DataCorrection() {
       });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
-      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1519,7 +1630,7 @@ export default function DataCorrection() {
       const res = await fetch(`${API}/races/${raceId}/confirm`, { method: "POST" });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
-      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1538,7 +1649,7 @@ export default function DataCorrection() {
       const res = await fetch(`${API}/races/${raceId}/force-unlock`, { method: "POST" });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
-      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1561,14 +1672,14 @@ export default function DataCorrection() {
       });
       if (!res.ok) throw new Error("Failed");
       const updated = await res.json();
-      queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+      queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
       await fetch(`${API}/races/${raceId}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_name: currentUserName, action_type: "解析データ再紐付け", description: `解析データID: ${analysisDataId} に再紐付けしました` }),
       });
       toast({ title: "解析データを再紐付けしました" });
-      queryClient.invalidateQueries({ queryKey: getGetPassingOrdersQueryKey(raceId, {}) });
+      queryClient.invalidateQueries({ queryKey: ["race-sections", raceId] });
     } catch {
       toast({ title: "再紐付けに失敗しました", variant: "destructive" });
     }
@@ -2878,7 +2989,7 @@ export default function DataCorrection() {
               const res = await fetch(`${API}/races/${raceId}/reanalyze`, { method: "POST" });
               if (!res.ok) throw new Error("Failed");
               const updated = await res.json();
-              queryClient.setQueryData(getGetRaceQueryKey(raceId), updated);
+              queryClient.invalidateQueries({ queryKey: ["race-detail", raceId] });
               toast({ title: "再解析を実行しました" });
               setConfirmDialog(null);
             } catch {

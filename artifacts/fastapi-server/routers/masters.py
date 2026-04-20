@@ -1,77 +1,69 @@
-import json
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
 from database import get_db, dict_cursor
+from auth import get_current_user_id
 
 router = APIRouter(prefix="/fastapi")
 
 
-@router.get("/memo-masters")
-def get_memo_masters():
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(
-            "SELECT id, memo_text, display_order, is_active FROM correction_memo_master WHERE is_active = TRUE ORDER BY display_order"
-        )
-        return cur.fetchall()
-
-
-@router.get("/venue-presets")
-def get_venue_presets(
-    venue_code: Optional[str] = Query(None),
-    surface_type: Optional[str] = Query(None),
+# GET /venues
+@router.get("/venues")
+def get_venues(
+    raceCategoryCode: Optional[str] = Query(None),
+    user_id: int = Depends(get_current_user_id),
 ):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        where, params = ["is_active = TRUE"], []
-        if venue_code:
-            where.append("venue_code = %s")
-            params.append(venue_code)
-        if surface_type:
-            where.append("(surface_type = %s OR surface_type IS NULL)")
-            params.append(surface_type)
-        where_sql = "WHERE " + " AND ".join(where)
-        cur.execute(
-            f"""SELECT id, venue_code, weather_preset_code, name, surface_type,
-                       preset_parameters, is_active, created_at::text, updated_at::text
-                FROM venue_weather_preset
-                {where_sql}
-                ORDER BY venue_code, weather_preset_code""",
-            params,
-        )
-        return cur.fetchall()
+        params = []
+        where = ""
+        if raceCategoryCode:
+            where = "WHERE rc.code = %s"
+            params.append(raceCategoryCode)
+
+        cur.execute(f"""
+            SELECT rv.code, rv.name, rv.short_name_1, rv.short_name_2, rv.short_name_3,
+                   rv.venue_name_en, rc.code AS category_code, rc.name AS category_name
+            FROM race_venue rv
+            JOIN race_category rc ON rc.id = rv.category_id
+            {where}
+            ORDER BY rv.code
+        """, params)
+        rows = cur.fetchall()
+        return {
+            "items": [
+                {
+                    "code": r["code"],
+                    "name": r["name"],
+                    "shortName": r["short_name_2"],
+                    "shortName1": r["short_name_1"],
+                    "shortName3": r["short_name_3"],
+                    "venueNameEn": r["venue_name_en"],
+                    "categoryCode": r["category_code"],
+                    "categoryName": r["category_name"],
+                }
+                for r in rows
+            ]
+        }
 
 
-@router.put("/venue-presets/{preset_id}")
-def update_venue_preset(preset_id: str, body: dict):
-    params_data = body.get("preset_parameters")
-    if params_data is None:
-        raise HTTPException(status_code=400, detail="preset_parameters is required")
+# GET /race-categories
+@router.get("/race-categories")
+def get_race_categories(user_id: int = Depends(get_current_user_id)):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT code, name FROM race_category ORDER BY id")
+        rows = cur.fetchall()
+        return {"items": [{"code": r["code"], "name": r["name"]} for r in rows]}
+
+
+# GET /correction-memos
+@router.get("/correction-memos")
+def get_correction_memos(user_id: int = Depends(get_current_user_id)):
     with get_db() as conn:
         cur = dict_cursor(conn)
         cur.execute(
-            """UPDATE venue_weather_preset
-               SET preset_parameters = %s, updated_at = NOW()
-               WHERE id = %s
-               RETURNING id, venue_code, weather_preset_code, name, surface_type,
-                         preset_parameters, is_active, created_at::text, updated_at::text""",
-            (json.dumps(params_data), preset_id),
+            "SELECT id, memo_text, display_order FROM correction_memo_master "
+            "WHERE is_active=TRUE ORDER BY display_order"
         )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Venue preset not found")
-        conn.commit()
-        return row
-
-
-@router.get("/venues")
-def get_venues():
-    """Return unique venue list from race_event (distinct venue_code + venue_name)."""
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT DISTINCT venue_code AS id, venue_name AS name
-               FROM race_event
-               ORDER BY venue_name"""
-        )
-        return cur.fetchall()
+        rows = cur.fetchall()
+        return {"items": [{"id": r["id"], "text": r["memo_text"]} for r in rows]}

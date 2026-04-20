@@ -6,11 +6,9 @@ import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout";
 import { UserRoleProvider, useUserRole } from "@/contexts/user-role";
 
-// Pages
 import RaceList from "@/pages/race-list";
 import DataCorrection from "@/pages/data-correction";
 import ProcessingManagement from "@/pages/processing";
-import AuditLogs from "@/pages/audit-logs";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,9 +29,6 @@ function Router() {
         <Route path="/races/:raceId" component={DataCorrection} />
         <Route path="/processing">
           {isAdmin ? <ProcessingManagement /> : <Redirect to="/" />}
-        </Route>
-        <Route path="/audit-logs">
-          {isAdmin ? <AuditLogs /> : <Redirect to="/" />}
         </Route>
         <Route component={NotFound} />
       </Switch>

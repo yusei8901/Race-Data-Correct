@@ -1,117 +1,255 @@
-from fastapi import APIRouter, HTTPException
+"""
+バッチジョブ・同期ジョブ・CSVエクスポート API
+GET    /batch-jobs
+GET    /batch-jobs/{jobId}
+POST   /batch-jobs/{jobId}/run
+POST   /race-sync-jobs
+GET    /race-sync-jobs
+POST   /csv-export-jobs
+GET    /csv-export-jobs/{jobId}
+"""
+from fastapi import APIRouter, HTTPException, Query, Depends
+from typing import Optional
 from database import get_db, dict_cursor
-import uuid
+from auth import get_current_user_id, require_admin, to_jst_str
 
 router = APIRouter(prefix="/fastapi")
 
 
-def fmt_job(row: dict) -> dict:
-    return {
-        "id": row["id"],
-        "race_id": row.get("race_id"),
-        "video_id": row.get("video_id"),
-        "status": row["status"],
-        "analysis_mode": row.get("analysis_mode"),
-        "started_at": row.get("started_at"),
-        "completed_at": row.get("completed_at"),
-        "error_message": row.get("error_message"),
-        "parameters": row.get("parameters"),
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-    }
-
-
-@router.get("/races/{race_id}/analysis/jobs")
-def list_analysis_jobs(race_id: str):
+# ────────────────────────────────────────
+# GET /batch-jobs
+# ────────────────────────────────────────
+@router.get("/batch-jobs")
+def list_batch_jobs(user_id: int = Depends(get_current_user_id)):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT aj.id::text, rv.race_id::text, aj.video_id::text,
-                      aj.status, aj.analysis_mode, aj.started_at::text,
-                      aj.completed_at::text, aj.error_message, aj.parameters,
-                      aj.created_at::text, aj.updated_at::text
-               FROM analysis_job aj
-               JOIN race_video rv ON rv.id = aj.video_id
-               WHERE rv.race_id = %s::uuid
-               ORDER BY aj.created_at DESC""",
-            (race_id,),
-        )
-        return [fmt_job(r) for r in cur.fetchall()]
+        cur.execute("""
+            SELECT bj.id, bj.name, bj.target_type, bj.target_folder,
+                   bj.schedule_type, bj.schedule_time, bj.enabled,
+                   bj.created_at, bj.updated_at,
+                   lr.id AS last_run_id, lr.status AS last_run_status,
+                   lr.started_at AS last_run_started_at,
+                   lr.completed_at AS last_run_completed_at,
+                   lr.processed_count, lr.error_count
+            FROM batch_job bj
+            LEFT JOIN LATERAL (
+                SELECT id, status, started_at, completed_at, processed_count, error_count
+                FROM batch_job_run WHERE batch_job_id = bj.id
+                ORDER BY created_at DESC LIMIT 1
+            ) lr ON TRUE
+            ORDER BY bj.id
+        """)
+        rows = cur.fetchall()
+        return {
+            "items": [
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "targetType": r["target_type"],
+                    "targetFolder": r["target_folder"],
+                    "scheduleType": r["schedule_type"],
+                    "scheduleTime": r["schedule_time"],
+                    "enabled": r["enabled"],
+                    "lastRun": {
+                        "id": r["last_run_id"],
+                        "status": r["last_run_status"],
+                        "startedAt": to_jst_str(r["last_run_started_at"]),
+                        "completedAt": to_jst_str(r["last_run_completed_at"]),
+                        "processedCount": r["processed_count"],
+                        "errorCount": r["error_count"],
+                    } if r["last_run_id"] else None,
+                    "updatedAt": to_jst_str(r["updated_at"]),
+                }
+                for r in rows
+            ]
+        }
 
 
-@router.get("/races/{race_id}/analysis/jobs/{job_id}")
-def get_analysis_job(race_id: str, job_id: str):
+# ────────────────────────────────────────
+# GET /batch-jobs/{jobId}
+# ────────────────────────────────────────
+@router.get("/batch-jobs/{job_id}")
+def get_batch_job(
+    job_id: int,
+    includeRuns: bool = Query(False),
+    user_id: int = Depends(get_current_user_id),
+):
     with get_db() as conn:
         cur = dict_cursor(conn)
-        cur.execute(
-            """SELECT aj.id::text, rv.race_id::text, aj.video_id::text,
-                      aj.status, aj.analysis_mode, aj.started_at::text,
-                      aj.completed_at::text, aj.error_message, aj.parameters,
-                      aj.created_at::text, aj.updated_at::text
-               FROM analysis_job aj
-               JOIN race_video rv ON rv.id = aj.video_id
-               WHERE aj.id = %s::uuid AND rv.race_id = %s::uuid""",
-            (job_id, race_id),
-        )
+        cur.execute("SELECT * FROM batch_job WHERE id=%s", [job_id])
+        job = cur.fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="バッチジョブが見つかりません")
+
+        runs = []
+        if includeRuns:
+            cur.execute("""
+                SELECT id, trigger_type, status, started_at, completed_at,
+                       pending_count, processed_count, error_count
+                FROM batch_job_run WHERE batch_job_id=%s
+                ORDER BY created_at DESC LIMIT 10
+            """, [job_id])
+            runs = [
+                {
+                    "id": r["id"],
+                    "triggerType": r["trigger_type"],
+                    "status": r["status"],
+                    "startedAt": to_jst_str(r["started_at"]),
+                    "completedAt": to_jst_str(r["completed_at"]),
+                    "pendingCount": r["pending_count"],
+                    "processedCount": r["processed_count"],
+                    "errorCount": r["error_count"],
+                }
+                for r in cur.fetchall() or []
+            ]
+
+        return {
+            "id": job["id"],
+            "name": job["name"],
+            "targetType": job["target_type"],
+            "targetFolder": job["target_folder"],
+            "scheduleType": job["schedule_type"],
+            "scheduleTime": str(job["schedule_time"]) if job["schedule_time"] else None,
+            "enabled": job["enabled"],
+            "recentRuns": runs,
+            "updatedAt": to_jst_str(job["updated_at"]),
+        }
+
+
+# ────────────────────────────────────────
+# POST /batch-jobs/{jobId}/run
+# ────────────────────────────────────────
+@router.post("/batch-jobs/{job_id}/run")
+def run_batch_job(
+    job_id: int,
+    body: dict = None,
+    user_id: int = Depends(get_current_user_id),
+):
+    require_admin(user_id)
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT id FROM batch_job WHERE id=%s", [job_id])
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="バッチジョブが見つかりません")
+
+        cur.execute("""
+            INSERT INTO batch_job_run (batch_job_id, trigger_type, status, started_at,
+              pending_count, processed_count, error_count, created_at, updated_at)
+            VALUES (%s,'MANUAL_REFRESH','RUNNING',NOW(),0,0,0,NOW(),NOW())
+            RETURNING id, started_at
+        """, [job_id])
+        run = cur.fetchone()
+
+        return {
+            "runId": run["id"],
+            "batchJobId": job_id,
+            "status": "RUNNING",
+            "startedAt": to_jst_str(run["started_at"]),
+            "message": "バッチジョブを開始しました",
+        }
+
+
+# ────────────────────────────────────────
+# POST /race-sync-jobs
+# ────────────────────────────────────────
+@router.post("/race-sync-jobs")
+def create_sync_job(body: dict, user_id: int = Depends(get_current_user_id)):
+    require_admin(user_id)
+    holding_date = body.get("holdingDate")
+    if not holding_date:
+        raise HTTPException(status_code=400, detail="holdingDate は必須です")
+
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("""
+            INSERT INTO race_sync_job (holding_date, status, triggered_by, created_at, updated_at)
+            VALUES (%s,'PENDING',%s,NOW(),NOW())
+            RETURNING id, created_at
+        """, [holding_date, user_id])
+        job = cur.fetchone()
+
+        return {
+            "syncJobId": job["id"],
+            "holdingDate": holding_date,
+            "status": "PENDING",
+            "createdAt": to_jst_str(job["created_at"]),
+            "message": "レース情報同期ジョブを作成しました",
+        }
+
+
+# ────────────────────────────────────────
+# GET /race-sync-jobs
+# ────────────────────────────────────────
+@router.get("/race-sync-jobs")
+def list_sync_jobs(
+    limit: int = Query(20, ge=1, le=100),
+    user_id: int = Depends(get_current_user_id),
+):
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        cur.execute("""
+            SELECT rsj.id, rsj.holding_date, rsj.status, rsj.started_at,
+                   rsj.completed_at, rsj.error_message, rsj.created_at,
+                   u.name AS triggered_by_name
+            FROM race_sync_job rsj
+            LEFT JOIN "user" u ON u.id = rsj.triggered_by
+            ORDER BY rsj.created_at DESC LIMIT %s
+        """, [limit])
+        rows = cur.fetchall()
+        return {
+            "items": [
+                {
+                    "syncJobId": r["id"],
+                    "holdingDate": r["holding_date"],
+                    "status": r["status"],
+                    "startedAt": to_jst_str(r["started_at"]),
+                    "completedAt": to_jst_str(r["completed_at"]),
+                    "errorMessage": r["error_message"],
+                    "triggeredBy": r["triggered_by_name"],
+                    "createdAt": to_jst_str(r["created_at"]),
+                }
+                for r in rows
+            ]
+        }
+
+
+# ────────────────────────────────────────
+# POST /csv-export-jobs
+# ────────────────────────────────────────
+@router.post("/csv-export-jobs")
+def create_csv_export(body: dict, user_id: int = Depends(get_current_user_id)):
+    require_admin(user_id)
+    from_date = body.get("fromDate")
+    to_date = body.get("toDate")
+    venue_codes = body.get("venueCodes", [])
+
+    with get_db() as conn:
+        cur = dict_cursor(conn)
+        import json
+        cur.execute("""
+            INSERT INTO audit_log (user_id, action, target_table, target_id, new_value, created_at)
+            VALUES (%s,'CSV_EXPORT','race_official',NULL,%s,NOW())
+            RETURNING id, created_at
+        """, [user_id, json.dumps({"fromDate": from_date, "toDate": to_date,
+                                    "venueCodes": venue_codes})])
         row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Job not found")
-        return fmt_job(row)
+        return {
+            "exportJobId": row["id"],
+            "status": "PENDING",
+            "createdAt": to_jst_str(row["created_at"]),
+            "message": "CSVエクスポートジョブを作成しました（実装フェーズで実際のエクスポート連携）",
+        }
 
 
-@router.post("/races/{race_id}/analysis/jobs", status_code=201)
-def create_analysis_job(race_id: str, body: dict = None):
-    body = body or {}
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(
-            "SELECT id::text FROM race_video WHERE race_id = %s::uuid LIMIT 1",
-            (race_id,),
-        )
-        video = cur.fetchone()
-        if not video:
-            raise HTTPException(status_code=404, detail="No video found for race")
-        job_id = str(uuid.uuid4())
-        cur.execute(
-            """INSERT INTO analysis_job
-                 (id, video_id, status, analysis_mode, parameters, created_at, updated_at)
-               VALUES (%s, %s::uuid, 'PENDING', %s, %s, NOW(), NOW())
-               RETURNING id::text, status, analysis_mode, created_at::text""",
-            (job_id, video["id"],
-             body.get("analysis_mode", "standard"),
-             "{}"),
-        )
-        result = cur.fetchone()
-        conn.commit()
-        return {"id": result["id"], "race_id": race_id, "video_id": video["id"],
-                "status": result["status"], "analysis_mode": result["analysis_mode"],
-                "created_at": result["created_at"]}
-
-
-@router.post("/races/{race_id}/analysis/reanalyze")
-def reanalyze_race(race_id: str, body: dict = None):
-    """再解析 — 新規 analysis_job として実行。旧 /races/{id}/reanalyze と同等。"""
-    from routers.races import _get_sys_user, _get_status_state, _write_history, _write_audit, get_race
-    with get_db() as conn:
-        cur = dict_cursor(conn)
-        old = _get_status_state(cur, race_id)
-        if not old:
-            raise HTTPException(status_code=404, detail="Race not found")
-        cur.execute(
-            """UPDATE race
-               SET status_id = (SELECT id FROM race_statuses WHERE status_code = 'ANALYZING'),
-                   event = NULL,
-                   updated_at = NOW()
-               WHERE id = %s::uuid""",
-            (race_id,),
-        )
-        user_id = _get_sys_user(cur)
-        _write_history(cur, race_id,
-                       from_status=old["status_code"], from_sub_status=old["event"],
-                       to_status="ANALYZING", to_sub_status=None,
-                       user_id=user_id, reason="再解析ジョブ起動")
-        _write_audit(cur, user_id, "STATUS_CHANGE", "race", race_id,
-                     {"status_code": old["status_code"], "event": old["event"]},
-                     {"status_code": "ANALYZING", "event": None})
-        conn.commit()
-    return get_race(race_id)
+# ────────────────────────────────────────
+# GET /csv-export-jobs/{jobId}
+# ────────────────────────────────────────
+@router.get("/csv-export-jobs/{job_id}")
+def get_csv_export(job_id: int, user_id: int = Depends(get_current_user_id)):
+    require_admin(user_id)
+    return {
+        "exportJobId": job_id,
+        "status": "PENDING",
+        "downloadUrl": None,
+        "message": "CSVエクスポートジョブ詳細（実装フェーズで実際の状態確認）",
+    }
